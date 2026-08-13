@@ -375,12 +375,13 @@ public class MainActivity extends Activity {
             l.addView(sub);
         }
         LinearLayout overviewHeader = sectionHeader("数据概览");
-        ImageView gradeUpdate = iconButton(R.drawable.ic_sync, "更新成绩");
+        Button gradeUpdate = syncButton("成绩", "更新成绩");
         gradeUpdate.setOnClickListener(v -> openPortal("grades", false));
-        overviewHeader.addView(gradeUpdate, new LinearLayout.LayoutParams(dp(36), dp(36)));
-        ImageView electricityUpdate = iconButton(R.drawable.ic_sync, "更新电费");
+        overviewHeader.addView(gradeUpdate, new LinearLayout.LayoutParams(dp(82), dp(36)));
+        addHorizontalGap(overviewHeader, 8);
+        Button electricityUpdate = syncButton("电费", "更新电费");
         electricityUpdate.setOnClickListener(v -> openPortal("electricity", false));
-        overviewHeader.addView(electricityUpdate, new LinearLayout.LayoutParams(dp(36), dp(36)));
+        overviewHeader.addView(electricityUpdate, new LinearLayout.LayoutParams(dp(82), dp(36)));
         l.addView(overviewHeader);
 
         LinearLayout summary = card(panelColor());
@@ -2149,6 +2150,22 @@ public class MainActivity extends Activity {
         button.setContentDescription(description);
         button.setPadding(dp(9), dp(9), dp(9), dp(9));
         button.setBackground(border(panelColor(), lineColor(), 5));
+        return button;
+    }
+
+    private Button syncButton(String text, String description) {
+        Button button = action(text, false);
+        android.graphics.drawable.Drawable icon = getDrawable(R.drawable.ic_sync);
+        if (icon != null) {
+            icon = icon.mutate();
+            icon.setTint(primaryColor());
+            icon.setBounds(0, 0, dp(16), dp(16));
+            button.setCompoundDrawables(icon, null, null, null);
+            button.setCompoundDrawablePadding(dp(4));
+        }
+        button.setContentDescription(description);
+        button.setMinWidth(0);
+        button.setPadding(dp(7), 0, dp(7), 0);
         return button;
     }
 
