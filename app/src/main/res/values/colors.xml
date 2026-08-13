@@ -1,0 +1,11 @@
+<resources>
+    <color name="blue_600">#2F80ED</color>
+    <color name="blue_100">#EAF4FF</color>
+    <color name="blue_050">#F6FAFF</color>
+    <color name="ink_900">#19324D</color>
+    <color name="ink_600">#5E7185</color>
+    <color name="line">#E5EDF5</color>
+    <color name="white">#FFFFFF</color>
+    <color name="green">#219653</color>
+    <color name="orange">#F2994A</color>
+</resources>

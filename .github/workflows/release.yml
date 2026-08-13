@@ -1,0 +1,25 @@
+name: Publish release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify release asset
+        run: test -f "release-assets/aoxiang-assistant-${GITHUB_REF_NAME}.apk"
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "翱翔助手 ${{ github.ref_name }}"
+          generate_release_notes: true
+          files: "release-assets/aoxiang-assistant-${{ github.ref_name }}.apk"

@@ -1,0 +1,13 @@
+/.gradle/
+/.idea/
+/.toolchains/
+/app/build/
+/build/
+/dist/
+/local.properties
+/keystore.properties
+/release-signing/
+/soaring-schedule-remake-master.zip
+*.apk
+!release-assets/*.apk
+*.iml
