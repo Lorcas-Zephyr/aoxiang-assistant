@@ -93,6 +93,12 @@ public class MainActivity extends Activity {
     private static final String UNIT_DAYS = "天";
     private static final int SCHEDULE_SECTION_HEIGHT_DP = 48;
 
+    private static volatile boolean activityAlive;
+
+    public static boolean isActivityAlive() {
+        return activityAlive;
+    }
+
     private final DecimalFormat scoreDf = new DecimalFormat("0.00");
     private final DecimalFormat pointDf = new DecimalFormat("0.000");
     private final Handler automationHandler = new Handler(Looper.getMainLooper());
@@ -113,6 +119,8 @@ public class MainActivity extends Activity {
     private boolean autoScheduleEnabled;
     private boolean autoElectricityEnabled;
     private boolean electricityAlertEnabled;
+    private boolean gradeUpdateNotificationEnabled;
+    private boolean scheduleUpdateNotificationEnabled;
     private boolean bootAutoStart;
     private boolean automaticRun;
     private boolean silentBoot;
@@ -134,6 +142,7 @@ public class MainActivity extends Activity {
     private String gradeIntervalUnit = UNIT_MINUTES;
     private String scheduleIntervalUnit = UNIT_MINUTES;
     private String electricityIntervalUnit = UNIT_MINUTES;
+    private String settingsPanel = "";
     private double electricityBalance = Double.NaN;
     private double electricityAlertThreshold = 20.0;
 
@@ -152,6 +161,7 @@ public class MainActivity extends Activity {
     @Override
     protected void onCreate(Bundle state) {
         super.onCreate(state);
+        activityAlive = true;
         store = getSharedPreferences("campus_private", MODE_PRIVATE);
         themeColor = ScheduleStorage.loadThemeColor(store);
         darkMode = ScheduleStorage.loadDarkMode(store);
@@ -167,7 +177,9 @@ public class MainActivity extends Activity {
         autoScheduleEnabled = store.getBoolean("auto_schedule_enabled", true);
         autoElectricityEnabled = store.getBoolean("auto_electricity_enabled", true);
         electricityAlertEnabled = store.getBoolean("electricity_alert_enabled", true);
-        bootAutoStart = store.getBoolean("boot_auto_start", false);
+        gradeUpdateNotificationEnabled = store.getBoolean("grade_update_notification_enabled", true);
+        scheduleUpdateNotificationEnabled = store.getBoolean("schedule_update_notification_enabled", true);
+        bootAutoStart = store.getBoolean("boot_auto_start", true);
         int legacyGradeSeconds = Math.max(60, store.getInt("grade_interval_seconds", 600));
         gradeIntervalValue = Math.max(1, store.getInt("grade_interval_value", (legacyGradeSeconds + 59) / 60));
         scheduleIntervalValue = Math.max(1, store.getInt("schedule_interval_value", 60));
@@ -193,6 +205,7 @@ public class MainActivity extends Activity {
             requestNotificationPermission();
         }
         scheduleAllAutomaticUpdates(1500);
+        syncBackgroundService();
         if (silentBoot) {
             root.postDelayed(() -> moveTaskToBack(true), 300);
         }
@@ -217,6 +230,7 @@ public class MainActivity extends Activity {
     protected void onDestroy() {
         cancelScheduledUpdates();
         cancelAutomation();
+        activityAlive = false;
         super.onDestroy();
     }
 
@@ -231,6 +245,12 @@ public class MainActivity extends Activity {
         if (automationWeb != null) {
             cancelAutomation();
             showTab(currentTab);
+            return;
+        }
+        if (currentTab == TAB_SETTINGS && !settingsPanel.isEmpty()) {
+            settingsPanel = "";
+            if (currentPage != null) currentPage.scrollTo(0, 0);
+            showTab(TAB_SETTINGS);
             return;
         }
         super.onBackPressed();
@@ -260,35 +280,35 @@ public class MainActivity extends Activity {
 
         bottom = new LinearLayout(this);
         bottom.setGravity(Gravity.CENTER);
-        bottom.setPadding(dp(8), dp(7), dp(8), dp(8));
-        bottom.setBackgroundColor(surfaceColor());
-        mainShell.addView(bottom, new LinearLayout.LayoutParams(-1, dp(66)));
+        bottom.setPadding(dp(8), dp(5), dp(8), dp(6));
+        bottom.setBackground(border(panelColor(), lineColor(), 0));
+        mainShell.addView(bottom, new LinearLayout.LayoutParams(-1, dp(62)));
 
         String[] labels = {"首页", "课表", "成绩", "管理", "设置"};
-        String[] marks = {"⌂", "▦", "", "☰", "⚙"};
+        int[] icons = {R.drawable.ic_nav_home, R.drawable.ic_nav_schedule, R.drawable.ic_nav_grades,
+                R.drawable.ic_nav_manage, R.drawable.ic_nav_settings};
         for (int i = 0; i < labels.length; i++) {
             final int tab = i;
             LinearLayout item = new LinearLayout(this);
             item.setOrientation(LinearLayout.VERTICAL);
             item.setGravity(Gravity.CENTER);
-            View icon;
-            if (tab == TAB_GRADES) {
-                ImageView gradeIcon = new ImageView(this);
-                gradeIcon.setImageResource(R.drawable.ic_grades);
-                gradeIcon.setColorFilter(currentTab == tab ? primaryColor() : mutedColor());
-                gradeIcon.setContentDescription("成绩");
-                gradeIcon.setPadding(dp(9), dp(5), dp(9), dp(5));
-                icon = gradeIcon;
-            } else {
-                TextView mark = label(marks[i], 18, currentTab == tab ? primaryColor() : mutedColor());
-                mark.setGravity(Gravity.CENTER);
-                icon = mark;
-            }
-            TextView text = label(labels[i], 11, currentTab == tab ? primaryColor() : mutedColor());
+            ImageView icon = new ImageView(this);
+            icon.setImageResource(icons[i]);
+            icon.setColorFilter(currentTab == tab ? primaryColor() : mutedColor());
+            icon.setContentDescription(labels[i]);
+            icon.setPadding(dp(8), dp(4), dp(8), dp(3));
+            TextView text = label(labels[i], 10, currentTab == tab ? primaryColor() : mutedColor());
             text.setGravity(Gravity.CENTER);
-            item.addView(icon, new LinearLayout.LayoutParams(-1, dp(26)));
-            item.addView(text, new LinearLayout.LayoutParams(-1, dp(22)));
-            item.setOnClickListener(v -> showTab(tab));
+            if (currentTab == tab) text.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+            item.addView(icon, new LinearLayout.LayoutParams(-1, dp(29)));
+            item.addView(text, new LinearLayout.LayoutParams(-1, dp(19)));
+            item.setOnClickListener(v -> {
+                if (tab == TAB_SETTINGS) {
+                    settingsPanel = "";
+                    if (currentTab == TAB_SETTINGS && currentPage != null) currentPage.scrollTo(0, 0);
+                }
+                showTab(tab);
+            });
             bottom.addView(item, new LinearLayout.LayoutParams(0, -1, 1));
         }
 
@@ -351,57 +371,32 @@ public class MainActivity extends Activity {
         l.addView(title("翱翔助手"));
         ScheduleModels.Semester semester = selectedSemester();
         if (semester != null) {
-            TextView sub = label(semester.name + " · 第" + currentScheduleWeek(semester) + "周", 13, mutedColor());
+            TextView sub = label(semester.name + "  第 " + currentScheduleWeek(semester) + " 周", 12, mutedColor());
             l.addView(sub);
         }
-        addGap(l, 12);
-
-        LinearLayout summary = card(primaryColor());
-        summary.setOrientation(LinearLayout.HORIZONTAL);
-        summary.setGravity(Gravity.CENTER_VERTICAL);
-        summary.setPadding(dp(18), dp(18), dp(18), dp(18));
-        LinearLayout summaryText = new LinearLayout(this);
-        summaryText.setOrientation(LinearLayout.VERTICAL);
-        TextView cap = label("当前 GPA", 13, Color.WHITE);
-        summaryText.addView(cap);
-        TextView gpa = label(grades.isEmpty() ? "--" : weightedPoint(), 36, Color.WHITE);
-        gpa.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
-        summaryText.addView(gpa, new LinearLayout.LayoutParams(-1, dp(54)));
-        String courseCount = grades.size() + " 门课程";
-        TextView sub = label(courseCount, 12, Color.WHITE);
-        summaryText.addView(sub);
-        summary.addView(summaryText, new LinearLayout.LayoutParams(0, -2, 1));
-        ImageView gradeUpdate = new ImageView(this);
-        gradeUpdate.setImageResource(android.R.drawable.ic_popup_sync);
-        gradeUpdate.setColorFilter(Color.WHITE);
-        gradeUpdate.setContentDescription("更新成绩");
-        gradeUpdate.setPadding(dp(10), dp(10), dp(10), dp(10));
+        LinearLayout overviewHeader = sectionHeader("数据概览");
+        ImageView gradeUpdate = iconButton(R.drawable.ic_sync, "更新成绩");
         gradeUpdate.setOnClickListener(v -> openPortal("grades", false));
-        summary.addView(gradeUpdate, new LinearLayout.LayoutParams(dp(48), dp(48)));
+        overviewHeader.addView(gradeUpdate, new LinearLayout.LayoutParams(dp(36), dp(36)));
+        ImageView electricityUpdate = iconButton(R.drawable.ic_sync, "更新电费");
+        electricityUpdate.setOnClickListener(v -> openPortal("electricity", false));
+        overviewHeader.addView(electricityUpdate, new LinearLayout.LayoutParams(dp(36), dp(36)));
+        l.addView(overviewHeader);
+
+        LinearLayout summary = card(panelColor());
+        LinearLayout firstMetrics = new LinearLayout(this);
+        firstMetrics.addView(metric("GPA", grades.isEmpty() ? "--" : weightedPoint(), "绩点"), new LinearLayout.LayoutParams(0, dp(70), 1));
+        firstMetrics.addView(metric("加权成绩", grades.isEmpty() ? "--" : weightedScore(), "分"), new LinearLayout.LayoutParams(0, dp(70), 1));
+        summary.addView(firstMetrics);
+        View divider = new View(this);
+        divider.setBackgroundColor(lineColor());
+        summary.addView(divider, new LinearLayout.LayoutParams(-1, dp(1)));
+        LinearLayout secondMetrics = new LinearLayout(this);
+        secondMetrics.addView(metric("课程", String.valueOf(grades.size()), "门"), new LinearLayout.LayoutParams(0, dp(70), 1));
+        secondMetrics.addView(metric("剩余电费", Double.isNaN(electricityBalance) ? "--" : scoreDf.format(electricityBalance), "元"), new LinearLayout.LayoutParams(0, dp(70), 1));
+        summary.addView(secondMetrics);
         l.addView(summary);
 
-        addGap(l, 12);
-        LinearLayout electricity = card(surfaceColor());
-        electricity.setOrientation(LinearLayout.HORIZONTAL);
-        electricity.setGravity(Gravity.CENTER_VERTICAL);
-        LinearLayout electricityText = new LinearLayout(this);
-        electricityText.setOrientation(LinearLayout.VERTICAL);
-        TextView electricityTitle = label("剩余电费", 14, mutedColor());
-        TextView electricityValue = label(Double.isNaN(electricityBalance) ? "--" : scoreDf.format(electricityBalance) + " 元", 24, textColor());
-        electricityValue.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
-        electricityText.addView(electricityTitle);
-        electricityText.addView(electricityValue);
-        electricity.addView(electricityText, new LinearLayout.LayoutParams(0, dp(70), 1));
-        ImageView electricityIcon = new ImageView(this);
-        electricityIcon.setImageResource(android.R.drawable.ic_popup_sync);
-        electricityIcon.setColorFilter(primaryColor());
-        electricityIcon.setContentDescription("更新电费");
-        electricityIcon.setPadding(dp(10), dp(10), dp(10), dp(10));
-        electricityIcon.setOnClickListener(v -> openPortal("electricity", false));
-        electricity.addView(electricityIcon, new LinearLayout.LayoutParams(dp(48), dp(48)));
-        l.addView(electricity);
-
-        addGap(l, 16);
         l.addView(section("今日课程"));
         List<ScheduleModels.Course> todayCourses = coursesForDate(LocalDate.now(), selectedSemester());
         if (todayCourses.isEmpty()) {
@@ -419,8 +414,9 @@ public class MainActivity extends Activity {
         scroll.addView(l);
         content.addView(scroll);
 
-        l.addView(title("课表"));
-        addGap(l, 12);
+        LinearLayout header = pageHeader("课表", "一周课程总览");
+        header.setPadding(dp(8), 0, dp(8), dp(12));
+        l.addView(header);
 
         if (semesters.isEmpty()) {
             l.addView(emptyHint("还没有课表数据"));
@@ -437,6 +433,7 @@ public class MainActivity extends Activity {
             return;
         }
 
+        LinearLayout tools = card(panelColor());
         LinearLayout topRow = new LinearLayout(this);
         topRow.setGravity(Gravity.CENTER_VERTICAL);
         Button semesterButton = action(semester.name, false);
@@ -455,10 +452,10 @@ public class MainActivity extends Activity {
             if (!scheduleShowMonth) scheduleMonthAnchor = weekStartForCurrentSelection(semester);
             showTab(TAB_SCHEDULE);
         });
-        topRow.addView(monthButton, new LinearLayout.LayoutParams(dp(108), dp(42)));
-        l.addView(topRow);
+        topRow.addView(monthButton, new LinearLayout.LayoutParams(dp(96), dp(40)));
+        tools.addView(topRow);
 
-        addGap(l, 10);
+        addGap(tools, 8);
         LinearLayout switchRow = new LinearLayout(this);
         switchRow.setGravity(Gravity.CENTER_VERTICAL);
         Button prev = stepButton("‹");
@@ -479,12 +476,13 @@ public class MainActivity extends Activity {
             else scheduleWeekOffset++;
             showTab(TAB_SCHEDULE);
         });
-        switchRow.addView(prev, new LinearLayout.LayoutParams(dp(46), dp(42)));
+        switchRow.addView(prev, new LinearLayout.LayoutParams(dp(40), dp(38)));
         addHorizontalGap(switchRow, 8);
-        switchRow.addView(today, new LinearLayout.LayoutParams(0, dp(42), 1));
+        switchRow.addView(today, new LinearLayout.LayoutParams(0, dp(38), 1));
         addHorizontalGap(switchRow, 8);
-        switchRow.addView(next, new LinearLayout.LayoutParams(dp(46), dp(42)));
-        l.addView(switchRow);
+        switchRow.addView(next, new LinearLayout.LayoutParams(dp(40), dp(38)));
+        tools.addView(switchRow);
+        l.addView(tools);
 
         addGap(l, 12);
         if (scheduleShowMonth) {
@@ -500,39 +498,27 @@ public class MainActivity extends Activity {
         scroll.addView(l);
         content.addView(scroll);
 
-        l.addView(title("成绩"));
-        addGap(l, 12);
+        LinearLayout header = pageHeader("成绩", "共 " + grades.size() + " 门课程");
+        ImageView update = iconButton(R.drawable.ic_sync, "手动更新成绩");
+        update.setOnClickListener(v -> openPortal("grades", false));
+        header.addView(update, new LinearLayout.LayoutParams(dp(40), dp(40)));
+        l.addView(header);
 
-        LinearLayout summary = card(primaryColor());
-        summary.setPadding(dp(18), dp(18), dp(18), dp(18));
-        TextView cap = label("当前 GPA", 13, Color.WHITE);
-        summary.addView(cap);
-        TextView gpa = label(grades.isEmpty() ? "--" : weightedPoint(), 36, Color.WHITE);
-        gpa.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
-        summary.addView(gpa, new LinearLayout.LayoutParams(-1, dp(54)));
-
-        LinearLayout metrics = new LinearLayout(this);
-        TextView weighted = label("加权成绩\n" + (grades.isEmpty() ? "--" : weightedScore()), 13, Color.WHITE);
-        TextView count = label("课程\n" + grades.size() + " 门", 13, Color.WHITE);
-        weighted.setGravity(Gravity.CENTER_VERTICAL);
-        count.setGravity(Gravity.CENTER_VERTICAL);
-        metrics.addView(weighted, new LinearLayout.LayoutParams(0, dp(54), 1));
-        metrics.addView(count, new LinearLayout.LayoutParams(0, dp(54), 1));
-        summary.addView(metrics);
+        LinearLayout summary = card(panelColor());
+        summary.setOrientation(LinearLayout.HORIZONTAL);
+        summary.addView(metric("GPA", grades.isEmpty() ? "--" : weightedPoint(), "绩点"), new LinearLayout.LayoutParams(0, dp(76), 1));
+        summary.addView(metric("加权成绩", grades.isEmpty() ? "--" : weightedScore(), "分"), new LinearLayout.LayoutParams(0, dp(76), 1));
+        summary.addView(metric("课程", String.valueOf(grades.size()), "门"), new LinearLayout.LayoutParams(0, dp(76), 1));
         l.addView(summary);
 
-        addGap(l, 12);
-        Button update = action("手动更新成绩", false);
-        update.setTextColor(Color.rgb(21, 101, 192));
-        update.setBackground(border(Color.rgb(227, 242, 253), Color.rgb(144, 202, 249)));
-        update.setOnClickListener(v -> openPortal("grades", false));
-        l.addView(update, new LinearLayout.LayoutParams(-1, dp(46)));
-
-        l.addView(section("全部成绩"));
+        l.addView(section("成绩明细"));
         if (grades.isEmpty()) {
             l.addView(emptyHint("还没有成绩"));
         } else {
-            for (Grade grade : grades) l.addView(gradeRow(grade));
+            LinearLayout gradeList = card(panelColor());
+            gradeList.setPadding(dp(14), 0, dp(14), 0);
+            for (Grade grade : grades) gradeList.addView(gradeRow(grade));
+            l.addView(gradeList);
         }
     }
 
@@ -542,36 +528,37 @@ public class MainActivity extends Activity {
         scroll.addView(l);
         content.addView(scroll);
 
-        l.addView(title("管理"));
-        addGap(l, 12);
+        l.addView(pageHeader("管理", "维护课表与学期数据"));
 
+        l.addView(section("课表同步"));
+        LinearLayout syncCard = card(panelColor());
         LinearLayout actionRow = new LinearLayout(this);
-        actionRow.setWeightSum(2);
         Button importSchedule = action("导入课表", true);
         importSchedule.setOnClickListener(v -> openPortal("schedule", false));
-        Button addCourse = action("新增课程", false);
-        addCourse.setOnClickListener(v -> showCourseDialog(null));
         actionRow.addView(importSchedule, new LinearLayout.LayoutParams(0, dp(46), 1));
-        addHorizontalGap(actionRow, 10);
-        actionRow.addView(addCourse, new LinearLayout.LayoutParams(0, dp(46), 1));
-        l.addView(actionRow);
-        addGap(l, 10);
-        Button updateSchedule = action("手动更新课表", false);
+        addHorizontalGap(actionRow, 8);
+        Button updateSchedule = action("手动更新", false);
         updateSchedule.setOnClickListener(v -> openPortal("schedule", false));
-        l.addView(updateSchedule, new LinearLayout.LayoutParams(-1, dp(46)));
+        actionRow.addView(updateSchedule, new LinearLayout.LayoutParams(0, dp(46), 1));
+        syncCard.addView(actionRow);
+        l.addView(syncCard);
 
-        l.addView(section("学期"));
-        Button addSemester = action("新增学期", false);
+        LinearLayout semesterHeader = sectionHeader("学期");
+        Button addSemester = action("新增", false);
         addSemester.setOnClickListener(v -> showSemesterDialog(null));
-        l.addView(addSemester, new LinearLayout.LayoutParams(-1, dp(46)));
-        addGap(l, 8);
+        semesterHeader.addView(addSemester, new LinearLayout.LayoutParams(dp(76), dp(36)));
+        l.addView(semesterHeader);
         if (semesters.isEmpty()) {
             l.addView(emptyHint("还没有学期"));
         } else {
             for (ScheduleModels.Semester semester : semesters) l.addView(semesterCard(semester));
         }
 
-        l.addView(section("课程"));
+        LinearLayout courseHeader = sectionHeader("课程");
+        Button addCourse = action("新增", false);
+        addCourse.setOnClickListener(v -> showCourseDialog(null));
+        courseHeader.addView(addCourse, new LinearLayout.LayoutParams(dp(76), dp(36)));
+        l.addView(courseHeader);
         ScheduleModels.Semester semester = selectedSemester();
         if (semester == null) {
             l.addView(emptyHint("请选择学期后再管理课程"));
@@ -582,7 +569,7 @@ public class MainActivity extends Activity {
                 ScheduleStorage.saveSelectedSemester(store, selectedSemesterId);
                 showTab(TAB_MANAGE);
             }));
-            l.addView(picker, new LinearLayout.LayoutParams(-1, dp(46)));
+            l.addView(picker, new LinearLayout.LayoutParams(-1, dp(42)));
             addGap(l, 8);
             List<ScheduleModels.Course> semesterCourses = sortedCourses(coursesForSemester(semester.id));
             if (semesterCourses.isEmpty()) {
@@ -600,89 +587,205 @@ public class MainActivity extends Activity {
         scroll.addView(l);
         content.addView(scroll);
 
-        l.addView(title("设置"));
-        addGap(l, 12);
+        if (settingsPanel.isEmpty()) {
+            l.addView(pageHeader("设置", "账号、同步与显示"));
+            addSettingsRoot(l);
+            return;
+        }
 
-        l.addView(section("教务账号"));
+        String title;
+        String subtitle;
+        switch (settingsPanel) {
+            case "account":
+                title = "账号";
+                subtitle = "统一身份认证账号";
+                break;
+            case "updates":
+                title = "自动更新";
+                subtitle = "后台同步频率与运行方式";
+                break;
+            case "notifications":
+                title = "通知";
+                subtitle = "数据变化时提醒";
+                break;
+            case "electricity":
+                title = "电费提醒";
+                subtitle = "余额不足阈值";
+                break;
+            case "appearance":
+                title = "外观";
+                subtitle = "主题与显示模式";
+                break;
+            case "data":
+                title = "数据";
+                subtitle = "课表备份与恢复";
+                break;
+            default:
+                title = "关于";
+                subtitle = "应用信息与许可";
+                break;
+        }
+        l.addView(settingsPanelHeader(title, subtitle));
+        switch (settingsPanel) {
+            case "account":
+                addAccountSettings(l);
+                break;
+            case "updates":
+                addUpdateSettings(l);
+                break;
+            case "notifications":
+                addNotificationSettings(l);
+                break;
+            case "electricity":
+                addElectricitySettings(l);
+                break;
+            case "appearance":
+                addAppearanceSettings(l);
+                break;
+            case "data":
+                addDataSettings(l);
+                break;
+            default:
+                addAboutSettings(l);
+                break;
+        }
+    }
+
+    private void addSettingsRoot(LinearLayout parent) {
         String[] credentials = readCredentials();
-        LinearLayout account = card(surfaceColor());
-        TextView accountTitle = label(credentials[0].isEmpty() ? "尚未登录" : "已保存账号 " + maskAccount(credentials[0]), 16, textColor());
+        parent.addView(section("账户与同步"));
+        LinearLayout sync = card(panelColor());
+        sync.setPadding(dp(14), 0, dp(8), 0);
+        addSettingNavigation(sync, "账号", credentials[0].isEmpty() ? "尚未登录" : maskAccount(credentials[0]), "account", true);
+        addSettingNavigation(sync, "自动更新", automaticUpdateSummary(), "updates", true);
+        addSettingNavigation(sync, "通知", notificationSummary(), "notifications", false);
+        parent.addView(sync);
+
+        parent.addView(section("偏好"));
+        LinearLayout preferences = card(panelColor());
+        preferences.setPadding(dp(14), 0, dp(8), 0);
+        addSettingNavigation(preferences, "电费提醒",
+                electricityAlertEnabled ? "低于 " + scoreDf.format(electricityAlertThreshold) + " 元时提醒" : "已关闭",
+                "electricity", true);
+        addSettingNavigation(preferences, "外观", darkMode ? "深色模式" : "浅色模式", "appearance", false);
+        parent.addView(preferences);
+
+        parent.addView(section("其他"));
+        LinearLayout other = card(panelColor());
+        other.setPadding(dp(14), 0, dp(8), 0);
+        addSettingNavigation(other, "数据", "导入或导出课表数据", "data", true);
+        addSettingNavigation(other, "关于", "翱翔助手 " + appVersion(), "about", false);
+        parent.addView(other);
+    }
+
+    private void addAccountSettings(LinearLayout parent) {
+        String[] credentials = readCredentials();
+        LinearLayout account = card(panelColor());
+        TextView accountTitle = label(credentials[0].isEmpty() ? "尚未登录" : maskAccount(credentials[0]), 15, textColor());
         accountTitle.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
         account.addView(accountTitle);
-        addGap(account, 14);
+        addGap(account, 10);
         LinearLayout actions = new LinearLayout(this);
-        Button signIn = action(credentials[0].isEmpty() ? "登录教务系统" : "更换账号", true);
+        Button signIn = action(credentials[0].isEmpty() ? "登录" : "更换账号", true);
         signIn.setOnClickListener(v -> showCredentialsDialog(false));
         Button signOut = action("退出登录", false);
         signOut.setEnabled(!credentials[0].isEmpty());
         signOut.setOnClickListener(v -> signOut());
-        actions.addView(signIn, new LinearLayout.LayoutParams(0, dp(46), 1));
-        addHorizontalGap(actions, 10);
-        actions.addView(signOut, new LinearLayout.LayoutParams(0, dp(46), 1));
+        actions.addView(signIn, new LinearLayout.LayoutParams(0, dp(42), 1));
+        addHorizontalGap(actions, 8);
+        actions.addView(signOut, new LinearLayout.LayoutParams(0, dp(42), 1));
         account.addView(actions);
-        l.addView(account);
+        parent.addView(account);
+    }
 
-        addAutomaticUpdateControls(l, "成绩更新", "grades");
-        addAutomaticUpdateControls(l, "课表更新", "schedule");
-        addAutomaticUpdateControls(l, "电费更新", "electricity");
+    private void addUpdateSettings(LinearLayout parent) {
+        addAutomaticUpdateControls(parent, "成绩", "grades");
+        addAutomaticUpdateControls(parent, "课表", "schedule");
+        addAutomaticUpdateControls(parent, "电费", "electricity");
 
+        parent.addView(section("运行"));
+        LinearLayout runCard = card(panelColor());
+        Switch bootSwitch = settingSwitch("开机后恢复自动更新", bootAutoStart);
+        bootSwitch.setOnCheckedChangeListener((button, checked) -> {
+            bootAutoStart = checked;
+            store.edit().putBoolean("boot_auto_start", checked).apply();
+        });
+        runCard.addView(bootSwitch, new LinearLayout.LayoutParams(-1, dp(48)));
+        parent.addView(runCard);
+    }
+
+    private void addNotificationSettings(LinearLayout parent) {
+        LinearLayout notificationCard = card(panelColor());
+        Switch gradeNotice = settingSwitch("成绩有更新时通知", gradeUpdateNotificationEnabled);
+        gradeNotice.setOnCheckedChangeListener((button, checked) -> {
+            gradeUpdateNotificationEnabled = checked;
+            store.edit().putBoolean("grade_update_notification_enabled", checked).apply();
+            if (checked) requestNotificationPermission();
+            else getSystemService(NotificationManager.class).cancel(1001);
+        });
+        notificationCard.addView(gradeNotice, new LinearLayout.LayoutParams(-1, dp(48)));
+        notificationCard.addView(settingDivider());
+        Switch scheduleNotice = settingSwitch("课表有更新时通知", scheduleUpdateNotificationEnabled);
+        scheduleNotice.setOnCheckedChangeListener((button, checked) -> {
+            scheduleUpdateNotificationEnabled = checked;
+            store.edit().putBoolean("schedule_update_notification_enabled", checked).apply();
+            if (checked) requestNotificationPermission();
+            else getSystemService(NotificationManager.class).cancel(1003);
+        });
+        notificationCard.addView(scheduleNotice, new LinearLayout.LayoutParams(-1, dp(48)));
+        parent.addView(notificationCard);
+    }
+
+    private void addElectricitySettings(LinearLayout parent) {
+        LinearLayout electricityCard = card(panelColor());
         LinearLayout alertRow = new LinearLayout(this);
         alertRow.setGravity(Gravity.CENTER_VERTICAL);
-        Switch alertSwitch = new Switch(this);
-        alertSwitch.setText("电费不足提醒");
-        alertSwitch.setTextColor(textColor());
-        alertSwitch.setChecked(electricityAlertEnabled);
+        Switch alertSwitch = settingSwitch("余额不足提醒", electricityAlertEnabled);
         alertRow.addView(alertSwitch, new LinearLayout.LayoutParams(0, dp(52), 1));
         EditText thresholdInput = new EditText(this);
         thresholdInput.setSingleLine(true);
         thresholdInput.setGravity(Gravity.CENTER);
+        thresholdInput.setIncludeFontPadding(false);
+        thresholdInput.setTextSize(16);
+        thresholdInput.setPadding(dp(8), 0, dp(8), dp(1));
         thresholdInput.setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL);
         thresholdInput.setText(scoreDf.format(electricityAlertThreshold));
-        alertRow.addView(thresholdInput, new LinearLayout.LayoutParams(dp(86), dp(48)));
+        thresholdInput.setBackground(border(surfaceColor(), lineColor(), 5));
+        alertRow.addView(thresholdInput, new LinearLayout.LayoutParams(dp(84), dp(42)));
         TextView yuan = label("元", 13, mutedColor());
         yuan.setGravity(Gravity.CENTER);
-        alertRow.addView(yuan, new LinearLayout.LayoutParams(dp(34), dp(48)));
-        Button saveThreshold = action("保存", false);
-        alertRow.addView(saveThreshold, new LinearLayout.LayoutParams(dp(70), dp(42)));
-        l.addView(alertRow);
+        alertRow.addView(yuan, new LinearLayout.LayoutParams(dp(28), dp(38)));
+        electricityCard.addView(alertRow);
         alertSwitch.setOnCheckedChangeListener((button, checked) -> {
             electricityAlertEnabled = checked;
             store.edit().putBoolean("electricity_alert_enabled", checked).apply();
             if (checked) requestNotificationPermission();
             else store.edit().putBoolean("electricity_alert_active", false).apply();
         });
+        LinearLayout electricityActions = new LinearLayout(this);
+        Button saveThreshold = action("保存余量", false);
         saveThreshold.setOnClickListener(v -> saveElectricityThreshold(thresholdInput));
-
-        Button updateElectricity = action("立即更新电费", false);
+        Button updateElectricity = action("立即更新", false);
         updateElectricity.setOnClickListener(v -> openPortal("electricity", false));
-        l.addView(updateElectricity, new LinearLayout.LayoutParams(-1, dp(46)));
-        addGap(l, 10);
+        electricityActions.addView(saveThreshold, new LinearLayout.LayoutParams(0, dp(40), 1));
+        addHorizontalGap(electricityActions, 8);
+        electricityActions.addView(updateElectricity, new LinearLayout.LayoutParams(0, dp(40), 1));
+        electricityCard.addView(electricityActions);
+        parent.addView(electricityCard);
+    }
 
-        Switch bootSwitch = new Switch(this);
-        bootSwitch.setText("开机自启动（静默）");
-        bootSwitch.setTextColor(textColor());
-        bootSwitch.setChecked(bootAutoStart);
-        bootSwitch.setOnCheckedChangeListener((button, checked) -> {
-            bootAutoStart = checked;
-            store.edit().putBoolean("boot_auto_start", checked).apply();
-        });
-        l.addView(bootSwitch, new LinearLayout.LayoutParams(-1, dp(52)));
-        addGap(l, 10);
-
-        l.addView(section("外观"));
-        LinearLayout appearance = card(surfaceColor());
-        Switch darkSwitch = new Switch(this);
-        darkSwitch.setText("深色模式");
-        darkSwitch.setTextColor(textColor());
-        darkSwitch.setChecked(darkMode);
+    private void addAppearanceSettings(LinearLayout parent) {
+        LinearLayout appearance = card(panelColor());
+        Switch darkSwitch = settingSwitch("深色模式", darkMode);
         darkSwitch.setOnCheckedChangeListener((button, checked) -> {
             darkMode = checked;
             saveTheme();
             applyWindowTheme();
             showTab(TAB_SETTINGS);
         });
-        appearance.addView(darkSwitch, new LinearLayout.LayoutParams(-1, dp(52)));
-        addGap(appearance, 6);
+        appearance.addView(darkSwitch, new LinearLayout.LayoutParams(-1, dp(48)));
+        appearance.addView(settingDivider());
+        addGap(appearance, 10);
         LinearLayout swatchRow = new LinearLayout(this);
         swatchRow.setGravity(Gravity.CENTER_VERTICAL);
         for (String color : ScheduleModels.PRESET_COLORS) {
@@ -694,27 +797,62 @@ public class MainActivity extends Activity {
                 showTab(TAB_SETTINGS);
             });
             swatchRow.addView(swatch);
-            addHorizontalGap(swatchRow, 10);
+            addHorizontalGap(swatchRow, 8);
         }
         appearance.addView(swatchRow);
-        l.addView(appearance);
+        parent.addView(appearance);
+    }
 
-        l.addView(section("数据"));
-        LinearLayout dataCard = card(surfaceColor());
+    private void addDataSettings(LinearLayout parent) {
+        LinearLayout dataCard = card(panelColor());
+        LinearLayout dataActions = new LinearLayout(this);
         Button export = action("导出课表数据", false);
         export.setOnClickListener(v -> exportBackup());
         Button importData = action("导入课表数据", false);
         importData.setOnClickListener(v -> requestImportBackup());
-        dataCard.addView(export, new LinearLayout.LayoutParams(-1, dp(46)));
-        addGap(dataCard, 8);
-        dataCard.addView(importData, new LinearLayout.LayoutParams(-1, dp(46)));
-        l.addView(dataCard);
+        dataActions.addView(export, new LinearLayout.LayoutParams(0, dp(42), 1));
+        addHorizontalGap(dataActions, 8);
+        dataActions.addView(importData, new LinearLayout.LayoutParams(0, dp(42), 1));
+        dataCard.addView(dataActions);
+        parent.addView(dataCard);
+    }
+
+    private void addAboutSettings(LinearLayout parent) {
+        LinearLayout identity = card(panelColor());
+        TextView name = label("翱翔助手", 20, textColor());
+        name.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        identity.addView(name);
+        identity.addView(label("版本 " + appVersion(), 13, mutedColor()));
+        addGap(identity, 12);
+        identity.addView(label("包名", 11, mutedColor()));
+        identity.addView(label(getPackageName(), 13, textColor()));
+        parent.addView(identity);
+
+        parent.addView(section("项目"));
+        LinearLayout project = card(panelColor());
+        TextView repository = label("GitHub 仓库", 14, textColor());
+        repository.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        project.addView(repository);
+        project.addView(label("Lorcas-Zephyr/aoxiang-assistant", 12, mutedColor()));
+        addGap(project, 10);
+        Button openRepository = action("打开仓库", false);
+        openRepository.setOnClickListener(v -> startActivity(new Intent(Intent.ACTION_VIEW,
+                Uri.parse("https://github.com/Lorcas-Zephyr/aoxiang-assistant"))));
+        project.addView(openRepository, new LinearLayout.LayoutParams(-1, dp(42)));
+        parent.addView(project);
+
+        parent.addView(section("说明"));
+        LinearLayout notice = card(panelColor());
+        notice.addView(label("本应用不是西北工业大学官方应用。", 13, textColor()));
+        addGap(notice, 8);
+        notice.addView(label("课表功能经许可参考 Whippap/soaring-schedule-remake。", 12, mutedColor()));
+        parent.addView(notice);
     }
 
     private View buildWeekSchedule(ScheduleModels.Semester semester) {
         LinearLayout wrap = new LinearLayout(this);
         wrap.setOrientation(LinearLayout.VERTICAL);
-        wrap.setBackground(bg(surfaceColor(), 18));
+        wrap.setBackground(bg(surfaceColor(), 5));
         wrap.setPadding(dp(4), dp(10), dp(4), dp(10));
 
         int week = currentScheduleWeek(semester);
@@ -779,7 +917,7 @@ public class MainActivity extends Activity {
 
         LinearLayout wrap = new LinearLayout(this);
         wrap.setOrientation(LinearLayout.VERTICAL);
-        wrap.setBackground(bg(surfaceColor(), 18));
+        wrap.setBackground(bg(surfaceColor(), 5));
         wrap.setPadding(dp(12), dp(12), dp(12), dp(12));
 
         TextView title = label(monthStart.getYear() + "年" + monthStart.getMonthValue() + "月", 15, textColor());
@@ -1081,6 +1219,8 @@ public class MainActivity extends Activity {
                     return;
                 }
                 saveCredentials(account, secret);
+                scheduleAllAutomaticUpdates(500L);
+                syncBackgroundService();
                 pendingSmsCode = "";
                 loginPromptVisible = false;
                 loginDialog.dismiss();
@@ -1355,13 +1495,16 @@ public class MainActivity extends Activity {
         }
         if (out.isEmpty()) return;
         boolean first = grades.isEmpty();
-        boolean changed = !first && !gradeSignature(grades).equals(gradeSignature(out));
+        List<String> changedCourses = first ? Collections.emptyList()
+                : UpdateDiff.changedNames(gradeDiffItems(grades), gradeDiffItems(out));
         boolean wasAutomatic = automaticRun;
         grades = out;
         saveGrades();
         cancelAutomation();
         if (wasAutomatic) {
-            if (changed) sendGradeNotification();
+            if (gradeUpdateNotificationEnabled && !changedCourses.isEmpty()) {
+                sendGradeNotification(changedCourses);
+            }
         } else {
             Toast.makeText(this, "已更新 " + out.size() + " 门成绩", Toast.LENGTH_SHORT).show();
         }
@@ -1373,7 +1516,7 @@ public class MainActivity extends Activity {
         if (payload == null) return;
         boolean wasAutomatic = automaticRun;
         boolean hadPreviousSchedule = !courses.isEmpty();
-        String previousSignature = scheduleSignature(courses);
+        List<UpdateDiff.Item> previousItems = UpdateDiff.scheduleItems(courses);
         ScheduleImport.ParsedData parsed = ScheduleImport.parsePayload(payload);
         int importedCount = 0;
         String firstImportedId = "";
@@ -1427,14 +1570,18 @@ public class MainActivity extends Activity {
 
         semesters = updatedSemesters;
         courses = updatedCourses;
-        boolean changed = hadPreviousSchedule && !previousSignature.equals(scheduleSignature(courses));
+        List<String> changedCourses = hadPreviousSchedule
+                ? UpdateDiff.changedNames(previousItems, UpdateDiff.scheduleItems(courses))
+                : Collections.emptyList();
         if (!firstImportedId.isEmpty()) selectedSemesterId = firstImportedId;
         saveScheduleState();
         cancelAutomation();
         scheduleShowMonth = false;
         scheduleWeekOffset = 0;
         if (wasAutomatic) {
-            if (changed) sendScheduleNotification();
+            if (scheduleUpdateNotificationEnabled && !changedCourses.isEmpty()) {
+                sendScheduleNotification(changedCourses);
+            }
             if (currentTab == TAB_HOME || currentTab == TAB_SCHEDULE) showTab(currentTab);
         } else {
             showTab(TAB_SCHEDULE);
@@ -1506,6 +1653,19 @@ public class MainActivity extends Activity {
         automationHandler.postDelayed(scheduledUpdateTask, Math.max(0L, nextAt - now));
     }
 
+    private void syncBackgroundService() {
+        if (!hasCredentials() || (!autoGradeEnabled && !autoScheduleEnabled && !autoElectricityEnabled)) {
+            stopBackgroundService();
+            return;
+        }
+        BackgroundSyncScheduler.schedule(this);
+    }
+
+    private void stopBackgroundService() {
+        BackgroundSyncScheduler.cancel(this);
+        stopService(new Intent(this, BackgroundSyncService.class));
+    }
+
     private void cancelScheduledUpdates() {
         if (scheduledUpdateTask != null) automationHandler.removeCallbacks(scheduledUpdateTask);
         scheduledUpdateTask = null;
@@ -1514,6 +1674,7 @@ public class MainActivity extends Activity {
     private void recordAutomaticAttempt(String target, boolean wasAutomatic) {
         if (wasAutomatic) store.edit().putLong("auto_last_" + target, System.currentTimeMillis()).apply();
         scheduleAllAutomaticUpdates(0L);
+        syncBackgroundService();
     }
 
     private void cancelAutomaticAttempt(String target) {
@@ -1671,6 +1832,7 @@ public class MainActivity extends Activity {
     private void signOut() {
         cancelScheduledUpdates();
         cancelAutomation();
+        stopBackgroundService();
         grades = new ArrayList<>();
         semesters = new ArrayList<>();
         courses = new ArrayList<>();
@@ -1766,21 +1928,21 @@ public class MainActivity extends Activity {
         }
     }
 
-    private void sendGradeNotification() {
-        Intent intent = new Intent(this, MainActivity.class);
+    private void sendGradeNotification(List<String> changedCourses) {
+        Intent intent = new Intent(this, MainActivity.class).putExtra(EXTRA_START_TAB, TAB_GRADES);
         PendingIntent pending = PendingIntent.getActivity(this, 0, intent, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
         android.app.Notification.Builder builder = Build.VERSION.SDK_INT >= 26
                 ? new android.app.Notification.Builder(this, GRADE_CHANNEL)
                 : new android.app.Notification.Builder(this);
         builder.setSmallIcon(R.drawable.ic_launcher)
                 .setContentTitle("成绩有更新")
-                .setContentText("已获取最新成绩，点击查看详情")
+                .setContentText(UpdateDiff.notificationText(changedCourses, true))
                 .setAutoCancel(true)
                 .setContentIntent(pending);
         getSystemService(NotificationManager.class).notify(1001, builder.build());
     }
 
-    private void sendScheduleNotification() {
+    private void sendScheduleNotification(List<String> changedCourses) {
         Intent intent = new Intent(this, MainActivity.class).putExtra(EXTRA_START_TAB, TAB_SCHEDULE);
         PendingIntent pending = PendingIntent.getActivity(this, 1, intent, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
         android.app.Notification.Builder builder = Build.VERSION.SDK_INT >= 26
@@ -1788,7 +1950,7 @@ public class MainActivity extends Activity {
                 : new android.app.Notification.Builder(this);
         builder.setSmallIcon(R.drawable.ic_launcher)
                 .setContentTitle("课表有更新")
-                .setContentText("已获取最新课表，点击查看")
+                .setContentText(UpdateDiff.notificationText(changedCourses, false))
                 .setAutoCancel(true)
                 .setContentIntent(pending);
         getSystemService(NotificationManager.class).notify(1003, builder.build());
@@ -1806,11 +1968,15 @@ public class MainActivity extends Activity {
     }
 
     private int backgroundColor() {
-        return darkMode ? Color.rgb(16, 24, 39) : Color.WHITE;
+        return darkMode ? Color.rgb(17, 21, 28) : Color.rgb(247, 249, 252);
     }
 
     private int surfaceColor() {
-        return darkMode ? Color.rgb(23, 32, 48) : Color.rgb(246, 250, 255);
+        return darkMode ? Color.rgb(28, 34, 43) : Color.rgb(239, 244, 249);
+    }
+
+    private int panelColor() {
+        return darkMode ? Color.rgb(24, 29, 37) : Color.WHITE;
     }
 
     private int textColor() {
@@ -1822,7 +1988,7 @@ public class MainActivity extends Activity {
     }
 
     private int lineColor() {
-        return darkMode ? Color.rgb(41, 57, 80) : Color.rgb(229, 237, 245);
+        return darkMode ? Color.rgb(53, 62, 74) : Color.rgb(220, 227, 235);
     }
 
     private int primaryColor() {
@@ -1845,7 +2011,7 @@ public class MainActivity extends Activity {
     private LinearLayout column() {
         LinearLayout l = new LinearLayout(this);
         l.setOrientation(LinearLayout.VERTICAL);
-        l.setPadding(dp(20), dp(18), dp(20), dp(26));
+        l.setPadding(dp(16), dp(14), dp(16), dp(24));
         return l;
     }
 
@@ -1859,24 +2025,155 @@ public class MainActivity extends Activity {
     }
 
     private TextView title(String text) {
-        TextView t = label(text, 26, textColor());
+        TextView t = label(text, 24, textColor());
         t.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
-        t.setPadding(0, dp(8), 0, dp(3));
+        t.setPadding(0, dp(5), 0, dp(2));
         return t;
     }
 
     private TextView section(String text) {
-        TextView t = label(text, 16, textColor());
+        TextView t = label(text, 14, textColor());
         t.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
-        t.setPadding(0, dp(18), 0, dp(10));
+        t.setPadding(0, dp(18), 0, dp(8));
         return t;
+    }
+
+    private LinearLayout pageHeader(String heading, String subtitle) {
+        LinearLayout row = new LinearLayout(this);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(0, 0, 0, dp(12));
+        LinearLayout text = new LinearLayout(this);
+        text.setOrientation(LinearLayout.VERTICAL);
+        text.addView(title(heading));
+        if (subtitle != null && !subtitle.isEmpty()) text.addView(label(subtitle, 12, mutedColor()));
+        row.addView(text, new LinearLayout.LayoutParams(0, -2, 1));
+        return row;
+    }
+
+    private LinearLayout settingsPanelHeader(String heading, String subtitle) {
+        LinearLayout row = pageHeader(heading, subtitle);
+        ImageView back = iconButton(R.drawable.ic_arrow_back, "返回设置");
+        back.setOnClickListener(v -> {
+            settingsPanel = "";
+            if (currentPage != null) currentPage.scrollTo(0, 0);
+            tabScrollPositions[TAB_SETTINGS] = 0;
+            showTab(TAB_SETTINGS);
+        });
+        row.addView(back, 0, new LinearLayout.LayoutParams(dp(40), dp(40)));
+        ((LinearLayout.LayoutParams) back.getLayoutParams()).setMarginEnd(dp(10));
+        return row;
+    }
+
+    private void addSettingNavigation(LinearLayout parent, String heading, String summary,
+                                      String panel, boolean divider) {
+        LinearLayout row = new LinearLayout(this);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(0, dp(8), 0, dp(8));
+        LinearLayout text = new LinearLayout(this);
+        text.setOrientation(LinearLayout.VERTICAL);
+        text.setGravity(Gravity.CENTER_VERTICAL);
+        TextView title = label(heading, 14, textColor());
+        title.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        text.addView(title);
+        if (summary != null && !summary.isEmpty()) text.addView(label(summary, 11, mutedColor()));
+        row.addView(text, new LinearLayout.LayoutParams(0, dp(54), 1));
+        ImageView arrow = new ImageView(this);
+        arrow.setImageResource(R.drawable.ic_chevron_right);
+        arrow.setColorFilter(mutedColor());
+        arrow.setContentDescription("打开" + heading);
+        arrow.setPadding(dp(7), dp(7), dp(7), dp(7));
+        row.addView(arrow, new LinearLayout.LayoutParams(dp(32), dp(32)));
+        row.setOnClickListener(v -> {
+            settingsPanel = panel;
+            if (currentPage != null) currentPage.scrollTo(0, 0);
+            tabScrollPositions[TAB_SETTINGS] = 0;
+            showTab(TAB_SETTINGS);
+        });
+        parent.addView(row);
+        if (divider) parent.addView(settingDivider());
+    }
+
+    private String automaticUpdateSummary() {
+        int enabled = (autoGradeEnabled ? 1 : 0) + (autoScheduleEnabled ? 1 : 0)
+                + (autoElectricityEnabled ? 1 : 0);
+        return enabled == 0 ? "全部关闭" : "已开启 " + enabled + " 项";
+    }
+
+    private String notificationSummary() {
+        if (gradeUpdateNotificationEnabled && scheduleUpdateNotificationEnabled) return "成绩与课表变化";
+        if (gradeUpdateNotificationEnabled) return "仅成绩变化";
+        if (scheduleUpdateNotificationEnabled) return "仅课表变化";
+        return "已关闭";
+    }
+
+    private String appVersion() {
+        try {
+            android.content.pm.PackageInfo info = getPackageManager().getPackageInfo(getPackageName(), 0);
+            long versionCode = Build.VERSION.SDK_INT >= 28 ? info.getLongVersionCode() : info.versionCode;
+            return info.versionName + " (" + versionCode + ")";
+        } catch (Exception ignored) {
+            return "1.2 (3)";
+        }
+    }
+
+    private LinearLayout sectionHeader(String heading) {
+        LinearLayout row = new LinearLayout(this);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        TextView text = section(heading);
+        row.addView(text, new LinearLayout.LayoutParams(0, dp(54), 1));
+        return row;
+    }
+
+    private LinearLayout metric(String caption, String value, String unit) {
+        LinearLayout metric = new LinearLayout(this);
+        metric.setOrientation(LinearLayout.VERTICAL);
+        metric.setGravity(Gravity.CENTER_VERTICAL);
+        metric.setPadding(dp(8), dp(4), dp(8), dp(4));
+        metric.addView(label(caption, 11, mutedColor()));
+        LinearLayout valueRow = new LinearLayout(this);
+        valueRow.setGravity(Gravity.BOTTOM);
+        TextView number = label(value, 23, textColor());
+        number.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        valueRow.addView(number);
+        TextView suffix = label(" " + unit, 10, mutedColor());
+        suffix.setPadding(0, 0, 0, dp(3));
+        valueRow.addView(suffix);
+        metric.addView(valueRow);
+        return metric;
+    }
+
+    private ImageView iconButton(int resource, String description) {
+        ImageView button = new ImageView(this);
+        button.setImageResource(resource);
+        button.setColorFilter(primaryColor());
+        button.setContentDescription(description);
+        button.setPadding(dp(9), dp(9), dp(9), dp(9));
+        button.setBackground(border(panelColor(), lineColor(), 5));
+        return button;
+    }
+
+    private Switch settingSwitch(String text, boolean checked) {
+        Switch value = new Switch(this);
+        value.setText(text);
+        value.setTextSize(13);
+        value.setTextColor(textColor());
+        value.setChecked(checked);
+        value.setGravity(Gravity.CENTER_VERTICAL);
+        return value;
+    }
+
+    private View settingDivider() {
+        View divider = new View(this);
+        divider.setBackgroundColor(lineColor());
+        divider.setLayoutParams(new LinearLayout.LayoutParams(-1, dp(1)));
+        return divider;
     }
 
     private LinearLayout card(int color) {
         LinearLayout c = new LinearLayout(this);
         c.setOrientation(LinearLayout.VERTICAL);
-        c.setBackground(bg(color, 18));
-        c.setPadding(dp(16), dp(13), dp(16), dp(13));
+        c.setBackground(border(color, lineColor(), 5));
+        c.setPadding(dp(14), dp(12), dp(14), dp(12));
         return c;
     }
 
@@ -1888,7 +2185,7 @@ public class MainActivity extends Activity {
     }
 
     private GradientDrawable border(int fill, int stroke) {
-        return border(fill, stroke, 16);
+        return border(fill, stroke, 5);
     }
 
     private GradientDrawable border(int fill, int stroke, int radiusDp) {
@@ -1900,12 +2197,12 @@ public class MainActivity extends Activity {
     private Button action(String text, boolean filled) {
         Button b = new Button(this);
         b.setText(text);
-        b.setTextSize(13);
+        b.setTextSize(12);
         b.setAllCaps(false);
         b.setTextColor(filled ? Color.WHITE : primaryColor());
         b.setMinHeight(dp(42));
-        b.setPadding(dp(14), 0, dp(14), 0);
-        b.setBackground(border(filled ? primaryColor() : surfaceColor(), filled ? primaryColor() : primaryColorWithAlpha(110)));
+        b.setPadding(dp(12), 0, dp(12), 0);
+        b.setBackground(border(filled ? primaryColor() : panelColor(), filled ? primaryColor() : lineColor(), 5));
         return b;
     }
 
@@ -1917,7 +2214,7 @@ public class MainActivity extends Activity {
         b.setPadding(0, 0, 0, 0);
         b.setMinWidth(0);
         b.setMinHeight(0);
-        b.setBackground(border(surfaceColor(), primaryColorWithAlpha(110)));
+        b.setBackground(border(panelColor(), lineColor(), 5));
         return b;
     }
 
@@ -1932,7 +2229,9 @@ public class MainActivity extends Activity {
 
     private TextView emptyHint(String text) {
         TextView t = label(text, 14, mutedColor());
-        t.setPadding(0, dp(4), 0, dp(4));
+        t.setGravity(Gravity.CENTER);
+        t.setBackground(border(panelColor(), lineColor(), 5));
+        t.setPadding(dp(14), dp(18), dp(14), dp(18));
         return t;
     }
 
@@ -2431,6 +2730,16 @@ public class MainActivity extends Activity {
         return rows.toString();
     }
 
+    private List<UpdateDiff.Item> gradeDiffItems(List<Grade> values) {
+        List<UpdateDiff.Item> items = new ArrayList<>();
+        for (Grade grade : values) {
+            String signature = grade.course + "|" + grade.credits + "|" + grade.point + "|"
+                    + grade.score + "|" + grade.detail;
+            items.add(new UpdateDiff.Item(grade.course, grade.course, signature));
+        }
+        return items;
+    }
+
     private String scheduleSignature(List<ScheduleModels.Course> values) {
         List<String> rows = new ArrayList<>();
         for (ScheduleModels.Course course : values) {
@@ -2481,8 +2790,19 @@ public class MainActivity extends Activity {
         intervalRow.addView(intervalTitle, new LinearLayout.LayoutParams(0, dp(44), 1));
 
         Button less = stepButton("−");
-        TextView valueLabel = label(String.valueOf(intervalValue(target)), 14, textColor());
-        valueLabel.setGravity(Gravity.CENTER);
+        EditText valueInput = new EditText(this);
+        valueInput.setSingleLine(true);
+        valueInput.setSelectAllOnFocus(true);
+        valueInput.setGravity(Gravity.CENTER);
+        valueInput.setIncludeFontPadding(false);
+        valueInput.setTextSize(14);
+        valueInput.setTextColor(textColor());
+        valueInput.setInputType(InputType.TYPE_CLASS_NUMBER);
+        valueInput.setImeOptions(android.view.inputmethod.EditorInfo.IME_ACTION_DONE);
+        valueInput.setFilters(new android.text.InputFilter[]{new android.text.InputFilter.LengthFilter(3)});
+        valueInput.setPadding(dp(4), 0, dp(4), dp(1));
+        valueInput.setBackground(border(panelColor(), lineColor(), 5));
+        valueInput.setText(String.valueOf(intervalValue(target)));
         Button more = stepButton("+");
         Spinner unit = new Spinner(this);
         String[] units = {UNIT_MINUTES, UNIT_HOURS, UNIT_DAYS};
@@ -2491,7 +2811,7 @@ public class MainActivity extends Activity {
         unit.setSelection(Arrays.asList(units).indexOf(intervalUnit(target)));
         intervalRow.addView(less, new LinearLayout.LayoutParams(dp(38), dp(38)));
         addHorizontalGap(intervalRow, 4);
-        intervalRow.addView(valueLabel, new LinearLayout.LayoutParams(dp(46), dp(38)));
+        intervalRow.addView(valueInput, new LinearLayout.LayoutParams(dp(54), dp(38)));
         addHorizontalGap(intervalRow, 4);
         intervalRow.addView(more, new LinearLayout.LayoutParams(dp(38), dp(38)));
         addHorizontalGap(intervalRow, 8);
@@ -2505,16 +2825,29 @@ public class MainActivity extends Activity {
             if (!checked && target.equals(automationTarget) && automaticRun) cancelAutomation();
             store.edit().remove("auto_last_" + target).apply();
             scheduleAllAutomaticUpdates(0L);
+            syncBackgroundService();
         });
         less.setOnClickListener(v -> {
             setIntervalValue(target, Math.max(1, intervalValue(target) - 1));
-            valueLabel.setText(String.valueOf(intervalValue(target)));
+            valueInput.setText(String.valueOf(intervalValue(target)));
             saveInterval(target);
         });
         more.setOnClickListener(v -> {
             setIntervalValue(target, Math.min(999, intervalValue(target) + 1));
-            valueLabel.setText(String.valueOf(intervalValue(target)));
+            valueInput.setText(String.valueOf(intervalValue(target)));
             saveInterval(target);
+        });
+        valueInput.setOnFocusChangeListener((view, hasFocus) -> {
+            if (!hasFocus) commitIntervalInput(valueInput, target, false);
+        });
+        valueInput.setOnEditorActionListener((view, actionId, event) -> {
+            if (actionId != android.view.inputmethod.EditorInfo.IME_ACTION_DONE) return false;
+            commitIntervalInput(valueInput, target, true);
+            valueInput.clearFocus();
+            android.view.inputmethod.InputMethodManager keyboard =
+                    (android.view.inputmethod.InputMethodManager) getSystemService(INPUT_METHOD_SERVICE);
+            if (keyboard != null) keyboard.hideSoftInputFromWindow(valueInput.getWindowToken(), 0);
+            return true;
         });
         final boolean[] unitInitialized = {false};
         unit.setOnItemSelectedListener(new android.widget.AdapterView.OnItemSelectedListener() {
@@ -2529,6 +2862,24 @@ public class MainActivity extends Activity {
             }
             @Override public void onNothingSelected(android.widget.AdapterView<?> parent) {}
         });
+    }
+
+    private void commitIntervalInput(EditText input, String target, boolean showError) {
+        int parsed;
+        try {
+            parsed = Integer.parseInt(input.getText().toString().trim());
+        } catch (Exception ignored) {
+            parsed = -1;
+        }
+        if (parsed < 1 || parsed > 999) {
+            input.setText(String.valueOf(intervalValue(target)));
+            if (showError) Toast.makeText(this, "更新间隔请输入 1 到 999", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        input.setText(String.valueOf(parsed));
+        if (parsed == intervalValue(target)) return;
+        setIntervalValue(target, parsed);
+        saveInterval(target);
     }
 
     private boolean isAutomaticEnabled(String target) {
@@ -2576,6 +2927,7 @@ public class MainActivity extends Activity {
                 .remove("auto_last_" + target)
                 .apply();
         scheduleAllAutomaticUpdates(0L);
+        syncBackgroundService();
     }
 
     private long intervalMillis(String target) {

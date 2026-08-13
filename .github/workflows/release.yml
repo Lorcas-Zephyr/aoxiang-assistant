@@ -15,11 +15,13 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Verify release asset
-        run: test -f "release-assets/aoxiang-assistant-${GITHUB_REF_NAME}.apk"
+        run: |
+          test -f "release-assets/aoxiang-assistant-${GITHUB_REF_NAME}.apk"
+          test -f "release-notes/${GITHUB_REF_NAME}.md"
 
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2
         with:
           name: "翱翔助手 ${{ github.ref_name }}"
-          generate_release_notes: true
+          body_path: "release-notes/${{ github.ref_name }}.md"
           files: "release-assets/aoxiang-assistant-${{ github.ref_name }}.apk"
