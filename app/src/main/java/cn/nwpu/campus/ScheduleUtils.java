@@ -41,7 +41,7 @@ public final class ScheduleUtils {
 
     public static int weekNumberForDate(LocalDate date, ScheduleModels.Semester semester) {
         try {
-            LocalDate start = LocalDate.parse(semester.startDate);
+            LocalDate start = mondayOnOrBefore(LocalDate.parse(semester.startDate));
             long diff = ChronoUnit.DAYS.between(start, date);
             return diff < 0 ? 0 : (int) (diff / 7) + 1;
         } catch (Exception ignored) {
@@ -53,6 +53,12 @@ public final class ScheduleUtils {
         int safeWeek = Math.max(1, week);
         int safeDay = Math.max(1, Math.min(7, dayOfWeek));
         return semesterStart.plusDays((long) (safeWeek - 1) * 7 + safeDay - 1);
+    }
+
+    /** Returns the Monday on the selected date's week, including the date itself. */
+    public static LocalDate mondayOnOrBefore(LocalDate date) {
+        if (date == null) return null;
+        return date.minusDays(date.getDayOfWeek().getValue() - 1L);
     }
 
     public static boolean isTimeSlotConflict(ScheduleModels.TimeSlot first, ScheduleModels.TimeSlot second) {

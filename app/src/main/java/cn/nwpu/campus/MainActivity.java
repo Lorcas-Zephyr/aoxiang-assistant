@@ -169,7 +169,7 @@ public class MainActivity extends Activity {
         grades = loadGrades();
         semesters = ScheduleStorage.loadSemesters(store);
         courses = ScheduleStorage.loadCourses(store);
-        if (normalizeSemesterSectionTimes()) {
+        if (normalizeSemesterSectionTimes() | normalizeSemesterStartDates()) {
             ScheduleStorage.saveSemesters(store, semesters);
         }
         selectedSemesterId = ScheduleStorage.loadSelectedSemester(store);
@@ -948,12 +948,20 @@ public class MainActivity extends Activity {
                 day.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
                 cell.addView(day);
                 List<ScheduleModels.Course> daily = coursesForDate(date, semester);
-                TextView count = label(daily.isEmpty() ? "" : daily.size() + " 门", 11, mutedColor());
-                cell.addView(count, new LinearLayout.LayoutParams(-1, dp(18)));
                 if (!daily.isEmpty()) {
-                    TextView preview = label(daily.get(0).name, 10, textColor());
-                    preview.setMaxLines(2);
-                    cell.addView(preview);
+                    LinearLayout dots = new LinearLayout(this);
+                    dots.setOrientation(LinearLayout.HORIZONTAL);
+                    dots.setGravity(Gravity.CENTER_VERTICAL);
+                    dots.setPadding(0, dp(8), 0, 0);
+                    for (ScheduleModels.Course course : sortedCourses(daily)) {
+                        View dot = new View(this);
+                        dot.setContentDescription(course.name);
+                        dot.setBackground(bg(parseColorSafe(course.color, primaryColor()), 5));
+                        LinearLayout.LayoutParams dotParams = new LinearLayout.LayoutParams(dp(9), dp(9));
+                        dotParams.setMarginEnd(dp(4));
+                        dots.addView(dot, dotParams);
+                    }
+                    cell.addView(dots, new LinearLayout.LayoutParams(-1, dp(18)));
                 }
                 cell.setOnClickListener(v -> showDailyCoursesDialog(date, daily));
                 line.addView(cell, new LinearLayout.LayoutParams(0, dp(86), 1));
@@ -1009,7 +1017,8 @@ public class MainActivity extends Activity {
         nameInput.setText(base.name);
         form.addView(nameInput, new LinearLayout.LayoutParams(-1, dp(58)));
 
-        Button startDateButton = action(base.startDate, false);
+        String normalizedBaseStart = normalizeSemesterStartDate(base.startDate);
+        Button startDateButton = action(normalizedBaseStart, false);
         form.addView(startDateButton, new LinearLayout.LayoutParams(-1, dp(46)));
         addGap(form, 8);
 
@@ -1025,10 +1034,10 @@ public class MainActivity extends Activity {
         sectionCountInput.setText(String.valueOf(base.sectionCount));
         form.addView(sectionCountInput, new LinearLayout.LayoutParams(-1, dp(58)));
 
-        final String[] chosenDate = {base.startDate};
+        final String[] chosenDate = {normalizedBaseStart};
         startDateButton.setOnClickListener(v -> showDatePicker(chosenDate[0], value -> {
-            chosenDate[0] = value;
-            startDateButton.setText(value);
+            chosenDate[0] = normalizeSemesterStartDate(value);
+            startDateButton.setText(chosenDate[0]);
         }));
 
         AlertDialog dialog = new AlertDialog.Builder(this)
@@ -1045,6 +1054,7 @@ public class MainActivity extends Activity {
                 Toast.makeText(this, "请输入学期名称", Toast.LENGTH_SHORT).show();
                 return;
             }
+            chosenDate[0] = normalizeSemesterStartDate(chosenDate[0]);
             ScheduleModels.Semester semester = new ScheduleModels.Semester(
                     isEdit ? base.id : "semester-" + System.currentTimeMillis(),
                     name,
@@ -1534,11 +1544,12 @@ public class MainActivity extends Activity {
                 semester = updatedSemesters.get(semesterIndex);
                 ScheduleModels.Semester imported = ScheduleImport.createImportedSemester(rawSemester, semesterCourses);
                 semester.name = imported.name;
-                semester.startDate = imported.startDate;
-                semester.endDate = imported.endDate;
                 semester.weekCount = imported.weekCount;
                 semester.sectionCount = imported.sectionCount;
                 semester.sectionTimes = imported.sectionTimes;
+                semester.startDate = normalizeSemesterStartDate(semester.startDate);
+                semester.endDate = LocalDate.parse(semester.startDate)
+                        .plusWeeks(Math.max(1, semester.weekCount)).minusDays(1).toString();
             } else {
                 semester = ScheduleImport.createImportedSemester(rawSemester, semesterCourses);
                 updatedSemesters.add(semester);
@@ -1771,7 +1782,8 @@ public class MainActivity extends Activity {
         ScheduleStorage.saveSemesters(store, semesters);
         ScheduleStorage.saveCourses(store, courses);
         ScheduleStorage.saveSelectedSemester(store, selectedSemesterId);
-        saveTheme();
+        ScheduleStorage.saveTheme(store, themeColor, darkMode);
+        ScheduleWidgetUpdater.updateAll(this);
     }
 
     private boolean normalizeSemesterSectionTimes() {
@@ -1786,6 +1798,29 @@ public class MainActivity extends Activity {
         return changed;
     }
 
+    private boolean normalizeSemesterStartDates() {
+        boolean changed = false;
+        for (ScheduleModels.Semester semester : semesters) {
+            String start = normalizeSemesterStartDate(semester.startDate);
+            String end = LocalDate.parse(start)
+                    .plusWeeks(Math.max(1, semester.weekCount)).minusDays(1).toString();
+            if (!start.equals(semester.startDate) || !end.equals(semester.endDate)) {
+                semester.startDate = start;
+                semester.endDate = end;
+                changed = true;
+            }
+        }
+        return changed;
+    }
+
+    private String normalizeSemesterStartDate(String value) {
+        try {
+            return ScheduleUtils.mondayOnOrBefore(LocalDate.parse(value)).toString();
+        } catch (Exception ignored) {
+            return ScheduleUtils.mondayOnOrBefore(LocalDate.now()).toString();
+        }
+    }
+
     private boolean sameSectionTimes(List<ScheduleModels.SectionTime> first, List<ScheduleModels.SectionTime> second) {
         if (first == null || first.size() != second.size()) return false;
         for (int i = 0; i < first.size(); i++) {
@@ -1798,9 +1833,13 @@ public class MainActivity extends Activity {
 
     private void saveTheme() {
         ScheduleStorage.saveTheme(store, themeColor, darkMode);
+        ScheduleWidgetUpdater.updateAll(this);
     }
 
     private void saveSemester(ScheduleModels.Semester semester, boolean isEdit) {
+        semester.startDate = normalizeSemesterStartDate(semester.startDate);
+        semester.endDate = LocalDate.parse(semester.startDate)
+                .plusWeeks(Math.max(1, semester.weekCount)).minusDays(1).toString();
         if (isEdit) {
             for (int i = 0; i < semesters.size(); i++) {
                 if (semesters.get(i).id.equals(semester.id)) {
@@ -1864,6 +1903,7 @@ public class MainActivity extends Activity {
         CookieManager cookies = CookieManager.getInstance();
         cookies.removeAllCookies(null);
         cookies.flush();
+        ScheduleWidgetUpdater.updateAll(this);
         showTab(TAB_SETTINGS);
         Toast.makeText(this, "已退出登录并清除成绩、课表和电费", Toast.LENGTH_SHORT).show();
     }
@@ -2464,7 +2504,7 @@ public class MainActivity extends Activity {
     }
 
     private ScheduleModels.Semester defaultEditableSemester() {
-        LocalDate now = LocalDate.now();
+        LocalDate now = ScheduleUtils.mondayOnOrBefore(LocalDate.now());
         return new ScheduleModels.Semester(
                 "semester-" + System.currentTimeMillis(),
                 now.getYear() + "-" + (now.getYear() + 1) + " 学年",

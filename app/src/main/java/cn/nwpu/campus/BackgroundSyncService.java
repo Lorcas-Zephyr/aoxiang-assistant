@@ -259,11 +259,10 @@ public class BackgroundSyncService extends Service {
                 semester = semesters.get(index);
                 ScheduleModels.Semester replacement = ScheduleImport.createImportedSemester(rawSemester, imported);
                 semester.name = replacement.name;
-                semester.startDate = replacement.startDate;
-                semester.endDate = replacement.endDate;
                 semester.weekCount = replacement.weekCount;
                 semester.sectionCount = replacement.sectionCount;
                 semester.sectionTimes = replacement.sectionTimes;
+                normalizeSemesterDates(semester);
             } else {
                 semester = ScheduleImport.createImportedSemester(rawSemester, imported);
                 semesters.add(semester);
@@ -289,11 +288,27 @@ public class BackgroundSyncService extends Service {
             ScheduleStorage.saveSemesters(store, semesters);
             ScheduleStorage.saveCourses(store, courses);
             if (!firstImportedId.isEmpty()) ScheduleStorage.saveSelectedSemester(store, firstImportedId);
+            ScheduleWidgetUpdater.updateAll(this);
             if (!changedCourses.isEmpty() && store.getBoolean("schedule_update_notification_enabled", true)) {
                 sendChangeNotification(false, changedCourses);
             }
         }
         finishAttempt();
+    }
+
+    private void normalizeSemesterDates(ScheduleModels.Semester semester) {
+        try {
+            java.time.LocalDate start = ScheduleUtils.mondayOnOrBefore(
+                    java.time.LocalDate.parse(semester.startDate));
+            semester.startDate = start.toString();
+            semester.endDate = start.plusWeeks(Math.max(1, semester.weekCount))
+                    .minusDays(1).toString();
+        } catch (Exception ignored) {
+            java.time.LocalDate start = ScheduleUtils.mondayOnOrBefore(java.time.LocalDate.now());
+            semester.startDate = start.toString();
+            semester.endDate = start.plusWeeks(Math.max(1, semester.weekCount))
+                    .minusDays(1).toString();
+        }
     }
 
     private void saveElectricity(double balance) {

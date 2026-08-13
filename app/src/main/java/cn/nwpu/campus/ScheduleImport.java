@@ -137,7 +137,7 @@ public final class ScheduleImport {
                 if (term == 2) year = Integer.parseInt(matcher.group(2));
             }
         }
-        LocalDate start = LocalDate.of(year, month, month == 2 ? 24 : 1);
+        LocalDate start = ScheduleUtils.mondayOnOrBefore(LocalDate.of(year, month, month == 2 ? 24 : 1));
         LocalDate end = start.plusWeeks(maxWeek).minusDays(1);
         return new ScheduleModels.Semester(
                 "semester-" + UUID.randomUUID(),

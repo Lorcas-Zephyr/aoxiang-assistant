@@ -21,6 +21,21 @@
             </intent-filter>
         </receiver>
         <receiver android:name=".UpdateAlarmReceiver" android:enabled="true" android:exported="false" />
+        <receiver android:name=".ScheduleWidgetProvider" android:enabled="true" android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data android:name="android.appwidget.provider" android:resource="@xml/widget_course_info" />
+        </receiver>
+        <receiver android:name=".SmallScheduleWidgetProvider" android:enabled="true" android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data android:name="android.appwidget.provider" android:resource="@xml/widget_course_small_info" />
+        </receiver>
+        <service android:name=".ScheduleWidgetService"
+            android:permission="android.permission.BIND_REMOTEVIEWS"
+            android:exported="false" />
         <service android:name=".BackgroundSyncService"
             android:enabled="true"
             android:exported="false"
