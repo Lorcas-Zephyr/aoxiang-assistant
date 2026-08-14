@@ -487,7 +487,7 @@ public class MainActivity extends Activity {
         monthButton.setOnClickListener(v -> {
             ScheduleModels.Semester active = selectedSemester();
             scheduleShowMonth = !scheduleShowMonth;
-            if (!scheduleShowMonth) scheduleMonthAnchor = weekStartForCurrentSelection(active);
+            scheduleMonthAnchor = weekStartForCurrentSelection(active);
             monthButton.setText(scheduleShowMonth ? "周视图" : "月历视图");
             replaceScheduleContent(active);
         });
@@ -948,8 +948,7 @@ public class MainActivity extends Activity {
     }
 
     private View buildMonthCalendar(ScheduleModels.Semester semester) {
-        if (scheduleMonthAnchor == null) scheduleMonthAnchor = weekStartForCurrentSelection(semester);
-        LocalDate monthStart = scheduleMonthAnchor.withDayOfMonth(1);
+        LocalDate monthStart = normalizedScheduleMonthStart(semester);
         LocalDate gridStart = monthStart.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY));
 
         SwipeLayout wrap = new SwipeLayout(this, semester, true);
@@ -1015,6 +1014,7 @@ public class MainActivity extends Activity {
         if (width <= 0) width = getResources().getDisplayMetrics().widthPixels;
         scheduleSwipeWidth = width;
         scheduleSwipeDirection = dx < 0 ? 1 : -1;
+        if (!canMoveSchedule(source.semester, source.monthView, scheduleSwipeDirection)) return;
 
         int previousWeekOffset = scheduleWeekOffset;
         LocalDate previousMonthAnchor = scheduleMonthAnchor;
@@ -1135,12 +1135,48 @@ public class MainActivity extends Activity {
     }
 
     private void commitSchedulePosition(ScheduleModels.Semester semester, boolean monthView, int direction) {
+        if (!canMoveSchedule(semester, monthView, direction)) return;
         if (monthView) {
-            if (scheduleMonthAnchor == null) scheduleMonthAnchor = weekStartForCurrentSelection(semester);
-            scheduleMonthAnchor = scheduleMonthAnchor.plusMonths(direction > 0 ? 1 : -1);
+            scheduleMonthAnchor = normalizedScheduleMonthStart(semester).plusMonths(direction > 0 ? 1 : -1);
         } else {
-            scheduleWeekOffset += direction > 0 ? 1 : -1;
+            int targetWeek = currentScheduleWeek(semester) + (direction > 0 ? 1 : -1);
+            scheduleWeekOffset = targetWeek - baseScheduleWeek(semester);
         }
+    }
+
+    private boolean canMoveSchedule(ScheduleModels.Semester semester, boolean monthView, int direction) {
+        if (semester == null || direction == 0) return false;
+        if (!monthView) {
+            int week = currentScheduleWeek(semester);
+            return direction > 0 ? week < Math.max(1, semester.weekCount) : week > 1;
+        }
+        LocalDate currentMonth = normalizedScheduleMonthStart(semester);
+        LocalDate firstMonth = semesterFirstMonth(semester);
+        LocalDate lastMonth = semesterLastMonth(semester);
+        return direction > 0 ? currentMonth.isBefore(lastMonth) : currentMonth.isAfter(firstMonth);
+    }
+
+    private LocalDate normalizedScheduleMonthStart(ScheduleModels.Semester semester) {
+        LocalDate firstMonth = semesterFirstMonth(semester);
+        LocalDate lastMonth = semesterLastMonth(semester);
+        LocalDate month = scheduleMonthAnchor == null
+                ? weekStartForCurrentSelection(semester).withDayOfMonth(1)
+                : scheduleMonthAnchor.withDayOfMonth(1);
+        if (month.isBefore(firstMonth)) month = firstMonth;
+        if (month.isAfter(lastMonth)) month = lastMonth;
+        scheduleMonthAnchor = month;
+        return month;
+    }
+
+    private LocalDate semesterFirstMonth(ScheduleModels.Semester semester) {
+        return LocalDate.parse(semester.startDate).withDayOfMonth(1);
+    }
+
+    private LocalDate semesterLastMonth(ScheduleModels.Semester semester) {
+        return LocalDate.parse(semester.startDate)
+                .plusWeeks(Math.max(1, semester.weekCount) - 1L)
+                .plusDays(6)
+                .withDayOfMonth(1);
     }
 
     private void showDailyCoursesDialog(LocalDate date, List<ScheduleModels.Course> daily) {
@@ -2825,10 +2861,17 @@ public class MainActivity extends Activity {
     }
 
     private int currentScheduleWeek(ScheduleModels.Semester semester) {
+        int baseWeek = baseScheduleWeek(semester);
+        int weekCount = Math.max(1, semester.weekCount);
+        int selectedWeek = Math.max(1, Math.min(weekCount, baseWeek + scheduleWeekOffset));
+        scheduleWeekOffset = selectedWeek - baseWeek;
+        return selectedWeek;
+    }
+
+    private int baseScheduleWeek(ScheduleModels.Semester semester) {
+        int weekCount = Math.max(1, semester.weekCount);
         int current = ScheduleUtils.weekNumberForDate(LocalDate.now(), semester);
-        current = Math.max(1, Math.min(semester.weekCount, current == 0 ? 1 : current));
-        current += scheduleWeekOffset;
-        return Math.max(1, Math.min(semester.weekCount, current));
+        return Math.max(1, Math.min(weekCount, current == 0 ? 1 : current));
     }
 
     private LocalDate weekStartForCurrentSelection(ScheduleModels.Semester semester) {
