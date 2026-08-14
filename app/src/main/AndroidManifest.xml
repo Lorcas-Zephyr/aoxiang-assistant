@@ -21,13 +21,19 @@
             </intent-filter>
         </receiver>
         <receiver android:name=".UpdateAlarmReceiver" android:enabled="true" android:exported="false" />
-        <receiver android:name=".ScheduleWidgetProvider" android:enabled="true" android:exported="true">
+        <receiver android:name=".ScheduleWidgetProvider"
+            android:label="@string/widget_two_day_label"
+            android:enabled="true"
+            android:exported="true">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
             </intent-filter>
             <meta-data android:name="android.appwidget.provider" android:resource="@xml/widget_course_info" />
         </receiver>
-        <receiver android:name=".SmallScheduleWidgetProvider" android:enabled="true" android:exported="true">
+        <receiver android:name=".SmallScheduleWidgetProvider"
+            android:label="@string/widget_today_label"
+            android:enabled="true"
+            android:exported="true">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
             </intent-filter>

@@ -13,6 +13,7 @@ import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
+import android.graphics.Outline;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
@@ -25,8 +26,11 @@ import android.security.keystore.KeyProperties;
 import android.text.InputType;
 import android.util.Base64;
 import android.view.Gravity;
+import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.ViewOutlineProvider;
+import android.view.animation.DecelerateInterpolator;
 import android.webkit.CookieManager;
 import android.webkit.WebChromeClient;
 import android.webkit.WebSettings;
@@ -133,6 +137,12 @@ public class MainActivity extends Activity {
     private final int[] tabScrollPositions = new int[5];
     private int automationGeneration;
     private int scheduleWeekOffset;
+    private View scheduleContentView;
+    private FrameLayout scheduleViewport;
+    private View scheduleSwipeIncoming;
+    private int scheduleSwipeDirection;
+    private int scheduleSwipeWidth;
+    private boolean scheduleSwipeAnimating;
     private String automationTarget = "";
     private String pendingSmsCode = "";
     private String autoCollectScript = "";
@@ -409,6 +419,9 @@ public class MainActivity extends Activity {
     }
 
     private void schedulePage() {
+        scheduleContentView = null;
+        scheduleViewport = null;
+        scheduleSwipeIncoming = null;
         ScrollView scroll = page();
         LinearLayout l = column();
         l.setPadding(dp(8), dp(18), dp(8), dp(26));
@@ -486,11 +499,12 @@ public class MainActivity extends Activity {
         l.addView(tools);
 
         addGap(l, 12);
-        if (scheduleShowMonth) {
-            l.addView(buildMonthCalendar(semester));
-        } else {
-            l.addView(buildWeekSchedule(semester));
-        }
+        scheduleViewport = new FrameLayout(this);
+        scheduleViewport.setClipChildren(true);
+        scheduleViewport.setClipToPadding(true);
+        scheduleContentView = scheduleShowMonth ? buildMonthCalendar(semester) : buildWeekSchedule(semester);
+        scheduleViewport.addView(scheduleContentView, new FrameLayout.LayoutParams(-1, -2));
+        l.addView(scheduleViewport, new LinearLayout.LayoutParams(-1, -2));
     }
 
     private void gradesPage() {
@@ -851,7 +865,7 @@ public class MainActivity extends Activity {
     }
 
     private View buildWeekSchedule(ScheduleModels.Semester semester) {
-        LinearLayout wrap = new LinearLayout(this);
+        SwipeLayout wrap = new SwipeLayout(this, semester, false);
         wrap.setOrientation(LinearLayout.VERTICAL);
         wrap.setBackground(bg(surfaceColor(), 5));
         wrap.setPadding(dp(4), dp(10), dp(4), dp(10));
@@ -916,7 +930,7 @@ public class MainActivity extends Activity {
         LocalDate monthStart = scheduleMonthAnchor.withDayOfMonth(1);
         LocalDate gridStart = monthStart.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY));
 
-        LinearLayout wrap = new LinearLayout(this);
+        SwipeLayout wrap = new SwipeLayout(this, semester, true);
         wrap.setOrientation(LinearLayout.VERTICAL);
         wrap.setBackground(bg(surfaceColor(), 5));
         wrap.setPadding(dp(12), dp(12), dp(12), dp(12));
@@ -972,6 +986,86 @@ public class MainActivity extends Activity {
         return wrap;
     }
 
+    private void prepareScheduleSwipe(SwipeLayout source, float dx) {
+        if (scheduleSwipeAnimating || scheduleSwipeIncoming != null || source != scheduleContentView
+                || scheduleViewport == null) return;
+        int width = source.getWidth();
+        if (width <= 0) width = getResources().getDisplayMetrics().widthPixels;
+        scheduleSwipeWidth = width;
+        scheduleSwipeDirection = dx < 0 ? 1 : -1;
+
+        int previousWeekOffset = scheduleWeekOffset;
+        LocalDate previousMonthAnchor = scheduleMonthAnchor;
+        if (source.monthView) {
+            if (scheduleMonthAnchor == null) scheduleMonthAnchor = weekStartForCurrentSelection(source.semester);
+            scheduleMonthAnchor = scheduleMonthAnchor.plusMonths(scheduleSwipeDirection > 0 ? 1 : -1);
+        } else {
+            scheduleWeekOffset += scheduleSwipeDirection;
+        }
+        View incoming = source.monthView ? buildMonthCalendar(source.semester) : buildWeekSchedule(source.semester);
+        scheduleWeekOffset = previousWeekOffset;
+        scheduleMonthAnchor = previousMonthAnchor;
+
+        scheduleSwipeIncoming = incoming;
+        scheduleViewport.addView(incoming, new FrameLayout.LayoutParams(-1, -2));
+        source.setTranslationX(dx);
+        incoming.setTranslationX(scheduleSwipeDirection * scheduleSwipeWidth + dx);
+    }
+
+    private void updateScheduleSwipe(SwipeLayout source, float dx) {
+        if (scheduleSwipeIncoming == null) {
+            prepareScheduleSwipe(source, dx);
+        }
+        if (scheduleSwipeIncoming != null) {
+            source.setTranslationX(dx);
+            scheduleSwipeIncoming.setTranslationX(scheduleSwipeDirection * scheduleSwipeWidth + dx);
+        }
+    }
+
+    private void finishScheduleSwipe(SwipeLayout source, float dx) {
+        if (scheduleSwipeIncoming == null) {
+            source.animate().translationX(0f).setDuration(120).start();
+            return;
+        }
+        final int direction = scheduleSwipeDirection;
+        final int width = scheduleSwipeWidth;
+        final View incoming = scheduleSwipeIncoming;
+        scheduleSwipeAnimating = true;
+        source.animate()
+                .translationX(-direction * width)
+                .setDuration(180)
+                .setInterpolator(new DecelerateInterpolator())
+                .start();
+        incoming.animate()
+                .translationX(0f)
+                .setDuration(180)
+                .setInterpolator(new DecelerateInterpolator())
+                .withEndAction(() -> {
+                    commitSchedulePosition(source.semester, source.monthView, direction);
+                    scheduleSwipeIncoming = null;
+                    showTab(TAB_SCHEDULE);
+                    scheduleSwipeAnimating = false;
+                })
+                .start();
+    }
+
+    private void cancelScheduleSwipe(SwipeLayout source) {
+        if (scheduleViewport != null && scheduleSwipeIncoming != null) {
+            scheduleViewport.removeView(scheduleSwipeIncoming);
+        }
+        scheduleSwipeIncoming = null;
+        source.animate().translationX(0f).setDuration(120).start();
+    }
+
+    private void commitSchedulePosition(ScheduleModels.Semester semester, boolean monthView, int direction) {
+        if (monthView) {
+            if (scheduleMonthAnchor == null) scheduleMonthAnchor = weekStartForCurrentSelection(semester);
+            scheduleMonthAnchor = scheduleMonthAnchor.plusMonths(direction > 0 ? 1 : -1);
+        } else {
+            scheduleWeekOffset += direction > 0 ? 1 : -1;
+        }
+    }
+
     private void showDailyCoursesDialog(LocalDate date, List<ScheduleModels.Course> daily) {
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
@@ -990,6 +1084,69 @@ public class MainActivity extends Activity {
                 .setView(box)
                 .setPositiveButton("关闭", null)
                 .show();
+    }
+
+    /** Handles only clear horizontal gestures, leaving taps and vertical scrolling to children. */
+    private class SwipeLayout extends LinearLayout {
+        private final ScheduleModels.Semester semester;
+        private final boolean monthView;
+        private float downX;
+        private float downY;
+        private boolean interceptingSwipe;
+
+        SwipeLayout(Context context, ScheduleModels.Semester semester, boolean monthView) {
+            super(context);
+            this.semester = semester;
+            this.monthView = monthView;
+            setClickable(true);
+        }
+
+        @Override
+        public boolean dispatchTouchEvent(MotionEvent event) {
+            switch (event.getActionMasked()) {
+                case MotionEvent.ACTION_DOWN:
+                    downX = event.getRawX();
+                    downY = event.getRawY();
+                    interceptingSwipe = false;
+                    break;
+                case MotionEvent.ACTION_MOVE:
+                    if (!interceptingSwipe) {
+                        float dx = event.getRawX() - downX;
+                        float dy = event.getRawY() - downY;
+                        if (Math.abs(dx) >= dp(60) && Math.abs(dx) > Math.abs(dy) * 1.2f) {
+                            interceptingSwipe = true;
+                            getParent().requestDisallowInterceptTouchEvent(true);
+                            prepareScheduleSwipe(this, dx);
+                        }
+                    }
+                    if (interceptingSwipe) {
+                        updateScheduleSwipe(this, event.getRawX() - downX);
+                        return true;
+                    }
+                    break;
+                case MotionEvent.ACTION_UP:
+                    if (interceptingSwipe) {
+                        float dx = event.getRawX() - downX;
+                        interceptingSwipe = false;
+                        getParent().requestDisallowInterceptTouchEvent(false);
+                        finishScheduleSwipe(this, dx);
+                        return true;
+                    }
+                    break;
+                case MotionEvent.ACTION_CANCEL:
+                    if (interceptingSwipe) {
+                        interceptingSwipe = false;
+                        getParent().requestDisallowInterceptTouchEvent(false);
+                        cancelScheduleSwipe(this);
+                        return true;
+                    }
+                    break;
+                default:
+                    break;
+            }
+            if (interceptingSwipe) return true;
+            return super.dispatchTouchEvent(event);
+        }
     }
 
     private void showSemesterPicker(String title, SemesterCallback callback) {
@@ -2153,7 +2310,7 @@ public class MainActivity extends Activity {
             long versionCode = Build.VERSION.SDK_INT >= 28 ? info.getLongVersionCode() : info.versionCode;
             return info.versionName + " (" + versionCode + ")";
         } catch (Exception ignored) {
-            return "1.2 (3)";
+            return "1.4 (5)";
         }
     }
 
@@ -2260,6 +2417,7 @@ public class MainActivity extends Activity {
         b.setMinHeight(dp(42));
         b.setPadding(dp(12), 0, dp(12), 0);
         b.setBackground(border(filled ? primaryColor() : panelColor(), filled ? primaryColor() : lineColor(), 5));
+        applyRoundedButtonOutline(b, 5);
         return b;
     }
 
@@ -2272,7 +2430,22 @@ public class MainActivity extends Activity {
         b.setMinWidth(0);
         b.setMinHeight(0);
         b.setBackground(border(panelColor(), lineColor(), 5));
+        applyRoundedButtonOutline(b, 5);
         return b;
+    }
+
+    private void applyRoundedButtonOutline(Button button, int radiusDp) {
+        button.setStateListAnimator(null);
+        button.setElevation(dp(1));
+        button.setOutlineProvider(new ViewOutlineProvider() {
+            @Override
+            public void getOutline(View view, Outline outline) {
+                if (view.getWidth() > 0 && view.getHeight() > 0) {
+                    outline.setRoundRect(0, 0, view.getWidth(), view.getHeight(), dp(radiusDp));
+                }
+            }
+        });
+        button.setClipToOutline(true);
     }
 
     private View colorSwatch(String value, boolean selected) {
