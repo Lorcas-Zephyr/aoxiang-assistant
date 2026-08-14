@@ -114,6 +114,8 @@ public class MainActivity extends Activity {
     private FrameLayout automationHost;
     private LinearLayout mainShell;
     private LinearLayout bottom;
+    private View pendingPreviousMainShell;
+    private View pendingPreviousAutomationHost;
     private ScrollView currentPage;
     private WebView automationWeb;
     private AlertDialog loginDialog;
@@ -279,7 +281,8 @@ public class MainActivity extends Activity {
     }
 
     private void buildShell() {
-        root.removeAllViews();
+        View previousMainShell = mainShell;
+        View previousAutomationHost = automationHost;
 
         mainShell = new LinearLayout(this);
         mainShell.setOrientation(LinearLayout.VERTICAL);
@@ -326,8 +329,10 @@ public class MainActivity extends Activity {
         automationHost.setBackgroundColor(backgroundColor());
         automationHost.setVisibility(View.GONE);
 
-        root.addView(mainShell, new FrameLayout.LayoutParams(-1, -1));
-        root.addView(automationHost, new FrameLayout.LayoutParams(-1, -1));
+        root.addView(mainShell, 0, new FrameLayout.LayoutParams(-1, -1));
+        root.addView(automationHost, 1, new FrameLayout.LayoutParams(-1, -1));
+        pendingPreviousMainShell = previousMainShell;
+        pendingPreviousAutomationHost = previousAutomationHost;
     }
 
     private void applySystemBarInsets() {
@@ -340,12 +345,20 @@ public class MainActivity extends Activity {
     }
 
     private void showTab(int tab) {
+        showTab(tab, false);
+    }
+
+    private void showTab(int tab, boolean forceShellRebuild) {
+        int previousTab = currentTab;
         if (currentPage != null && currentTab >= TAB_HOME && currentTab <= TAB_SETTINGS) {
             tabScrollPositions[currentTab] = currentPage.getScrollY();
         }
+        boolean reuseShell = !forceShellRebuild && previousTab == tab && mainShell != null
+                && content != null && mainShell.getParent() == root;
         currentPage = null;
         currentTab = tab;
-        buildShell();
+        if (reuseShell) content.removeAllViews();
+        else buildShell();
         switch (tab) {
             case TAB_SCHEDULE:
                 schedulePage();
@@ -370,6 +383,14 @@ public class MainActivity extends Activity {
                 if (currentPage == renderedPage) renderedPage.scrollTo(0, scrollPosition);
             });
         }
+        removePendingShellViews();
+    }
+
+    private void removePendingShellViews() {
+        if (pendingPreviousMainShell != null) root.removeView(pendingPreviousMainShell);
+        if (pendingPreviousAutomationHost != null) root.removeView(pendingPreviousAutomationHost);
+        pendingPreviousMainShell = null;
+        pendingPreviousAutomationHost = null;
     }
 
     private void homePage() {
@@ -456,15 +477,18 @@ public class MainActivity extends Activity {
             ScheduleStorage.saveSelectedSemester(store, selectedSemesterId);
             scheduleWeekOffset = 0;
             scheduleMonthAnchor = LocalDate.parse(picked.startDate);
-            showTab(TAB_SCHEDULE);
+            semesterButton.setText(picked.name);
+            replaceScheduleContent(picked);
         }));
         topRow.addView(semesterButton, new LinearLayout.LayoutParams(0, dp(42), 1));
         addHorizontalGap(topRow, 10);
         Button monthButton = action(scheduleShowMonth ? "周视图" : "月历视图", false);
         monthButton.setOnClickListener(v -> {
+            ScheduleModels.Semester active = selectedSemester();
             scheduleShowMonth = !scheduleShowMonth;
-            if (!scheduleShowMonth) scheduleMonthAnchor = weekStartForCurrentSelection(semester);
-            showTab(TAB_SCHEDULE);
+            if (!scheduleShowMonth) scheduleMonthAnchor = weekStartForCurrentSelection(active);
+            monthButton.setText(scheduleShowMonth ? "周视图" : "月历视图");
+            replaceScheduleContent(active);
         });
         topRow.addView(monthButton, new LinearLayout.LayoutParams(dp(96), dp(40)));
         tools.addView(topRow);
@@ -476,19 +500,16 @@ public class MainActivity extends Activity {
         Button next = stepButton("›");
         Button today = action("本周", false);
         today.setOnClickListener(v -> {
+            ScheduleModels.Semester active = selectedSemester();
             scheduleWeekOffset = 0;
-            scheduleMonthAnchor = weekStartForCurrentSelection(semester);
-            showTab(TAB_SCHEDULE);
+            scheduleMonthAnchor = weekStartForCurrentSelection(active);
+            replaceScheduleContent(active);
         });
         prev.setOnClickListener(v -> {
-            if (scheduleShowMonth) scheduleMonthAnchor = scheduleMonthAnchor.minusMonths(1);
-            else scheduleWeekOffset--;
-            showTab(TAB_SCHEDULE);
+            animateSchedulePosition(semester, -1);
         });
         next.setOnClickListener(v -> {
-            if (scheduleShowMonth) scheduleMonthAnchor = scheduleMonthAnchor.plusMonths(1);
-            else scheduleWeekOffset++;
-            showTab(TAB_SCHEDULE);
+            animateSchedulePosition(semester, 1);
         });
         switchRow.addView(prev, new LinearLayout.LayoutParams(dp(40), dp(38)));
         addHorizontalGap(switchRow, 8);
@@ -796,7 +817,7 @@ public class MainActivity extends Activity {
             darkMode = checked;
             saveTheme();
             applyWindowTheme();
-            showTab(TAB_SETTINGS);
+            showTab(TAB_SETTINGS, true);
         });
         appearance.addView(darkSwitch, new LinearLayout.LayoutParams(-1, dp(48)));
         appearance.addView(settingDivider());
@@ -809,7 +830,7 @@ public class MainActivity extends Activity {
                 themeColor = color;
                 saveTheme();
                 applyWindowTheme();
-                showTab(TAB_SETTINGS);
+                showTab(TAB_SETTINGS, true);
             });
             swatchRow.addView(swatch);
             addHorizontalGap(swatchRow, 8);
@@ -1012,6 +1033,24 @@ public class MainActivity extends Activity {
         incoming.setTranslationX(scheduleSwipeDirection * scheduleSwipeWidth + dx);
     }
 
+    private void animateSchedulePosition(ScheduleModels.Semester semester, int direction) {
+        if (!(scheduleContentView instanceof SwipeLayout) || scheduleSwipeAnimating) return;
+        SwipeLayout source = (SwipeLayout) scheduleContentView;
+        float initialDx = direction > 0 ? -dp(100) : dp(100);
+        prepareScheduleSwipe(source, initialDx);
+        if (scheduleSwipeIncoming != null) finishScheduleSwipe(source, initialDx);
+    }
+
+    private void replaceScheduleContent(ScheduleModels.Semester semester) {
+        if (semester == null || scheduleViewport == null || scheduleSwipeAnimating) return;
+        View outgoing = scheduleContentView;
+        View incoming = scheduleShowMonth ? buildMonthCalendar(semester) : buildWeekSchedule(semester);
+        scheduleViewport.addView(incoming, 0, new FrameLayout.LayoutParams(-1, -2));
+        if (outgoing != null) scheduleViewport.removeView(outgoing);
+        scheduleContentView = incoming;
+        scheduleSwipeIncoming = null;
+    }
+
     private void updateScheduleSwipe(SwipeLayout source, float dx) {
         if (scheduleSwipeIncoming == null) {
             prepareScheduleSwipe(source, dx);
@@ -1035,17 +1074,21 @@ public class MainActivity extends Activity {
                 .translationX(-direction * width)
                 .setDuration(180)
                 .setInterpolator(new DecelerateInterpolator())
+                .withEndAction(() -> {
+                    commitSchedulePosition(source.semester, source.monthView, direction);
+                    if (scheduleViewport != null) {
+                        scheduleViewport.removeView(source);
+                        incoming.setTranslationX(0f);
+                        scheduleContentView = incoming;
+                    }
+                    scheduleSwipeIncoming = null;
+                    scheduleSwipeAnimating = false;
+                })
                 .start();
         incoming.animate()
                 .translationX(0f)
                 .setDuration(180)
                 .setInterpolator(new DecelerateInterpolator())
-                .withEndAction(() -> {
-                    commitSchedulePosition(source.semester, source.monthView, direction);
-                    scheduleSwipeIncoming = null;
-                    showTab(TAB_SCHEDULE);
-                    scheduleSwipeAnimating = false;
-                })
                 .start();
     }
 
@@ -1927,7 +1970,7 @@ public class MainActivity extends Activity {
             ensureSelectedSemester();
             saveScheduleState();
             applyWindowTheme();
-            showTab(TAB_SETTINGS);
+            showTab(TAB_SETTINGS, true);
             Toast.makeText(this, "导入成功", Toast.LENGTH_SHORT).show();
         } catch (Exception e) {
             Toast.makeText(this, "导入失败", Toast.LENGTH_LONG).show();
