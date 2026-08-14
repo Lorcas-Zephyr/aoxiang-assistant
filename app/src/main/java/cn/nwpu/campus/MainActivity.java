@@ -5,6 +5,7 @@ import android.app.Activity;
 import android.app.ActivityManager;
 import android.app.AlertDialog;
 import android.app.DatePickerDialog;
+import android.app.Dialog;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
@@ -31,6 +32,8 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.view.ViewOutlineProvider;
 import android.view.ViewConfiguration;
+import android.view.Window;
+import android.view.WindowManager;
 import android.view.animation.DecelerateInterpolator;
 import android.webkit.CookieManager;
 import android.webkit.WebChromeClient;
@@ -119,7 +122,7 @@ public class MainActivity extends Activity {
     private View pendingPreviousAutomationHost;
     private ScrollView currentPage;
     private WebView automationWeb;
-    private AlertDialog loginDialog;
+    private Dialog loginDialog;
 
     private boolean loginPromptVisible;
     private boolean autoGradeEnabled;
@@ -592,9 +595,6 @@ public class MainActivity extends Activity {
         }
 
         LinearLayout courseHeader = sectionHeader("课程");
-        Button addCourse = action("新增", false);
-        addCourse.setOnClickListener(v -> showCourseDialog(null));
-        courseHeader.addView(addCourse, new LinearLayout.LayoutParams(dp(76), dp(36)));
         l.addView(courseHeader);
         ScheduleModels.Semester semester = selectedSemester();
         if (semester == null) {
@@ -934,7 +934,7 @@ public class MainActivity extends Activity {
                     section++;
                 } else {
                     int span = spanForCourse(starting, week, day, section);
-                    View block = courseBlock(starting, span, week, day);
+                    View block = courseBlock(starting, span, week, day, section);
                     dayColumn.addView(block,
                             new LinearLayout.LayoutParams(-1, dp(SCHEDULE_SECTION_HEIGHT_DP * span)));
                     section += span;
@@ -1364,8 +1364,6 @@ public class MainActivity extends Activity {
 
         EditText nameInput = field(form, "课程名称", base.name);
         EditText codeInput = field(form, "课程代码", base.code);
-        EditText creditsInput = field(form, "学分", base.credits == null ? "" : scoreDf.format(base.credits));
-        creditsInput.setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL);
         EditText teacherInput = field(form, "教师", base.teacher);
         EditText locationInput = field(form, "地点", base.location);
         EditText assessmentInput = field(form, "考核方式", base.assessmentMethod == null ? "" : base.assessmentMethod.label);
@@ -1416,9 +1414,13 @@ public class MainActivity extends Activity {
                     timeSlots
             );
             course.code = emptyToNull(codeInput.getText().toString());
-            course.credits = parseDoubleOrNull(creditsInput.getText().toString());
+            course.credits = base.credits;
             course.teacher = emptyToNull(teacherInput.getText().toString());
             course.location = emptyToNull(locationInput.getText().toString());
+            for (ScheduleModels.TimeSlot slot : course.timeSlots) {
+                slot.teacher = course.teacher;
+                slot.location = course.location;
+            }
             course.assessmentMethod = ScheduleModels.AssessmentMethod.fromLabel(assessmentInput.getText().toString().trim());
             course.notes = emptyToNull(notesInput.getText().toString());
             course.color = chosenColor[0];
@@ -1437,21 +1439,113 @@ public class MainActivity extends Activity {
     private void showCourseDetailDialog(ScheduleModels.Course course) {
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
-        box.setPadding(dp(20), dp(12), dp(20), dp(12));
-        box.addView(infoLine("课程", course.name));
-        box.addView(infoLine("时间", ScheduleUtils.formatCourseTime(course)));
-        box.addView(infoLine("地点", course.location == null ? "--" : course.location));
-        box.addView(infoLine("教师", course.teacher == null ? "--" : course.teacher));
-        box.addView(infoLine("代码", course.code == null ? "--" : course.code));
-        box.addView(infoLine("学分", course.creditsText()));
-        if (course.assessmentMethod != null) box.addView(infoLine("考核", course.assessmentMethod.label));
-        if (course.notes != null) box.addView(infoLine("备注", course.notes));
-        new AlertDialog.Builder(this)
-                .setTitle(course.name)
-                .setView(box)
-                .setNegativeButton("关闭", null)
-                .setPositiveButton("编辑", (dialog, which) -> showCourseDialog(course))
-                .show();
+        box.addView(detailRow("时间", ScheduleUtils.formatCourseTime(course)));
+        box.addView(detailRow("地点", course.location == null ? "--" : course.location));
+        box.addView(detailRow("教师", course.teacher == null ? "--" : course.teacher));
+        box.addView(detailRow("代码", course.code == null ? "--" : course.code));
+        if (course.assessmentMethod != null) box.addView(detailRow("考核", course.assessmentMethod.label));
+        if (course.notes != null) box.addView(detailRow("备注", course.notes));
+        showCoursePanel("课程详情", course.name, box, dp(680));
+    }
+
+    private void showCourseMeetingDetailDialog(ScheduleModels.Course course, ScheduleModels.TimeSlot slot) {
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        String location = slot != null && slot.location != null ? slot.location : course.location;
+        String teacher = slot != null && slot.teacher != null ? slot.teacher : course.teacher;
+        box.addView(detailRow("地点", location == null ? "--" : location));
+        box.addView(detailRow("教师", teacher == null ? "--" : teacher));
+        showCoursePanel("本节课", course.name, box, dp(380));
+    }
+
+    private void showCoursePanel(String eyebrowText, String heading, View details, int preferredHeight) {
+        Dialog dialog = new Dialog(this);
+        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
+
+        LinearLayout shell = new LinearLayout(this);
+        shell.setOrientation(LinearLayout.VERTICAL);
+        shell.setPadding(dp(22), dp(20), dp(22), dp(16));
+        shell.setBackground(bg(panelColor(), 16));
+        applyRoundedOutline(shell, 16, 10);
+
+        TextView eyebrow = label(eyebrowText, 11, primaryColor());
+        eyebrow.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        shell.addView(eyebrow, new LinearLayout.LayoutParams(-1, dp(24)));
+
+        TextView title = label(heading, 21, textColor());
+        title.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        title.setMaxLines(2);
+        shell.addView(title, new LinearLayout.LayoutParams(-1, -2));
+
+        View accent = new View(this);
+        accent.setBackground(bg(primaryColor(), 2));
+        LinearLayout.LayoutParams accentParams = new LinearLayout.LayoutParams(dp(42), dp(3));
+        accentParams.topMargin = dp(12);
+        accentParams.bottomMargin = dp(8);
+        shell.addView(accent, accentParams);
+
+        ScrollView scroll = new ScrollView(this);
+        scroll.setFillViewport(true);
+        scroll.setClipToPadding(false);
+        scroll.setPadding(0, dp(2), 0, dp(2));
+        scroll.addView(details);
+        shell.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
+
+        Button close = action("关闭", true);
+        close.setOnClickListener(v -> dialog.dismiss());
+        LinearLayout.LayoutParams closeParams = new LinearLayout.LayoutParams(-1, dp(44));
+        closeParams.topMargin = dp(10);
+        shell.addView(close, closeParams);
+
+        dialog.setContentView(shell);
+        dialog.setCanceledOnTouchOutside(true);
+        configureCustomDialogWindow(dialog, preferredHeight);
+        dialog.show();
+        configureCustomDialogWindow(dialog, preferredHeight);
+    }
+
+    private void configureCustomDialogWindow(Dialog dialog, int preferredHeight) {
+        Window window = dialog.getWindow();
+        if (window == null) return;
+        int width = getResources().getDisplayMetrics().widthPixels;
+        int height = getResources().getDisplayMetrics().heightPixels;
+        int dialogWidth = Math.min(width - dp(32), dp(440));
+        int dialogHeight = Math.min(height - dp(96), preferredHeight);
+        window.setGravity(Gravity.CENTER);
+        window.setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(Color.TRANSPARENT));
+        window.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
+        WindowManager.LayoutParams params = window.getAttributes();
+        params.width = dialogWidth;
+        params.height = dialogHeight;
+        params.dimAmount = 0.34f;
+        window.setAttributes(params);
+        window.setLayout(dialogWidth, dialogHeight);
+    }
+
+    private View detailRow(String heading, String value) {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.VERTICAL);
+        row.setPadding(0, dp(8), 0, dp(8));
+        TextView caption = label(heading, 11, mutedColor());
+        caption.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        row.addView(caption, new LinearLayout.LayoutParams(-1, dp(22)));
+        TextView content = label(value == null || value.isEmpty() ? "--" : value, 14, textColor());
+        content.setGravity(Gravity.TOP | Gravity.START);
+        content.setLineSpacing(0, 1.08f);
+        row.addView(content, new LinearLayout.LayoutParams(-1, -2));
+        View divider = new View(this);
+        divider.setBackgroundColor(lineColor());
+        LinearLayout.LayoutParams dividerParams = new LinearLayout.LayoutParams(-1, dp(1));
+        dividerParams.topMargin = dp(8);
+        row.addView(divider, dividerParams);
+        return row;
+    }
+
+    private void styleDialogInput(EditText input) {
+        input.setTextColor(textColor());
+        input.setHintTextColor(mutedColor());
+        input.setPadding(dp(14), 0, dp(14), 0);
+        input.setBackground(border(surfaceColor(), lineColor(), 8));
     }
 
     private void showDatePicker(String currentValue, java.util.function.Consumer<String> consumer) {
@@ -1468,33 +1562,28 @@ public class MainActivity extends Activity {
         bringAppToFront();
         LinearLayout form = new LinearLayout(this);
         form.setOrientation(LinearLayout.VERTICAL);
-        form.setPadding(dp(24), 0, dp(24), 0);
+        form.setPadding(0, 0, 0, 0);
         String[] saved = readCredentials();
         EditText username = new EditText(this);
         username.setHint("学号");
         username.setSingleLine(true);
         username.setInputType(InputType.TYPE_CLASS_TEXT);
         username.setText(saved[0]);
+        styleDialogInput(username);
         form.addView(username, new LinearLayout.LayoutParams(-1, dp(58)));
+        addGap(form, 10);
         EditText password = new EditText(this);
         password.setHint("统一认证密码");
         password.setSingleLine(true);
         password.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
         password.setText(saved[1]);
+        styleDialogInput(password);
         form.addView(password, new LinearLayout.LayoutParams(-1, dp(58)));
-        loginDialog = new AlertDialog.Builder(this)
-                .setTitle(invalid ? "账号或密码不正确" : "登录教务系统")
-                .setView(form)
-                .setNegativeButton("取消", null)
-                .setPositiveButton("保存", null)
-                .create();
-        loginDialog.setOnShowListener(dialog -> {
-            loginDialog.getButton(AlertDialog.BUTTON_NEGATIVE).setOnClickListener(v -> {
-                loginPromptVisible = false;
-                loginDialog.dismiss();
-                if (automationWeb != null) cancelAutomation();
-            });
-            loginDialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
+        loginDialog = new Dialog(this);
+        Dialog dialog = loginDialog;
+        showLoginActionPanel(dialog, "账号", "登录教务系统",
+                invalid ? "账号或密码不正确，请重新确认" : "使用统一身份认证登录",
+                form, "保存", () -> {
                 String account = username.getText().toString().trim();
                 String secret = password.getText().toString();
                 if (account.isEmpty() || secret.isEmpty()) {
@@ -1508,13 +1597,10 @@ public class MainActivity extends Activity {
                 loginPromptVisible = false;
                 loginDialog.dismiss();
                 Toast.makeText(this, "账号已保存", Toast.LENGTH_SHORT).show();
-            });
-        });
-        loginDialog.setOnCancelListener(dialog -> {
+            }, () -> {
             loginPromptVisible = false;
             if (automationWeb != null) cancelAutomation();
         });
-        loginDialog.show();
     }
 
     private void showSmsDialog() {
@@ -1525,21 +1611,12 @@ public class MainActivity extends Activity {
         code.setHint("短信验证码");
         code.setInputType(InputType.TYPE_CLASS_NUMBER);
         code.setSingleLine(true);
-        code.setPadding(dp(24), 0, dp(24), 0);
-        loginDialog = new AlertDialog.Builder(this)
-                .setTitle("输入短信验证码")
-                .setMessage("验证码已由校方认证系统发送，请输入后继续。")
-                .setView(code)
-                .setNegativeButton("取消", null)
-                .setPositiveButton("验证", null)
-                .create();
-        loginDialog.setOnShowListener(dialog -> {
-            loginDialog.getButton(AlertDialog.BUTTON_NEGATIVE).setOnClickListener(v -> {
-                loginPromptVisible = false;
-                loginDialog.dismiss();
-                cancelAutomation();
-            });
-            loginDialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
+        styleDialogInput(code);
+        loginDialog = new Dialog(this);
+        Dialog dialog = loginDialog;
+        showLoginActionPanel(dialog, "安全验证", "输入短信验证码",
+                "验证码已由校方认证系统发送，请输入后继续。",
+                code, "验证", () -> {
                 String value = code.getText().toString().trim();
                 if (value.length() < 4) {
                     Toast.makeText(this, "请输入有效验证码", Toast.LENGTH_SHORT).show();
@@ -1548,13 +1625,66 @@ public class MainActivity extends Activity {
                 pendingSmsCode = value;
                 loginPromptVisible = false;
                 loginDialog.dismiss();
-            });
-        });
-        loginDialog.setOnCancelListener(dialog -> {
+            }, () -> {
             loginPromptVisible = false;
             cancelAutomation();
         });
-        loginDialog.show();
+    }
+
+    private void showLoginActionPanel(Dialog dialog, String eyebrowText, String heading, String subtitle,
+                                      View content, String positiveText, Runnable positiveAction,
+                                      Runnable cancelAction) {
+        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
+        LinearLayout shell = new LinearLayout(this);
+        shell.setOrientation(LinearLayout.VERTICAL);
+        shell.setPadding(dp(22), dp(20), dp(22), dp(16));
+        shell.setBackground(bg(panelColor(), 16));
+        applyRoundedOutline(shell, 16, 10);
+
+        TextView eyebrow = label(eyebrowText, 11, primaryColor());
+        eyebrow.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        shell.addView(eyebrow, new LinearLayout.LayoutParams(-1, dp(24)));
+        TextView title = label(heading, 21, textColor());
+        title.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        shell.addView(title, new LinearLayout.LayoutParams(-1, -2));
+        if (subtitle != null && !subtitle.isEmpty()) {
+            TextView hint = label(subtitle, 12, mutedColor());
+            hint.setPadding(0, dp(6), 0, dp(4));
+            shell.addView(hint, new LinearLayout.LayoutParams(-1, -2));
+        }
+        View accent = new View(this);
+        accent.setBackground(bg(primaryColor(), 2));
+        LinearLayout.LayoutParams accentParams = new LinearLayout.LayoutParams(dp(42), dp(3));
+        accentParams.topMargin = dp(8);
+        accentParams.bottomMargin = dp(8);
+        shell.addView(accent, accentParams);
+
+        ScrollView scroll = new ScrollView(this);
+        scroll.setFillViewport(true);
+        scroll.addView(content);
+        shell.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
+
+        LinearLayout actions = new LinearLayout(this);
+        Button cancel = action("取消", false);
+        Button confirm = action(positiveText, true);
+        actions.addView(cancel, new LinearLayout.LayoutParams(0, dp(44), 1));
+        addHorizontalGap(actions, 10);
+        actions.addView(confirm, new LinearLayout.LayoutParams(0, dp(44), 1));
+        LinearLayout.LayoutParams actionParams = new LinearLayout.LayoutParams(-1, dp(44));
+        actionParams.topMargin = dp(12);
+        shell.addView(actions, actionParams);
+
+        cancel.setOnClickListener(v -> {
+            cancelAction.run();
+            dialog.dismiss();
+        });
+        confirm.setOnClickListener(v -> positiveAction.run());
+        dialog.setContentView(shell);
+        dialog.setCanceledOnTouchOutside(false);
+        dialog.setOnCancelListener(ignored -> cancelAction.run());
+        configureCustomDialogWindow(dialog, dp(430));
+        dialog.show();
+        configureCustomDialogWindow(dialog, dp(430));
     }
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -2551,16 +2681,20 @@ public class MainActivity extends Activity {
 
     private void applyRoundedButtonOutline(Button button, int radiusDp) {
         button.setStateListAnimator(null);
-        button.setElevation(dp(1));
-        button.setOutlineProvider(new ViewOutlineProvider() {
+        applyRoundedOutline(button, radiusDp, 1);
+    }
+
+    private void applyRoundedOutline(View view, int radiusDp, int elevationDp) {
+        view.setElevation(dp(elevationDp));
+        view.setOutlineProvider(new ViewOutlineProvider() {
             @Override
-            public void getOutline(View view, Outline outline) {
-                if (view.getWidth() > 0 && view.getHeight() > 0) {
-                    outline.setRoundRect(0, 0, view.getWidth(), view.getHeight(), dp(radiusDp));
+            public void getOutline(View target, Outline outline) {
+                if (target.getWidth() > 0 && target.getHeight() > 0) {
+                    outline.setRoundRect(0, 0, target.getWidth(), target.getHeight(), dp(radiusDp));
                 }
             }
         });
-        button.setClipToOutline(true);
+        view.setClipToOutline(true);
     }
 
     private View colorSwatch(String value, boolean selected) {
@@ -2611,12 +2745,15 @@ public class MainActivity extends Activity {
 
     private LinearLayout schedulePreviewRow(ScheduleModels.Course course, LocalDate date) {
         LinearLayout card = card(surfaceColor());
+        ScheduleModels.TimeSlot slot = primarySlotForDate(course, date);
         TextView name = label(course.name, 15, textColor());
         name.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
         card.addView(name);
-        card.addView(label(primaryTimeForDate(course, date), 12, mutedColor()));
-        if (course.location != null) card.addView(label(course.location, 12, mutedColor()));
-        card.setOnClickListener(v -> showCourseDetailDialog(course));
+        card.addView(label(slot == null ? primaryTimeForDate(course, date)
+                : ScheduleUtils.formatSections(slot.classSections), 12, mutedColor()));
+        String location = slot != null && slot.location != null ? slot.location : course.location;
+        if (location != null) card.addView(label(location, 12, mutedColor()));
+        card.setOnClickListener(v -> showCourseMeetingDetailDialog(course, slot));
         return card;
     }
 
@@ -2655,19 +2792,12 @@ public class MainActivity extends Activity {
         card.addView(title);
         card.addView(label(ScheduleUtils.formatCourseTime(course), 12, mutedColor()));
         if (course.location != null) card.addView(label(course.location, 12, mutedColor()));
+        if (course.teacher != null) card.addView(label(course.teacher, 12, mutedColor()));
         addGap(card, 10);
         LinearLayout actions = new LinearLayout(this);
         Button detail = action("详情", false);
         detail.setOnClickListener(v -> showCourseDetailDialog(course));
-        Button edit = action("编辑", false);
-        edit.setOnClickListener(v -> showCourseDialog(course));
-        Button delete = action("删除", false);
-        delete.setOnClickListener(v -> deleteCourse(course));
-        actions.addView(detail, new LinearLayout.LayoutParams(0, dp(42), 1));
-        addHorizontalGap(actions, 8);
-        actions.addView(edit, new LinearLayout.LayoutParams(0, dp(42), 1));
-        addHorizontalGap(actions, 8);
-        actions.addView(delete, new LinearLayout.LayoutParams(0, dp(42), 1));
+        actions.addView(detail, new LinearLayout.LayoutParams(-1, dp(42)));
         card.addView(actions);
         return card;
     }
@@ -2711,8 +2841,9 @@ public class MainActivity extends Activity {
         return cell;
     }
 
-    private View courseBlock(ScheduleModels.Course course, int span, int week, int day) {
+    private View courseBlock(ScheduleModels.Course course, int span, int week, int day, int section) {
         LinearLayout block = new LinearLayout(this);
+        ScheduleModels.TimeSlot slot = matchingSlot(course, week, day, section);
         block.setOrientation(LinearLayout.VERTICAL);
         int fill = parseColorSafe(course.color, primaryColorWithAlpha(240));
         block.setBackground(border(fill, lineColor(), 5));
@@ -2721,15 +2852,17 @@ public class MainActivity extends Activity {
         title.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
         title.setMaxLines(span <= 1 ? 2 : 4);
         block.addView(title);
-        TextView time = label(dayPrimarySectionLabel(course, week, day), 8, contrastText(fill));
+        TextView time = label(slot == null ? dayPrimarySectionLabel(course, week, day)
+                : ScheduleUtils.formatSections(slot.classSections), 8, contrastText(fill));
         time.setMaxLines(1);
         block.addView(time);
-        if (course.location != null) {
-            TextView location = label(course.location, 8, contrastText(fill));
+        String slotLocation = slot != null && slot.location != null ? slot.location : course.location;
+        if (slotLocation != null) {
+            TextView location = label(slotLocation, 8, contrastText(fill));
             location.setMaxLines(span <= 1 ? 1 : 2);
             block.addView(location);
         }
-        block.setOnClickListener(v -> showCourseDetailDialog(course));
+        block.setOnClickListener(v -> showCourseMeetingDetailDialog(course, slot));
         return block;
     }
 
@@ -2923,6 +3056,35 @@ public class MainActivity extends Activity {
         int week = ScheduleUtils.weekNumberForDate(date, semester);
         int day = date.getDayOfWeek().getValue();
         return dayPrimarySectionLabel(course, week, day);
+    }
+
+    private ScheduleModels.TimeSlot primarySlotForDate(ScheduleModels.Course course, LocalDate date) {
+        ScheduleModels.Semester semester = selectedSemester();
+        if (semester == null) return null;
+        int week = ScheduleUtils.weekNumberForDate(date, semester);
+        int day = date.getDayOfWeek().getValue();
+        ScheduleModels.TimeSlot earliest = null;
+        for (ScheduleModels.TimeSlot slot : course.timeSlots) {
+            if (slot.dayOfWeek != day
+                    || !ScheduleUtils.isWeekInRange(week, slot.weekRange)
+                    || !ScheduleUtils.matchesRepeatRule(week, slot.repeatRule)
+                    || slot.classSections.isEmpty()) continue;
+            if (earliest == null || Collections.min(slot.classSections) < Collections.min(earliest.classSections)) {
+                earliest = slot;
+            }
+        }
+        return earliest;
+    }
+
+    private ScheduleModels.TimeSlot matchingSlot(ScheduleModels.Course course, int week, int day, int section) {
+        for (ScheduleModels.TimeSlot slot : course.timeSlots) {
+            if (slot.dayOfWeek == day
+                    && ScheduleUtils.isWeekInRange(week, slot.weekRange)
+                    && ScheduleUtils.matchesRepeatRule(week, slot.repeatRule)
+                    && !slot.classSections.isEmpty()
+                    && Collections.min(slot.classSections) == section) return slot;
+        }
+        return null;
     }
 
     private String dayPrimarySectionLabel(ScheduleModels.Course course, int week, int day) {

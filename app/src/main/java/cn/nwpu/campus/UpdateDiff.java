@@ -61,7 +61,8 @@ final class UpdateDiff {
             if (course.timeSlots != null) {
                 for (ScheduleModels.TimeSlot slot : course.timeSlots) {
                     slots.add(clean(slot.weekRange) + ":" + slot.repeatRule.name() + ":"
-                            + slot.dayOfWeek + ":" + slot.classSections);
+                            + slot.dayOfWeek + ":" + slot.classSections + ":"
+                            + clean(slot.location) + ":" + clean(slot.teacher));
                 }
             }
             Collections.sort(slots);

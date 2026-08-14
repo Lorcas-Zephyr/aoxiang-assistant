@@ -101,22 +101,28 @@ public final class ScheduleImport {
             if (raw.scheduleText == null || raw.scheduleText.trim().isEmpty()) continue;
             List<ScheduleModels.TimeSlot> timeSlots = parseScheduleText(raw.scheduleText);
             if (timeSlots.isEmpty()) continue;
+            String teacher = mergeTeachers(raw.teacher);
+            String location = emptyToNull(formatLocation(raw.location));
+            for (ScheduleModels.TimeSlot slot : timeSlots) {
+                slot.teacher = teacher;
+                slot.location = location;
+            }
             String code = emptyToNull(raw.code);
             String key = (code == null ? "" : code.toLowerCase(Locale.ROOT)) + "|" + raw.name.trim();
             ScheduleModels.Course existing = grouped.get(key);
             if (existing != null) {
                 existing.timeSlots.addAll(timeSlots);
                 existing.timeSlots = mergeSlots(existing.timeSlots);
-                if (existing.location == null) existing.location = emptyToNull(formatLocation(raw.location));
-                if (existing.teacher == null) existing.teacher = emptyToNull(trimTeachers(raw.teacher));
+                existing.location = mergeLocations(existing.location, location);
+                existing.teacher = mergeTeachers(existing.teacher, teacher);
                 continue;
             }
             ScheduleModels.Course course = new ScheduleModels.Course(UUID.randomUUID().toString(), raw.name.trim(), semesterId, timeSlots);
             course.code = emptyToNull(raw.code);
             course.credits = raw.credits;
-            course.teacher = emptyToNull(trimTeachers(raw.teacher));
+            course.teacher = teacher;
             course.assessmentMethod = parseAssessment(raw.assessmentMethod);
-            course.location = emptyToNull(formatLocation(raw.location == null ? raw.scheduleText : raw.location));
+            course.location = location;
             course.color = ScheduleModels.PRESET_COLORS.get(colorIndex % ScheduleModels.PRESET_COLORS.size());
             grouped.put(key, course);
             colorIndex++;
@@ -179,7 +185,8 @@ public final class ScheduleImport {
     private static List<ScheduleModels.TimeSlot> mergeSlots(List<ScheduleModels.TimeSlot> slots) {
         Map<String, List<ScheduleModels.TimeSlot>> grouped = new LinkedHashMap<>();
         for (ScheduleModels.TimeSlot slot : slots) {
-            String key = slot.dayOfWeek + ":" + slot.classSections.toString() + ":" + slot.repeatRule.name();
+            String key = slot.dayOfWeek + ":" + slot.classSections.toString() + ":" + slot.repeatRule.name()
+                    + ":" + nullToEmpty(slot.teacher) + ":" + nullToEmpty(slot.location);
             grouped.computeIfAbsent(key, unused -> new ArrayList<>()).add(slot);
         }
         List<ScheduleModels.TimeSlot> merged = new ArrayList<>();
@@ -206,7 +213,9 @@ public final class ScheduleImport {
                         interval[0] == interval[1] ? String.valueOf(interval[0]) : interval[0] + "-" + interval[1],
                         group.get(0).repeatRule,
                         group.get(0).dayOfWeek,
-                        group.get(0).classSections
+                        group.get(0).classSections,
+                        group.get(0).teacher,
+                        group.get(0).location
                 ));
             }
         }
@@ -301,21 +310,43 @@ public final class ScheduleImport {
         return null;
     }
 
-    private static String trimTeachers(String value) {
-        if (value == null) return null;
-        String[] names = value.split("[,，、]");
+    private static String mergeTeachers(String... values) {
         List<String> out = new ArrayList<>();
-        for (String name : names) {
-            String trimmed = name.trim();
-            if (!trimmed.isEmpty()) out.add(trimmed);
+        for (String value : values) {
+            if (value == null) continue;
+            for (String name : value.split("[,，、;/；|｜\\s]+")) {
+                String trimmed = name.trim();
+                if (!trimmed.isEmpty() && !isTeacherMetadata(trimmed) && !out.contains(trimmed)) out.add(trimmed);
+                if (out.size() == 15) break;
+            }
             if (out.size() == 15) break;
         }
-        return ScheduleUtils.join(out, "、");
+        return out.isEmpty() ? null : ScheduleUtils.join(out, "、");
+    }
+
+    private static boolean isTeacherMetadata(String value) {
+        return value.matches(".*(?:学科基础|专业基础|专业核心|公共基础|通识教育|实践实训|集中实践|创新创业|素质拓展|全校|本科|研究生|培养方案|课程类别|必修|选修|限选|任选).*");
+    }
+
+    private static String mergeLocations(String... values) {
+        List<String> out = new ArrayList<>();
+        for (String value : values) {
+            if (value == null) continue;
+            for (String part : value.split("[\\n;；]+")) {
+                String location = formatLocation(part);
+                if (!location.isEmpty() && !out.contains(location)) out.add(location);
+            }
+        }
+        return out.isEmpty() ? null : ScheduleUtils.join(out, "\n");
     }
 
     private static String formatLocation(String raw) {
         if (raw == null) return null;
         return raw.replaceAll("\\s+", " ").trim();
+    }
+
+    private static String nullToEmpty(String value) {
+        return value == null ? "" : value.trim();
     }
 
     private static boolean containsAny(String text, String[] keywords) {

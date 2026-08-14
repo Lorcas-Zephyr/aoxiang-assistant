@@ -3,7 +3,6 @@ package cn.nwpu.campus;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
-import java.text.DecimalFormat;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -97,12 +96,21 @@ public final class ScheduleModels {
         public RepeatRule repeatRule;
         public int dayOfWeek;
         public List<Integer> classSections;
+        public String teacher;
+        public String location;
 
         public TimeSlot(String weekRange, RepeatRule repeatRule, int dayOfWeek, List<Integer> classSections) {
+            this(weekRange, repeatRule, dayOfWeek, classSections, null, null);
+        }
+
+        public TimeSlot(String weekRange, RepeatRule repeatRule, int dayOfWeek, List<Integer> classSections,
+                        String teacher, String location) {
             this.weekRange = weekRange;
             this.repeatRule = repeatRule == null ? RepeatRule.ALL : repeatRule;
             this.dayOfWeek = dayOfWeek;
             this.classSections = new ArrayList<>(classSections);
+            this.teacher = teacher;
+            this.location = location;
         }
 
         public JSONObject json() {
@@ -116,6 +124,8 @@ public final class ScheduleModels {
                     sections.put(value);
                 }
                 o.put("classSections", sections);
+                o.put("teacher", teacher == null ? JSONObject.NULL : teacher);
+                o.put("location", location == null ? JSONObject.NULL : location);
             } catch (Exception ignored) {}
             return o;
         }
@@ -135,7 +145,9 @@ public final class ScheduleModels {
                     o.optString("weekRange", "1-16"),
                     RepeatRule.fromStoredValue(o.optString("repeatRule", "")),
                     o.optInt("dayOfWeek", 1),
-                    sections
+                    sections,
+                    o.isNull("teacher") ? null : o.optString("teacher", null),
+                    o.isNull("location") ? null : o.optString("location", null)
             );
         }
     }
@@ -270,6 +282,10 @@ public final class ScheduleModels {
             course.location = o.isNull("location") ? null : o.optString("location", null);
             course.credits = o.isNull("credits") ? null : o.optDouble("credits");
             course.teacher = o.isNull("teacher") ? null : o.optString("teacher", null);
+            for (TimeSlot slot : course.timeSlots) {
+                if (slot.location == null) slot.location = course.location;
+                if (slot.teacher == null) slot.teacher = course.teacher;
+            }
             course.assessmentMethod = o.isNull("assessmentMethod") ? null : AssessmentMethod.fromLabel(o.optString("assessmentMethod", ""));
             course.notes = o.isNull("notes") ? null : o.optString("notes", null);
             course.color = o.isNull("color") ? null : o.optString("color", null);
@@ -296,9 +312,6 @@ public final class ScheduleModels {
             return end;
         }
 
-        public String creditsText() {
-            return credits == null ? "--" : new DecimalFormat("0.##").format(credits);
-        }
     }
 
     public static List<SectionTime> buildDefaultSectionTimes(int count) {

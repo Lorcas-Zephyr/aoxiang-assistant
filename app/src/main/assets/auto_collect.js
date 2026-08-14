@@ -285,7 +285,8 @@
       course.name || "",
       course.code || "",
       course.scheduleText || "",
-      course.teacher || ""
+      course.teacher || "",
+      course.location || ""
     ].join("|");
     if (!seen.has(key)) {
       seen.add(key);
@@ -301,6 +302,17 @@
     return text(copy.textContent);
   };
 
+  const textWithLineBreaks = (node) => {
+    if (!node) return "";
+    if (node.nodeType === 3) return node.nodeValue || "";
+    if (node.nodeType !== 1) return "";
+    const tag = (node.tagName || "").toUpperCase();
+    if (tag === "BR") return "\n";
+    const blockTags = new Set(["DIV", "P", "LI", "TR", "SECTION", "ARTICLE"]);
+    const content = [...node.childNodes].map(textWithLineBreaks).join("");
+    return blockTags.has(tag) ? `\n${content}\n` : content;
+  };
+
   const splitCourseBlocks = (container) => {
     const blocks = [];
     let current = null;
@@ -314,10 +326,15 @@
       }
     });
     if (current) blocks.push(current);
-    return blocks.map((block) => ({
-      name: block.name,
-      content: text(block.nodes.map((node) => node.textContent || "").join(" "))
-    })).filter((block) => block.name && block.content);
+    return blocks.map((block) => {
+      const rawContent = block.nodes.map(textWithLineBreaks).join("");
+      return {
+        name: block.name,
+        content: text(rawContent),
+        lines: rawContent.split(/[\r\n]+/).map(text).filter(Boolean),
+        nodes: block.nodes
+      };
+    }).filter((block) => block.name && block.content);
   };
 
   const scheduleTextFromBlock = (content, day) => {
@@ -333,6 +350,125 @@
   const locationFromBlock = (content) => {
     const match = content.match(/(?:长安|友谊|太仓)校区\s+(?:教师另行安排场地[（(]?[^）)]*[）)]?|[^\s()（）]+)/);
     return match ? text(match[0]) : "";
+  };
+
+  const normalizeTeacher = (value) => text(value)
+    .replace(/^(?:授课教师|任课教师|上课教师|教师|老师)\s*[：:]?\s*/, "")
+    .replace(/\s*[|｜/]\s*/g, "、")
+    .replace(/^[,，、\s]+|[,，、\s]+$/g, "");
+
+  const validTeacher = (value) => {
+    const candidate = normalizeTeacher(value);
+    if (!candidate || candidate.length > 80 || /\d/.test(candidate)) return "";
+    if (/(?:校区|教学楼|实验楼|教室|体育馆|操场|训练场|中心|课程|点击|查看|详情|另行安排|场地|第.+节|单周|双周|学科基础|专业基础|专业核心|公共基础|通识教育|实践实训|集中实践|创新创业|素质拓展|全校|本科|研究生|培养方案|课程类别|必修|选修|限选|任选)/.test(candidate)) return "";
+    return /^[\u3400-\u9fffA-Za-z·.\s、,，]+$/.test(candidate) ? candidate : "";
+  };
+
+  const appendTeachers = (target, value) => {
+    normalizeTeacher(value).split(/[\s、,，;；/|｜]+/).forEach((part) => {
+      const candidate = validTeacher(part);
+      if (candidate && !target.includes(candidate) && target.length < 15) target.push(candidate);
+    });
+  };
+
+  const teacherFromBlock = (block, code, locationText) => {
+    const teachers = [];
+    const teacherSelector = [
+      "[data-teacher]", "[data-teacher-name]", "[data-instructor]",
+      ".teacher", ".teacher-name", ".course-teacher",
+      "[class*='teacher']", "[class*='instructor']", "a[href*='teacher']",
+      "[title*='教师']", "[title*='老师']"
+    ].join(",");
+    for (const node of block.nodes || []) {
+      if (!node || node.nodeType !== 1) continue;
+      const matches = [];
+      if (node.matches && node.matches(teacherSelector)) matches.push(node);
+      if (node.querySelectorAll) matches.push(...node.querySelectorAll(teacherSelector));
+      for (const element of matches) {
+        const raw = element.getAttribute("data-teacher") ||
+          element.getAttribute("data-teacher-name") ||
+          element.getAttribute("data-instructor") ||
+          element.getAttribute("title") ||
+          element.innerText || element.textContent || "";
+        appendTeachers(teachers, raw);
+      }
+    }
+    if (teachers.length) return teachers.join("、");
+
+    const labelledPattern = /(?:授课教师|任课教师|上课教师|教师|老师)\s*[：:]\s*([\u3400-\u9fffA-Za-z·.]+(?:\s*(?:[,，、/;；]|\s)\s*[\u3400-\u9fffA-Za-z·.]+)*)/g;
+    for (const labelled of block.content.matchAll(labelledPattern)) {
+      appendTeachers(teachers, labelled[1]);
+    }
+    if (teachers.length) return teachers.join("、");
+
+    let remainder = block.content;
+    [block.name, code, locationText].filter(Boolean).forEach((part) => {
+      remainder = remainder.split(part).join(" ");
+    });
+    remainder = remainder
+      .replace(/\b[A-Za-z][A-Za-z0-9]*\d[A-Za-z0-9]*\.\d+\b/g, " ")
+      .replace(/[（(][^()（）]{1,40}?周(?:\s*[单双])?[）)]/g, " ")
+      .replace(/[（(][^()（）]{1,20}?节[）)]/g, " ")
+      .replace(/(?:考试|考查|考察|PnP|必修|选修)/gi, " ");
+    remainder.split(/\s+/)
+      .map(validTeacher)
+      .filter((value) => value && /^[\u3400-\u9fff·]{2,12}(?:[、,，][\u3400-\u9fff·]{2,12})*$/.test(value))
+      .forEach((value) => appendTeachers(teachers, value));
+    return teachers.join("、");
+  };
+
+  const scheduleRecordStart = /[（(]\s*[^()（）]{1,60}?周(?:\s*[单双])?\s*[）)]\s*[（(]\s*[^()（）]{1,20}?节\s*[）)]/g;
+
+  const splitScheduleRecordLines = (block) => {
+    const records = [];
+    (block.lines || []).forEach((line) => {
+      const starts = [];
+      scheduleRecordStart.lastIndex = 0;
+      let match;
+      while ((match = scheduleRecordStart.exec(line)) !== null) starts.push(match.index);
+      starts.forEach((start, index) => {
+        records.push(line.slice(start, index + 1 < starts.length ? starts[index + 1] : line.length));
+      });
+    });
+    if (records.length) return records;
+
+    const flattened = block.content || "";
+    const starts = [];
+    scheduleRecordStart.lastIndex = 0;
+    let match;
+    while ((match = scheduleRecordStart.exec(flattened)) !== null) starts.push(match.index);
+    starts.forEach((start, index) => {
+      records.push(flattened.slice(start, index + 1 < starts.length ? starts[index + 1] : flattened.length));
+    });
+    return records;
+  };
+
+  const scheduleRecordsFromBlock = (block, day) => {
+    const pattern = /^\s*[（(]\s*([^()（）]{1,60}?周(?:\s*[单双])?)\s*[）)]\s*[（(]\s*([^()（）]{1,20}?节)\s*[）)]\s*(.*?)\s*$/;
+    const records = [];
+    splitScheduleRecordLines(block).forEach((line) => {
+      const match = line.match(pattern);
+      if (!match) return;
+      const remainder = text(match[3].replace(/\s+\d{1,3}院\s+.*$/, ""));
+      const parts = remainder.split(/\s+/).filter(Boolean);
+      const teacherParts = [];
+      const teachers = [];
+      while (parts.length) {
+        const teacher = validTeacher(parts[parts.length - 1]);
+        if (!teacher) break;
+        parts.pop();
+        teacherParts.unshift(teacher);
+      }
+      teacherParts.forEach((teacher) => appendTeachers(teachers, teacher));
+      const location = text(parts.join(" "));
+      if (!teachers.length || !location || !looksLikeLocation(location)) return;
+      records.push({
+        scheduleText: `${text(match[1])} ${dayLabels[day]} ${text(match[2])}`,
+        teacher: teachers.join("、"),
+        location
+      });
+    });
+    return records;
   };
 
   const extractSchedulePayload = () => {
@@ -368,11 +504,26 @@
           splitCourseBlocks(container).forEach((block) => {
             if (onlinePattern.test(block.content)) return;
             const codeMatch = block.content.match(/\b[A-Za-z][A-Za-z0-9]*\d[A-Za-z0-9]*\.\d+\b/);
+            const code = codeMatch ? codeMatch[0] : undefined;
+            const records = scheduleRecordsFromBlock(block, day);
+            if (records.length) {
+              records.forEach((record) => uniquePush(courses, seenCourses, {
+                name: block.name,
+                code,
+                teacher: record.teacher,
+                scheduleText: record.scheduleText,
+                location: record.location,
+                dataSemester: semesters.length ? semesters[0].dataSemester : ""
+              }));
+              return;
+            }
+            const locationText = locationFromBlock(block.content) || undefined;
             uniquePush(courses, seenCourses, {
               name: block.name,
-              code: codeMatch ? codeMatch[0] : undefined,
+              code,
+              teacher: teacherFromBlock(block, code, locationText) || undefined,
               scheduleText: scheduleTextFromBlock(block.content, day),
-              location: locationFromBlock(block.content) || undefined,
+              location: locationText,
               dataSemester: semesters.length ? semesters[0].dataSemester : ""
             });
           });

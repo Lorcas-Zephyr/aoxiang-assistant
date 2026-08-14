@@ -65,7 +65,7 @@ final class ScheduleWidgetData {
                 int last = sections.get(sections.size() - 1);
                 String start = sectionTime(semester, first, true);
                 String end = sectionTime(semester, last, false);
-                items.add(new Item(course.name, safe(course.location), safe(course.color),
+                items.add(new Item(course.name, safe(slot.location == null ? course.location : slot.location), safe(course.color),
                         ScheduleUtils.formatSections(sections), start, end, first));
             }
         }
