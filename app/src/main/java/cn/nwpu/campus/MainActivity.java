@@ -894,6 +894,7 @@ public class MainActivity extends Activity {
 
         int week = currentScheduleWeek(semester);
         LocalDate weekStart = weekStartForSelection(semester, week);
+        int sectionHeight = scheduleSectionHeightPx(semester);
         TextView caption = label(semester.name + " · 第" + week + "周", 14, textColor());
         caption.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
         wrap.addView(caption);
@@ -918,7 +919,7 @@ public class MainActivity extends Activity {
         timeColumn.setOrientation(LinearLayout.VERTICAL);
         for (int section = 1; section <= semester.sectionCount; section++) {
             timeColumn.addView(sectionLabel(semester, section),
-                    new LinearLayout.LayoutParams(-1, dp(SCHEDULE_SECTION_HEIGHT_DP)));
+                    new LinearLayout.LayoutParams(-1, sectionHeight));
         }
         body.addView(timeColumn, new LinearLayout.LayoutParams(dp(44), -2));
 
@@ -930,13 +931,13 @@ public class MainActivity extends Activity {
             while (section <= semester.sectionCount) {
                 ScheduleModels.Course starting = courseStartingAt(weekCourses, week, day, section);
                 if (starting == null) {
-                    dayColumn.addView(emptyCell(), new LinearLayout.LayoutParams(-1, dp(SCHEDULE_SECTION_HEIGHT_DP)));
+                    dayColumn.addView(emptyCell(), new LinearLayout.LayoutParams(-1, sectionHeight));
                     section++;
                 } else {
                     int span = spanForCourse(starting, week, day, section);
-                    View block = courseBlock(starting, span, week, day, section);
+                    View block = courseBlock(starting, week, day, section);
                     dayColumn.addView(block,
-                            new LinearLayout.LayoutParams(-1, dp(SCHEDULE_SECTION_HEIGHT_DP * span)));
+                            new LinearLayout.LayoutParams(-1, sectionHeight * span));
                     section += span;
                 }
             }
@@ -2841,16 +2842,19 @@ public class MainActivity extends Activity {
         return cell;
     }
 
-    private View courseBlock(ScheduleModels.Course course, int span, int week, int day, int section) {
-        LinearLayout block = new LinearLayout(this);
+    private View courseBlock(ScheduleModels.Course course, int week, int day, int section) {
         ScheduleModels.TimeSlot slot = matchingSlot(course, week, day, section);
+        return courseBlock(course, slot, week, day);
+    }
+
+    private View courseBlock(ScheduleModels.Course course, ScheduleModels.TimeSlot slot, int week, int day) {
+        LinearLayout block = new LinearLayout(this);
         block.setOrientation(LinearLayout.VERTICAL);
         int fill = parseColorSafe(course.color, primaryColorWithAlpha(240));
         block.setBackground(border(fill, lineColor(), 5));
         block.setPadding(dp(3), dp(3), dp(3), dp(3));
         TextView title = label(course.name, 10, contrastText(fill));
         title.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
-        title.setMaxLines(span <= 1 ? 2 : 4);
         block.addView(title);
         TextView time = label(slot == null ? dayPrimarySectionLabel(course, week, day)
                 : ScheduleUtils.formatSections(slot.classSections), 8, contrastText(fill));
@@ -2859,11 +2863,39 @@ public class MainActivity extends Activity {
         String slotLocation = slot != null && slot.location != null ? slot.location : course.location;
         if (slotLocation != null) {
             TextView location = label(slotLocation, 8, contrastText(fill));
-            location.setMaxLines(span <= 1 ? 1 : 2);
             block.addView(location);
         }
         block.setOnClickListener(v -> showCourseMeetingDetailDialog(course, slot));
         return block;
+    }
+
+    private int scheduleSectionHeightPx(ScheduleModels.Semester semester) {
+        int minimum = dp(SCHEDULE_SECTION_HEIGHT_DP);
+        int screenWidth = getResources().getDisplayMetrics().widthPixels;
+        int boardWidth = Math.max(dp(44 + 7 * 32), screenWidth - dp(24));
+        int dayWidth = Math.max(dp(32), (boardWidth - dp(44)) / 7);
+        int required = minimum;
+        int widthSpec = View.MeasureSpec.makeMeasureSpec(dayWidth, View.MeasureSpec.EXACTLY);
+        int timeWidthSpec = View.MeasureSpec.makeMeasureSpec(dp(44), View.MeasureSpec.EXACTLY);
+        int heightSpec = View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED);
+
+        for (int section = 1; section <= semester.sectionCount; section++) {
+            View sample = sectionLabel(semester, section);
+            sample.measure(timeWidthSpec, heightSpec);
+            required = Math.max(required, sample.getMeasuredHeight());
+        }
+
+        for (ScheduleModels.Course course : coursesForSemester(semester.id)) {
+            for (ScheduleModels.TimeSlot slot : course.timeSlots) {
+                if (slot.classSections == null || slot.classSections.isEmpty()) continue;
+                View sample = courseBlock(course, slot, 1, slot.dayOfWeek);
+                sample.measure(widthSpec, heightSpec);
+                int span = Math.max(1, slot.classSections.size());
+                int perSection = (sample.getMeasuredHeight() + span - 1) / span;
+                required = Math.max(required, perSection);
+            }
+        }
+        return required;
     }
 
     private TextView infoLine(String labelText, String value) {
