@@ -30,6 +30,7 @@ import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.ViewOutlineProvider;
+import android.view.ViewConfiguration;
 import android.view.animation.DecelerateInterpolator;
 import android.webkit.CookieManager;
 import android.webkit.WebChromeClient;
@@ -1029,8 +1030,9 @@ public class MainActivity extends Activity {
 
         scheduleSwipeIncoming = incoming;
         scheduleViewport.addView(incoming, new FrameLayout.LayoutParams(-1, -2));
-        source.setTranslationX(dx);
-        incoming.setTranslationX(scheduleSwipeDirection * scheduleSwipeWidth + dx);
+        float clampedDx = clampSwipeTranslation(dx);
+        source.setTranslationX(clampedDx);
+        incoming.setTranslationX(scheduleSwipeDirection * scheduleSwipeWidth + clampedDx);
     }
 
     private void animateSchedulePosition(ScheduleModels.Semester semester, int direction) {
@@ -1056,14 +1058,24 @@ public class MainActivity extends Activity {
             prepareScheduleSwipe(source, dx);
         }
         if (scheduleSwipeIncoming != null) {
-            source.setTranslationX(dx);
-            scheduleSwipeIncoming.setTranslationX(scheduleSwipeDirection * scheduleSwipeWidth + dx);
+            float clampedDx = clampSwipeTranslation(dx);
+            source.setTranslationX(clampedDx);
+            scheduleSwipeIncoming.setTranslationX(scheduleSwipeDirection * scheduleSwipeWidth + clampedDx);
         }
     }
 
     private void finishScheduleSwipe(SwipeLayout source, float dx) {
         if (scheduleSwipeIncoming == null) {
             source.animate().translationX(0f).setDuration(120).start();
+            return;
+        }
+        float clampedDx = clampSwipeTranslation(dx);
+        boolean sameDirection = (scheduleSwipeDirection > 0 && clampedDx < 0)
+                || (scheduleSwipeDirection < 0 && clampedDx > 0);
+        // Keep the gesture threshold usable on wide screens while requiring a deliberate drag.
+        int commitDistance = Math.min(dp(96), Math.max(dp(72), scheduleSwipeWidth / 4));
+        if (!sameDirection || Math.abs(clampedDx) < commitDistance) {
+            cancelScheduleSwipe(source);
             return;
         }
         final int direction = scheduleSwipeDirection;
@@ -1093,11 +1105,33 @@ public class MainActivity extends Activity {
     }
 
     private void cancelScheduleSwipe(SwipeLayout source) {
-        if (scheduleViewport != null && scheduleSwipeIncoming != null) {
-            scheduleViewport.removeView(scheduleSwipeIncoming);
+        if (scheduleSwipeIncoming == null) {
+            source.animate().translationX(0f).setDuration(120).start();
+            return;
         }
-        scheduleSwipeIncoming = null;
-        source.animate().translationX(0f).setDuration(120).start();
+        final View incoming = scheduleSwipeIncoming;
+        final int direction = scheduleSwipeDirection;
+        scheduleSwipeAnimating = true;
+        source.animate()
+                .translationX(0f)
+                .setDuration(150)
+                .setInterpolator(new DecelerateInterpolator())
+                .withEndAction(() -> {
+                    if (scheduleViewport != null) scheduleViewport.removeView(incoming);
+                    scheduleSwipeIncoming = null;
+                    scheduleSwipeAnimating = false;
+                })
+                .start();
+        incoming.animate()
+                .translationX(direction * scheduleSwipeWidth)
+                .setDuration(150)
+                .setInterpolator(new DecelerateInterpolator())
+                .start();
+    }
+
+    private float clampSwipeTranslation(float dx) {
+        float width = Math.max(1, scheduleSwipeWidth);
+        return Math.max(-width, Math.min(width, dx));
     }
 
     private void commitSchedulePosition(ScheduleModels.Semester semester, boolean monthView, int direction) {
@@ -1133,6 +1167,7 @@ public class MainActivity extends Activity {
     private class SwipeLayout extends LinearLayout {
         private final ScheduleModels.Semester semester;
         private final boolean monthView;
+        private final int touchSlop;
         private float downX;
         private float downY;
         private boolean interceptingSwipe;
@@ -1141,6 +1176,7 @@ public class MainActivity extends Activity {
             super(context);
             this.semester = semester;
             this.monthView = monthView;
+            this.touchSlop = ViewConfiguration.get(context).getScaledTouchSlop();
             setClickable(true);
         }
 
@@ -1156,7 +1192,7 @@ public class MainActivity extends Activity {
                     if (!interceptingSwipe) {
                         float dx = event.getRawX() - downX;
                         float dy = event.getRawY() - downY;
-                        if (Math.abs(dx) >= dp(60) && Math.abs(dx) > Math.abs(dy) * 1.2f) {
+                        if (Math.abs(dx) >= touchSlop && Math.abs(dx) > Math.abs(dy) * 1.08f) {
                             interceptingSwipe = true;
                             getParent().requestDisallowInterceptTouchEvent(true);
                             prepareScheduleSwipe(this, dx);
