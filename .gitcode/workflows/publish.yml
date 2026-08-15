@@ -20,6 +20,8 @@ jobs:
       - name: Create GitCode release and upload APK
         run: |
           set -euo pipefail
+          phase="select-release-tag"
+          trap 'status=$?; printf "Release failed in phase `%s` (exit %s).\n" "$phase" "$status" >> "$ATOMGIT_STEP_SUMMARY"' ERR
 
           if [[ "${ATOMGIT_REF:-}" == refs/tags/* ]]; then
             pushed_tag="${ATOMGIT_REF#refs/tags/}"
@@ -28,6 +30,7 @@ jobs:
             release_tag="$(git tag --list 'v*' --sort=-v:refname | head -n 1)"
           fi
 
+          phase="verify-release-files"
           test -n "$release_tag"
           notes_path="release-notes/${release_tag}.md"
           asset_name="aoxiang-assistant-${release_tag}.apk"
@@ -39,6 +42,7 @@ jobs:
           temp_dir="$(mktemp -d)"
           trap 'rm -rf "$temp_dir"' EXIT
 
+          phase="query-release"
           get_status="$(curl --silent --show-error \
             --output "$temp_dir/release.json" \
             --write-out '%{http_code}' \
@@ -46,6 +50,7 @@ jobs:
             --data-urlencode "access_token=${ATOMGIT_TOKEN}")"
 
           if [ "$get_status" != "200" ]; then
+            phase="create-release-payload"
             jq -n \
               --arg tag "$release_tag" \
               --arg name "翱翔助手 ${release_tag}" \
@@ -53,6 +58,7 @@ jobs:
               '{tag_name: $tag, name: $name, body: $body, release_status: "latest"}' \
               > "$temp_dir/create.json"
 
+            phase="create-release"
             create_status="$(curl --silent --show-error \
               --output "$temp_dir/release.json" \
               --write-out '%{http_code}' \
@@ -69,24 +75,28 @@ jobs:
             esac
           fi
 
+          phase="check-release-assets"
           if jq -e --arg name "$asset_name" '.assets[]? | select(.name == $name)' \
             "$temp_dir/release.json" >/dev/null; then
             echo "Release asset already exists: ${asset_name}"
             exit 0
           fi
 
+          phase="request-upload-url"
           curl --fail-with-body --silent --show-error \
             --get "${api_base}/releases/${release_tag}/upload_url" \
             --data-urlencode "access_token=${ATOMGIT_TOKEN}" \
             --data-urlencode "file_name=${asset_name}" \
             --output "$temp_dir/upload.json"
 
+          phase="parse-upload-response"
           upload_url="$(jq -er '.url' "$temp_dir/upload.json")"
           project_id="$(jq -er '.headers["x-obs-meta-project-id"]' "$temp_dir/upload.json")"
           acl="$(jq -er '.headers["x-obs-acl"]' "$temp_dir/upload.json")"
           callback="$(jq -er '.headers["x-obs-callback"]' "$temp_dir/upload.json")"
           content_type="$(jq -er '.headers["Content-Type"]' "$temp_dir/upload.json")"
 
+          phase="upload-release-asset"
           curl --fail-with-body --silent --show-error \
             --request PUT \
             --header "x-obs-meta-project-id: ${project_id}" \
