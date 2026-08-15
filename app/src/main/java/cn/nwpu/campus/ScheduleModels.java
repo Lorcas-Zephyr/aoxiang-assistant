@@ -142,7 +142,7 @@ public final class ScheduleModels {
                 sections.add(1);
             }
             return new TimeSlot(
-                    o.optString("weekRange", "1-16"),
+                    o.optString("weekRange", "1-17"),
                     RepeatRule.fromStoredValue(o.optString("repeatRule", "")),
                     o.optInt("dayOfWeek", 1),
                     sections,
@@ -208,8 +208,8 @@ public final class ScheduleModels {
                     o.optString("id", "semester-default"),
                     o.optString("name", "学期"),
                     o.optString("startDate", LocalDate.now().toString()),
-                    o.optString("endDate", LocalDate.now().plusWeeks(19).toString()),
-                    Math.max(1, o.optInt("weekCount", 20)),
+                    o.optString("endDate", LocalDate.now().plusWeeks(17).minusDays(1).toString()),
+                    Math.max(1, o.optInt("weekCount", 17)),
                     sectionCount,
                     sectionTimes
             );
@@ -270,7 +270,7 @@ public final class ScheduleModels {
                 }
             }
             if (slots.isEmpty()) {
-                slots.add(new TimeSlot("1-16", RepeatRule.ALL, 1, Arrays.asList(1, 2)));
+                slots.add(new TimeSlot("1-17", RepeatRule.ALL, 1, Arrays.asList(1, 2)));
             }
             Course course = new Course(
                     o.optString("id", "course-" + System.currentTimeMillis()),

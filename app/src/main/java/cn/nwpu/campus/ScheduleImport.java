@@ -131,7 +131,7 @@ public final class ScheduleImport {
     }
 
     public static ScheduleModels.Semester createImportedSemester(RawSemester raw, List<ScheduleModels.Course> courses) {
-        int maxWeek = Math.max(20, calculateMaxWeek(courses));
+        int maxWeek = Math.max(17, calculateMaxWeek(courses));
         int year = LocalDate.now().getYear();
         int month = 9;
         if (raw.dataSemester != null) {
@@ -254,7 +254,7 @@ public final class ScheduleImport {
             converted = converted.replace("第" + entry.getKey() + "周", String.valueOf(entry.getValue()));
         }
         converted = converted.replace("周", "").trim();
-        if (converted.isEmpty()) return Arrays.asList("1-16");
+        if (converted.isEmpty()) return Arrays.asList("1-17");
         List<String> ranges = new ArrayList<>();
         for (String raw : converted.split("[,，、]")) {
             String part = raw.trim();
@@ -271,7 +271,7 @@ public final class ScheduleImport {
                 if (week > 0) ranges.add(String.valueOf(week));
             }
         }
-        return ranges.isEmpty() ? Arrays.asList("1-16") : ranges;
+        return ranges.isEmpty() ? Arrays.asList("1-17") : ranges;
     }
 
     private static Integer parseDayOfWeek(String text) {

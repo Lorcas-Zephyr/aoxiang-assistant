@@ -16,6 +16,8 @@
 - 支持深色模式、主题色和分钟/小时/天级别的更新间隔。
 - 自动更新由 Android 到期闹钟和短时前台同步服务维持，设备重启后会按设置恢复。
 - 设置采用分类二级面板，成绩和课表变化通知可分别控制并显示具体课程。
+- 登录时先验证翱翔门户账号和密码，首次登录成功后自动同步成绩、课表和电费。
+- 每次打开应用时从 GitCode 检查新版本，关于页也可手动检查；可查看更新内容、下载安装包或跳过当前版本。
 
 ## 更新日志
 
@@ -23,13 +25,14 @@
 
 ## 安装
 
-从 [Releases](https://github.com/Lorcas-Zephyr/aoxiang-assistant/releases) 下载最新 APK。Android 可能要求允许浏览器或文件管理器“安装未知应用”。
+国内用户可从 [GitCode Releases](https://gitcode.com/lorcas/aoxiang-assistant/releases) 下载最新 APK，也可以使用 [GitHub Releases](https://github.com/Lorcas-Zephyr/aoxiang-assistant/releases)。Android 可能要求允许浏览器或文件管理器“安装未知应用”。
 
 正式版本使用固定发布证书签名。升级时直接安装新版 APK 即可保留本地数据，无需先卸载旧版本。
 
 ## 登录与隐私
 
 - 教务账号和密码使用 Android Keystore 加密后保存在本机私有存储中。
+- 设置页保存账号时会先向校方统一认证验证；密码或验证码错误会直接提示。
 - 登录、成绩、课表和电费采集均在应用内完成，不上传到开发者服务器。
 - 退出登录会清除本地账号、Cookie、成绩、课表、电费缓存和相关通知。
 - 自动更新通过不可见的应用内 WebView 访问校方系统；登录失效时需要重新认证。
@@ -80,4 +83,4 @@ scripts/build.sh                    构建入口
 
 ## 反馈
 
-请通过 [GitHub Issues](https://github.com/Lorcas-Zephyr/aoxiang-assistant/issues) 提交问题。报告同步故障时请隐藏学号、姓名、Cookie、房间号等个人信息。
+用户交流群：`450804497`。也可以通过 [GitHub Issues](https://github.com/Lorcas-Zephyr/aoxiang-assistant/issues) 提交问题。报告同步故障时请隐藏学号、姓名、Cookie、房间号等个人信息。

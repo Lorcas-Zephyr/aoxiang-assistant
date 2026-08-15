@@ -48,6 +48,7 @@ public class BackgroundSyncService extends Service {
     private static final String GRADE_CHANNEL = "grade_updates";
     private static final String SCHEDULE_CHANNEL = "schedule_updates";
     private static final String ELECTRICITY_CHANNEL = "electricity_alerts";
+    private static final String AUTHENTICATION_CHANNEL = "authentication";
     private static final int SERVICE_NOTIFICATION_ID = 1004;
     private static final long RETRY_DELAY_MS = 5 * 60_000L;
 
@@ -169,8 +170,25 @@ public class BackgroundSyncService extends Service {
                         String raw = new JSONArray("[" + result + "]").getString(0);
                         JSONObject payload = new JSONObject(raw);
                         String phase = payload.optString("phase");
-                        if ("credentials_required".equals(phase) || "credentials_error".equals(phase)
-                                || "sms_required".equals(phase)) {
+                        if ("credentials_error".equals(phase)) {
+                            store.edit().putBoolean("credentials_verified", false).apply();
+                            sendAuthenticationNotification("账号或翱翔门户密码错误，请重新登录");
+                            finishAttempt();
+                            return;
+                        }
+                        if ("credentials_required".equals(phase)) {
+                            store.edit().putBoolean("credentials_verified", false).apply();
+                            sendAuthenticationNotification("登录信息已失效，请打开翱翔助手重新登录");
+                            finishAttempt();
+                            return;
+                        }
+                        if ("sms_required".equals(phase)) {
+                            sendAuthenticationNotification("统一认证需要验证码，请打开翱翔助手完成验证");
+                            finishAttempt();
+                            return;
+                        }
+                        if ("sms_error".equals(phase)) {
+                            sendAuthenticationNotification("统一认证验证码错误或已失效，请重新验证");
                             finishAttempt();
                             return;
                         }
@@ -402,6 +420,21 @@ public class BackgroundSyncService extends Service {
         if (manager != null) manager.notify(grades ? 1001 : 1003, builder.build());
     }
 
+    private void sendAuthenticationNotification(String message) {
+        Intent intent = new Intent(this, MainActivity.class).putExtra("start_tab", 4);
+        PendingIntent pending = PendingIntent.getActivity(this, 6, intent,
+                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+        Notification.Builder builder = Build.VERSION.SDK_INT >= 26
+                ? new Notification.Builder(this, AUTHENTICATION_CHANNEL) : new Notification.Builder(this);
+        builder.setSmallIcon(R.drawable.ic_launcher)
+                .setContentTitle("登录验证失败")
+                .setContentText(message)
+                .setAutoCancel(true)
+                .setContentIntent(pending);
+        NotificationManager manager = getSystemService(NotificationManager.class);
+        if (manager != null) manager.notify(1006, builder.build());
+    }
+
     private void updateElectricityAlert(double balance) {
         boolean enabled = store.getBoolean("electricity_alert_enabled", true);
         double threshold = parseNumber(store.getString("electricity_alert_threshold", "20"), 20.0);
@@ -434,6 +467,7 @@ public class BackgroundSyncService extends Service {
         manager.createNotificationChannel(channel(GRADE_CHANNEL, "成绩更新", "检测到成绩变化时通知"));
         manager.createNotificationChannel(channel(SCHEDULE_CHANNEL, "课表更新", "检测到课表变化时通知"));
         manager.createNotificationChannel(channel(ELECTRICITY_CHANNEL, "电费提醒", "剩余电费低于设定余量时通知"));
+        manager.createNotificationChannel(channel(AUTHENTICATION_CHANNEL, "登录验证", "登录密码或验证码需要重新验证时通知"));
     }
 
     private NotificationChannel channel(String id, String name, String description) {

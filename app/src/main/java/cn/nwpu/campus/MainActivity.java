@@ -61,6 +61,8 @@ import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.security.KeyStore;
 import java.text.DecimalFormat;
@@ -88,7 +90,13 @@ public class MainActivity extends Activity {
     private static final String GRADE_CHANNEL = "grade_updates";
     private static final String SCHEDULE_CHANNEL = "schedule_updates";
     private static final String ELECTRICITY_CHANNEL = "electricity_alerts";
+    private static final String AUTHENTICATION_CHANNEL = "authentication";
     private static final String CREDENTIAL_KEY = "campus_login_credentials";
+    private static final String GITCODE_LATEST_RELEASE_API =
+            "https://gitcode.com/api/v2/projects/10608171/releases/latest/tag";
+    private static final String GITCODE_RELEASE_PAGE =
+            "https://gitcode.com/lorcas/aoxiang-assistant/releases";
+    private static final String USER_GROUP_NUMBER = "450804497";
     private static final int REQUEST_EXPORT_JSON = 11;
     private static final int REQUEST_IMPORT_JSON = 12;
     private static final int TAB_HOME = 0;
@@ -123,8 +131,10 @@ public class MainActivity extends Activity {
     private ScrollView currentPage;
     private WebView automationWeb;
     private Dialog loginDialog;
+    private Dialog informationDialog;
 
     private boolean loginPromptVisible;
+    private boolean updateCheckRunning;
     private boolean autoGradeEnabled;
     private boolean autoScheduleEnabled;
     private boolean autoElectricityEnabled;
@@ -149,6 +159,9 @@ public class MainActivity extends Activity {
     private int scheduleSwipeDirection;
     private int scheduleSwipeWidth;
     private boolean scheduleSwipeAnimating;
+    private boolean initialSyncInProgress;
+    private final List<String> initialSyncTargets = new ArrayList<>();
+    private final List<String> initialSyncFailures = new ArrayList<>();
     private String automationTarget = "";
     private String pendingSmsCode = "";
     private String autoCollectScript = "";
@@ -224,6 +237,9 @@ public class MainActivity extends Activity {
         syncBackgroundService();
         if (silentBoot) {
             root.postDelayed(() -> moveTaskToBack(true), 300);
+        } else {
+            root.postDelayed(this::showUserGroupPrompt, 500L);
+            root.postDelayed(this::checkForUpdates, 900L);
         }
     }
 
@@ -237,8 +253,11 @@ public class MainActivity extends Activity {
             return;
         }
         if (Intent.ACTION_MAIN.equals(intent.getAction()) && intent.hasCategory(Intent.CATEGORY_LAUNCHER)) {
+            silentBoot = false;
             cancelAutomation();
             showTab(TAB_HOME);
+            root.postDelayed(this::showUserGroupPrompt, 350L);
+            root.postDelayed(this::checkForUpdates, 700L);
         }
     }
 
@@ -246,6 +265,7 @@ public class MainActivity extends Activity {
     protected void onDestroy() {
         cancelScheduledUpdates();
         cancelAutomation();
+        if (informationDialog != null) informationDialog.dismiss();
         activityAlive = false;
         super.onDestroy();
     }
@@ -255,10 +275,12 @@ public class MainActivity extends Activity {
         if (loginPromptVisible) {
             if (loginDialog != null) loginDialog.dismiss();
             loginPromptVisible = false;
+            cancelInitialSync();
             cancelAutomation();
             return;
         }
         if (automationWeb != null) {
+            cancelInitialSync();
             cancelAutomation();
             showTab(currentTab);
             return;
@@ -690,10 +712,12 @@ public class MainActivity extends Activity {
 
     private void addSettingsRoot(LinearLayout parent) {
         String[] credentials = readCredentials();
+        String accountSummary = credentials[0].isEmpty() ? "尚未登录"
+                : store.getBoolean("credentials_verified", true) ? maskAccount(credentials[0]) : "登录验证失败";
         parent.addView(section("账户与同步"));
         LinearLayout sync = card(panelColor());
         sync.setPadding(dp(14), 0, dp(8), 0);
-        addSettingNavigation(sync, "账号", credentials[0].isEmpty() ? "尚未登录" : maskAccount(credentials[0]), "account", true);
+        addSettingNavigation(sync, "账号", accountSummary, "account", true);
         addSettingNavigation(sync, "自动更新", automaticUpdateSummary(), "updates", true);
         addSettingNavigation(sync, "通知", notificationSummary(), "notifications", false);
         parent.addView(sync);
@@ -717,14 +741,22 @@ public class MainActivity extends Activity {
 
     private void addAccountSettings(LinearLayout parent) {
         String[] credentials = readCredentials();
+        boolean verified = store.getBoolean("credentials_verified", true);
         LinearLayout account = card(panelColor());
-        TextView accountTitle = label(credentials[0].isEmpty() ? "尚未登录" : maskAccount(credentials[0]), 15, textColor());
+        String accountText = credentials[0].isEmpty() ? "尚未登录" : maskAccount(credentials[0]);
+        TextView accountTitle = label(accountText, 15, textColor());
         accountTitle.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
         account.addView(accountTitle);
+        if (!credentials[0].isEmpty() && !verified) {
+            account.addView(label("账号尚未通过登录验证", 12, Color.rgb(196, 72, 72)));
+        }
         addGap(account, 10);
         LinearLayout actions = new LinearLayout(this);
         Button signIn = action(credentials[0].isEmpty() ? "登录" : "更换账号", true);
-        signIn.setOnClickListener(v -> showCredentialsDialog(false));
+        signIn.setOnClickListener(v -> {
+            if (credentials[0].isEmpty()) showCredentialsDialog(false);
+            else switchAccount();
+        });
         Button signOut = action("退出登录", false);
         signOut.setEnabled(!credentials[0].isEmpty());
         signOut.setOnClickListener(v -> signOut());
@@ -863,18 +895,28 @@ public class MainActivity extends Activity {
         addGap(identity, 12);
         identity.addView(label("包名", 11, mutedColor()));
         identity.addView(label(getPackageName(), 13, textColor()));
+        addGap(identity, 12);
+        identity.addView(label("用户群号", 11, mutedColor()));
+        TextView groupNumber = label(USER_GROUP_NUMBER, 15, textColor());
+        groupNumber.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        groupNumber.setTextIsSelectable(true);
+        identity.addView(groupNumber);
         parent.addView(identity);
 
         parent.addView(section("项目"));
         LinearLayout project = card(panelColor());
-        TextView repository = label("GitHub 仓库", 14, textColor());
+        TextView repository = label("项目仓库", 14, textColor());
         repository.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
         project.addView(repository);
-        project.addView(label("Lorcas-Zephyr/aoxiang-assistant", 12, mutedColor()));
+        project.addView(label("GitHub 与 GitCode 同步发布", 12, mutedColor()));
         addGap(project, 10);
-        Button openRepository = action("打开仓库", false);
+        Button checkUpdate = action("检查更新", true);
+        checkUpdate.setOnClickListener(v -> checkForUpdates(true));
+        project.addView(checkUpdate, new LinearLayout.LayoutParams(-1, dp(42)));
+        addGap(project, 8);
+        Button openRepository = action("打开 GitCode", false);
         openRepository.setOnClickListener(v -> startActivity(new Intent(Intent.ACTION_VIEW,
-                Uri.parse("https://github.com/Lorcas-Zephyr/aoxiang-assistant"))));
+                Uri.parse("https://gitcode.com/lorcas/aoxiang-assistant"))));
         project.addView(openRepository, new LinearLayout.LayoutParams(-1, dp(42)));
         parent.addView(project);
 
@@ -1321,7 +1363,7 @@ public class MainActivity extends Activity {
                 .create();
         dialog.setOnShowListener(view -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
             String name = nameInput.getText().toString().trim();
-            int weekCount = parseInt(weekCountInput.getText().toString().trim(), 20);
+            int weekCount = parseInt(weekCountInput.getText().toString().trim(), 17);
             int sectionCount = parseInt(sectionCountInput.getText().toString().trim(), 13);
             if (name.isEmpty()) {
                 Toast.makeText(this, "请输入学期名称", Toast.LENGTH_SHORT).show();
@@ -1370,7 +1412,7 @@ public class MainActivity extends Activity {
         EditText assessmentInput = field(form, "考核方式", base.assessmentMethod == null ? "" : base.assessmentMethod.label);
         EditText notesInput = field(form, "备注", base.notes);
         EditText slotInput = field(form, "上课时间（每行一条）", joinSlots(base.timeSlots));
-        slotInput.setHint("例如：1-16周 周一 第1-2节");
+        slotInput.setHint("例如：1-17周 周一 第1-2节");
         slotInput.setMinLines(4);
         slotInput.setGravity(Gravity.TOP);
 
@@ -1574,37 +1616,43 @@ public class MainActivity extends Activity {
         form.addView(username, new LinearLayout.LayoutParams(-1, dp(58)));
         addGap(form, 10);
         EditText password = new EditText(this);
-        password.setHint("统一认证密码");
+        password.setHint("翱翔门户密码");
         password.setSingleLine(true);
         password.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
-        password.setText(saved[1]);
+        password.setText(invalid ? "" : saved[1]);
         styleDialogInput(password);
         form.addView(password, new LinearLayout.LayoutParams(-1, dp(58)));
         loginDialog = new Dialog(this);
         Dialog dialog = loginDialog;
-        showLoginActionPanel(dialog, "账号", "登录教务系统",
-                invalid ? "账号或密码不正确，请重新确认" : "使用统一身份认证登录",
-                form, "保存", () -> {
+        String resumeTarget = automationWeb != null && !automationTarget.isEmpty()
+                && !"validate".equals(automationTarget) ? automationTarget : "validate";
+        showLoginActionPanel(dialog, "账号", "登录翱翔门户",
+                invalid ? "账号或翱翔门户密码错误，请重新输入" : "保存前会先验证账号和密码",
+                form, "登录", () -> {
                 String account = username.getText().toString().trim();
                 String secret = password.getText().toString();
                 if (account.isEmpty() || secret.isEmpty()) {
                     Toast.makeText(this, "请输入账号和密码", Toast.LENGTH_SHORT).show();
                     return;
                 }
-                saveCredentials(account, secret);
-                scheduleAllAutomaticUpdates(500L);
-                syncBackgroundService();
+                if (!saveCredentials(account, secret)) return;
                 pendingSmsCode = "";
                 loginPromptVisible = false;
                 loginDialog.dismiss();
-                Toast.makeText(this, "账号已保存", Toast.LENGTH_SHORT).show();
+                stopBackgroundService();
+                CookieManager cookies = CookieManager.getInstance();
+                cookies.removeAllCookies(ignored -> runOnUiThread(() -> {
+                    cookies.flush();
+                    openPortal(resumeTarget, false);
+                }));
             }, () -> {
             loginPromptVisible = false;
+            cancelInitialSync();
             if (automationWeb != null) cancelAutomation();
         });
     }
 
-    private void showSmsDialog() {
+    private void showSmsDialog(boolean invalid, Runnable submittedAction) {
         if (loginPromptVisible) return;
         loginPromptVisible = true;
         bringAppToFront();
@@ -1616,7 +1664,7 @@ public class MainActivity extends Activity {
         loginDialog = new Dialog(this);
         Dialog dialog = loginDialog;
         showLoginActionPanel(dialog, "安全验证", "输入短信验证码",
-                "验证码已由校方认证系统发送，请输入后继续。",
+                invalid ? "验证码错误或已失效，请重新输入" : "验证码已由校方认证系统发送，请输入后继续。",
                 code, "验证", () -> {
                 String value = code.getText().toString().trim();
                 if (value.length() < 4) {
@@ -1626,8 +1674,10 @@ public class MainActivity extends Activity {
                 pendingSmsCode = value;
                 loginPromptVisible = false;
                 loginDialog.dismiss();
+                submittedAction.run();
             }, () -> {
             loginPromptVisible = false;
+            cancelInitialSync();
             cancelAutomation();
         });
     }
@@ -1716,7 +1766,8 @@ public class MainActivity extends Activity {
         LinearLayout titles = new LinearLayout(this);
         titles.setOrientation(LinearLayout.VERTICAL);
         String targetLabel = automationLabel(target);
-        TextView heading = label(("schedule".equals(target) ? "导入" : "更新") + targetLabel, 16, textColor());
+        String actionLabel = "validate".equals(target) ? "验证" : "schedule".equals(target) ? "导入" : "更新";
+        TextView heading = label(actionLabel + targetLabel, 16, textColor());
         heading.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
         TextView status = label("正在连接教务系统…", 11, mutedColor());
         titles.addView(heading);
@@ -1741,7 +1792,7 @@ public class MainActivity extends Activity {
             addGap(center, 16);
             center.addView(card, new LinearLayout.LayoutParams(-1, -2));
 
-            TextView cardTitle = label("正在通过统一认证" + ("schedule".equals(target) ? "导入" : "更新") + targetLabel, 16, textColor());
+            TextView cardTitle = label("正在通过统一认证" + actionLabel + targetLabel, 16, textColor());
             cardTitle.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
             card.addView(cardTitle);
             addGap(card, 8);
@@ -1815,6 +1866,10 @@ public class MainActivity extends Activity {
                     boolean wasAutomatic = automaticRun;
                     if (!wasAutomatic) Toast.makeText(MainActivity.this, "自动采集超时，请稍后重试", Toast.LENGTH_LONG).show();
                     cancelAutomation();
+                    if (initialSyncInProgress) {
+                        finishInitialSyncStep(target, false);
+                        return;
+                    }
                     recordAutomaticAttempt(target, wasAutomatic);
                     return;
                 }
@@ -1838,31 +1893,45 @@ public class MainActivity extends Activity {
                         JSONObject payload = new JSONObject(raw);
                         String phase = payload.optString("phase");
                         if ("credentials_required".equals(phase)) {
+                            store.edit().putBoolean("credentials_verified", false).apply();
                             if (automaticRun) {
+                                sendAuthenticationNotification("登录信息已失效，请打开翱翔助手重新登录");
                                 cancelAutomaticAttempt(target);
                                 return;
                             }
-                            credentialsSubmitted[0] = false;
+                            credentialsSubmitted[0] = true;
                             status.setText("需要教务账号");
                             showCredentialsDialog(false);
                         } else if ("credentials_error".equals(phase)) {
+                            store.edit().putBoolean("credentials_verified", false).apply();
                             if (automaticRun) {
+                                sendAuthenticationNotification("账号或翱翔门户密码错误，请重新登录");
                                 cancelAutomaticAttempt(target);
                                 return;
                             }
-                            credentialsSubmitted[0] = false;
-                            status.setText("账号或密码有误");
+                            credentialsSubmitted[0] = true;
+                            status.setText("账号或翱翔门户密码错误");
                             showCredentialsDialog(true);
                         } else if ("credentials_submitting".equals(phase)) {
                             credentialsSubmitted[0] = true;
                             status.setText("正在验证账号…");
                         } else if ("sms_required".equals(phase)) {
                             if (automaticRun) {
+                                sendAuthenticationNotification("统一认证需要验证码，请打开翱翔助手完成验证");
                                 cancelAutomaticAttempt(target);
                                 return;
                             }
                             status.setText("需要短信验证码");
-                            showSmsDialog();
+                            showSmsDialog(false, () -> smsSubmitted[0] = false);
+                        } else if ("sms_error".equals(phase)) {
+                            pendingSmsCode = "";
+                            if (automaticRun) {
+                                sendAuthenticationNotification("统一认证验证码错误或已失效，请重新验证");
+                                cancelAutomaticAttempt(target);
+                                return;
+                            }
+                            status.setText("验证码错误或已失效");
+                            showSmsDialog(true, () -> smsSubmitted[0] = false);
                         } else if ("sms_submitting".equals(phase)) {
                             smsSubmitted[0] = true;
                             status.setText("正在验证短信验证码…");
@@ -1874,21 +1943,33 @@ public class MainActivity extends Activity {
                             status.setText("页面加载中，请稍候…");
                         } else if ("waiting".equals(phase)) {
                             status.setText("正在查找目标页面…");
+                        } else if ("credentials_valid".equals(phase) && "validate".equals(target)) {
+                            handleCredentialsValidated();
+                            return;
                         } else if ("data".equals(phase) && "grades".equals(target)) {
-                            if (gradeReadyAt[0] == 0) gradeReadyAt[0] = System.currentTimeMillis() + 5000L;
-                            long seconds = Math.max(0, (gradeReadyAt[0] - System.currentTimeMillis() + 999L) / 1000L);
-                            if (seconds > 0) {
-                                status.setText("成绩加载中，还需 " + seconds + " 秒…");
-                            } else {
-                                handleCollectedGrades(payload.optJSONArray("rows"));
-                                return;
+                            JSONArray rows = payload.optJSONArray("rows");
+                            if (rows != null) {
+                                if (gradeReadyAt[0] == 0) gradeReadyAt[0] = System.currentTimeMillis() + 5000L;
+                                long seconds = Math.max(0, (gradeReadyAt[0] - System.currentTimeMillis() + 999L) / 1000L);
+                                if (seconds > 0) {
+                                    status.setText("成绩加载中，还需 " + seconds + " 秒…");
+                                } else if (rows.length() > 0) {
+                                    handleCollectedGrades(rows);
+                                    return;
+                                }
                             }
                         } else if ("schedule_data".equals(phase) && "schedule".equals(target)) {
-                            handleCollectedSchedule(payload.optJSONObject("payload"));
-                            return;
+                            JSONObject schedulePayload = payload.optJSONObject("payload");
+                            if (schedulePayload != null) {
+                                handleCollectedSchedule(schedulePayload);
+                                return;
+                            }
                         } else if ("electricity_data".equals(phase) && "electricity".equals(target)) {
-                            handleCollectedElectricity(payload.optDouble("balance", Double.NaN));
-                            return;
+                            double balance = payload.optDouble("balance", Double.NaN);
+                            if (!Double.isNaN(balance) && balance >= 0) {
+                                handleCollectedElectricity(balance);
+                                return;
+                            }
                         }
                     } catch (Exception ignored) {
                         status.setText("正在等待页面加载…");
@@ -1912,9 +1993,14 @@ public class MainActivity extends Activity {
         List<String> changedCourses = first ? Collections.emptyList()
                 : UpdateDiff.changedNames(gradeDiffItems(grades), gradeDiffItems(out));
         boolean wasAutomatic = automaticRun;
+        markCredentialsVerified();
         grades = out;
         saveGrades();
         cancelAutomation();
+        if (initialSyncInProgress) {
+            finishInitialSyncStep("grades", true);
+            return;
+        }
         if (wasAutomatic) {
             if (gradeUpdateNotificationEnabled && !changedCourses.isEmpty()) {
                 sendGradeNotification(changedCourses);
@@ -1929,6 +2015,7 @@ public class MainActivity extends Activity {
     private void handleCollectedSchedule(JSONObject payload) {
         if (payload == null) return;
         boolean wasAutomatic = automaticRun;
+        markCredentialsVerified();
         boolean hadPreviousSchedule = !courses.isEmpty();
         List<UpdateDiff.Item> previousItems = UpdateDiff.scheduleItems(courses);
         ScheduleImport.ParsedData parsed = ScheduleImport.parsePayload(payload);
@@ -1975,6 +2062,10 @@ public class MainActivity extends Activity {
 
         if (importedCount == 0) {
             cancelAutomation();
+            if (initialSyncInProgress) {
+                finishInitialSyncStep("schedule", false);
+                return;
+            }
             if (!wasAutomatic) {
                 showTab(currentTab);
                 Toast.makeText(this, "没有解析到课表数据，请进入“全部课程”页面后重试", Toast.LENGTH_LONG).show();
@@ -1993,6 +2084,10 @@ public class MainActivity extends Activity {
         cancelAutomation();
         scheduleShowMonth = false;
         scheduleWeekOffset = 0;
+        if (initialSyncInProgress) {
+            finishInitialSyncStep("schedule", true);
+            return;
+        }
         if (wasAutomatic) {
             if (scheduleUpdateNotificationEnabled && !changedCourses.isEmpty()) {
                 sendScheduleNotification(changedCourses);
@@ -2008,6 +2103,7 @@ public class MainActivity extends Activity {
     private void handleCollectedElectricity(double balance) {
         if (Double.isNaN(balance) || balance < 0) return;
         boolean wasAutomatic = automaticRun;
+        markCredentialsVerified();
         electricityBalance = balance;
         store.edit()
                 .putString("electricity_balance", Double.toString(balance))
@@ -2015,9 +2111,69 @@ public class MainActivity extends Activity {
                 .apply();
         updateElectricityAlert(balance);
         cancelAutomation();
+        if (initialSyncInProgress) {
+            finishInitialSyncStep("electricity", true);
+            return;
+        }
         if (!wasAutomatic) Toast.makeText(this, "剩余电费 " + scoreDf.format(balance) + " 元", Toast.LENGTH_LONG).show();
         if (!wasAutomatic || currentTab == TAB_HOME || currentTab == TAB_SETTINGS) showTab(currentTab);
         recordAutomaticAttempt("electricity", wasAutomatic);
+    }
+
+    private void handleCredentialsValidated() {
+        markCredentialsVerified();
+        cancelAutomation();
+        initialSyncInProgress = true;
+        initialSyncTargets.clear();
+        initialSyncFailures.clear();
+        initialSyncTargets.add("grades");
+        initialSyncTargets.add("schedule");
+        initialSyncTargets.add("electricity");
+        Toast.makeText(this, "登录验证成功，正在同步全部信息", Toast.LENGTH_SHORT).show();
+        openNextInitialSyncTarget();
+    }
+
+    private void markCredentialsVerified() {
+        if (!store.getBoolean("credentials_verified", true)) {
+            store.edit().putBoolean("credentials_verified", true).apply();
+        }
+    }
+
+    private void finishInitialSyncStep(String target, boolean success) {
+        if (!initialSyncInProgress) return;
+        if (!success) initialSyncFailures.add(automationLabel(target));
+        openNextInitialSyncTarget();
+    }
+
+    private void openNextInitialSyncTarget() {
+        if (!initialSyncInProgress) return;
+        if (!initialSyncTargets.isEmpty()) {
+            String next = initialSyncTargets.remove(0);
+            root.postDelayed(() -> {
+                if (initialSyncInProgress) openPortal(next, false);
+            }, 250L);
+            return;
+        }
+        initialSyncInProgress = false;
+        store.edit()
+                .remove("auto_last_grades")
+                .remove("auto_last_schedule")
+                .remove("auto_last_electricity")
+                .apply();
+        scheduleAllAutomaticUpdates(30_000L);
+        syncBackgroundService();
+        showTab(currentTab);
+        String message = initialSyncFailures.isEmpty()
+                ? "登录成功，成绩、课表和电费已同步"
+                : "登录成功，以下信息同步失败：" + String.join("、", initialSyncFailures);
+        Toast.makeText(this, message, Toast.LENGTH_LONG).show();
+        initialSyncFailures.clear();
+    }
+
+    private void cancelInitialSync() {
+        initialSyncInProgress = false;
+        initialSyncTargets.clear();
+        initialSyncFailures.clear();
     }
 
     private void cancelAutomation() {
@@ -2273,6 +2429,7 @@ public class MainActivity extends Activity {
     }
 
     private void signOut() {
+        cancelInitialSync();
         cancelScheduledUpdates();
         cancelAutomation();
         stopBackgroundService();
@@ -2286,6 +2443,7 @@ public class MainActivity extends Activity {
         Arrays.fill(tabScrollPositions, 0);
         store.edit()
                 .remove("login_credentials")
+                .remove("credentials_verified")
                 .remove("grades")
                 .remove(ScheduleStorage.KEY_SEMESTERS)
                 .remove(ScheduleStorage.KEY_COURSES)
@@ -2302,6 +2460,7 @@ public class MainActivity extends Activity {
             notifications.cancel(1001);
             notifications.cancel(1002);
             notifications.cancel(1003);
+            notifications.cancel(1006);
         }
         CookieManager cookies = CookieManager.getInstance();
         cookies.removeAllCookies(null);
@@ -2309,6 +2468,11 @@ public class MainActivity extends Activity {
         ScheduleWidgetUpdater.updateAll(this);
         showTab(TAB_SETTINGS);
         Toast.makeText(this, "已退出登录并清除成绩、课表和电费", Toast.LENGTH_SHORT).show();
+    }
+
+    private void switchAccount() {
+        signOut();
+        root.postDelayed(() -> showCredentialsDialog(false), 250L);
     }
 
     private SecretKey credentialKey() throws Exception {
@@ -2325,15 +2489,20 @@ public class MainActivity extends Activity {
         return ((KeyStore.SecretKeyEntry) store.getEntry(CREDENTIAL_KEY, null)).getSecretKey();
     }
 
-    private void saveCredentials(String username, String password) {
+    private boolean saveCredentials(String username, String password) {
         try {
             Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
             cipher.init(Cipher.ENCRYPT_MODE, credentialKey());
             String payload = Base64.encodeToString(cipher.getIV(), Base64.NO_WRAP) + ":" +
                     Base64.encodeToString(cipher.doFinal((username + "\n" + password).getBytes(StandardCharsets.UTF_8)), Base64.NO_WRAP);
-            store.edit().putString("login_credentials", payload).apply();
+            store.edit()
+                    .putString("login_credentials", payload)
+                    .putBoolean("credentials_verified", false)
+                    .apply();
+            return true;
         } catch (Exception error) {
             Toast.makeText(this, "无法安全保存账号，请重试", Toast.LENGTH_LONG).show();
+            return false;
         }
     }
 
@@ -2363,6 +2532,9 @@ public class MainActivity extends Activity {
             NotificationChannel electricity = new NotificationChannel(ELECTRICITY_CHANNEL, "电费提醒", NotificationManager.IMPORTANCE_HIGH);
             electricity.setDescription("剩余电费低于设定余量时通知");
             getSystemService(NotificationManager.class).createNotificationChannel(electricity);
+            NotificationChannel authentication = new NotificationChannel(AUTHENTICATION_CHANNEL, "登录验证", NotificationManager.IMPORTANCE_HIGH);
+            authentication.setDescription("登录密码或验证码需要重新验证时通知");
+            getSystemService(NotificationManager.class).createNotificationChannel(authentication);
         }
     }
 
@@ -2398,6 +2570,23 @@ public class MainActivity extends Activity {
                 .setAutoCancel(true)
                 .setContentIntent(pending);
         getSystemService(NotificationManager.class).notify(1003, builder.build());
+    }
+
+    private void sendAuthenticationNotification(String message) {
+        requestNotificationPermission();
+        Intent intent = new Intent(this, MainActivity.class).putExtra(EXTRA_START_TAB, TAB_SETTINGS);
+        PendingIntent pending = PendingIntent.getActivity(this, 6, intent,
+                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+        android.app.Notification.Builder builder = Build.VERSION.SDK_INT >= 26
+                ? new android.app.Notification.Builder(this, AUTHENTICATION_CHANNEL)
+                : new android.app.Notification.Builder(this);
+        builder.setSmallIcon(R.drawable.ic_launcher)
+                .setContentTitle("登录验证失败")
+                .setContentText(message)
+                .setAutoCancel(true)
+                .setContentIntent(pending);
+        NotificationManager manager = getSystemService(NotificationManager.class);
+        if (manager != null) manager.notify(1006, builder.build());
     }
 
     private void applyWindowTheme() {
@@ -2556,7 +2745,191 @@ public class MainActivity extends Activity {
             long versionCode = Build.VERSION.SDK_INT >= 28 ? info.getLongVersionCode() : info.versionCode;
             return info.versionName + " (" + versionCode + ")";
         } catch (Exception ignored) {
-            return "1.4 (5)";
+            return "1.9.0 (11)";
+        }
+    }
+
+    private String appVersionName() {
+        try {
+            android.content.pm.PackageInfo info = getPackageManager().getPackageInfo(getPackageName(), 0);
+            return info.versionName == null ? "0" : info.versionName;
+        } catch (Exception ignored) {
+            return "0";
+        }
+    }
+
+    private void showUserGroupPrompt() {
+        if (silentBoot || isFinishing() || store.getBoolean("user_group_prompt_disabled", false)) return;
+        if (loginPromptVisible || automationWeb != null || informationDialog != null && informationDialog.isShowing()) {
+            root.postDelayed(this::showUserGroupPrompt, 500L);
+            return;
+        }
+        showDecisionDialog("交流与反馈", "加入翱翔助手用户群",
+                "用户群号 " + USER_GROUP_NUMBER,
+                "使用问题、同步异常和功能建议都可以在群内反馈。",
+                "不再提示", () -> store.edit().putBoolean("user_group_prompt_disabled", true).apply(),
+                "知道了", () -> {}, dp(350));
+    }
+
+    private void checkForUpdates() {
+        checkForUpdates(false);
+    }
+
+    private void checkForUpdates(boolean manual) {
+        if (isFinishing() || !manual && silentBoot) return;
+        if (updateCheckRunning) {
+            if (manual) Toast.makeText(this, "正在检查更新", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        updateCheckRunning = true;
+        new Thread(() -> {
+            ReleaseInfo release = null;
+            boolean failed = false;
+            try {
+                release = loadLatestRelease();
+            } catch (Exception ignored) {
+                failed = true;
+            }
+            ReleaseInfo result = release;
+            boolean requestFailed = failed;
+            runOnUiThread(() -> {
+                updateCheckRunning = false;
+                if (result == null) {
+                    if (manual) Toast.makeText(this, requestFailed
+                            ? "检查更新失败，请检查网络后重试"
+                            : "暂未读取到 GitCode 发布版本", Toast.LENGTH_LONG).show();
+                    return;
+                }
+                if (!VersionUtils.isNewer(result.version, appVersionName())) {
+                    if (manual) Toast.makeText(this, "当前已是最新版本", Toast.LENGTH_SHORT).show();
+                    return;
+                }
+                if (!manual && result.version.equals(store.getString("update_skipped_version", ""))) return;
+                showUpdateDialogWhenReady(result);
+            });
+        }, "GitCode update check").start();
+    }
+
+    private ReleaseInfo loadLatestRelease() throws Exception {
+        HttpURLConnection connection = (HttpURLConnection) new URL(GITCODE_LATEST_RELEASE_API).openConnection();
+        connection.setConnectTimeout(8_000);
+        connection.setReadTimeout(8_000);
+        connection.setRequestProperty("Accept", "application/json");
+        connection.setRequestProperty("Referer", "https://gitcode.com/lorcas/aoxiang-assistant");
+        try {
+            int status = connection.getResponseCode();
+            if (status < 200 || status >= 300) return null;
+            StringBuilder raw = new StringBuilder();
+            try (BufferedReader reader = new BufferedReader(new InputStreamReader(
+                    connection.getInputStream(), StandardCharsets.UTF_8))) {
+                String line;
+                while ((line = reader.readLine()) != null && raw.length() < 131_072) raw.append(line).append('\n');
+            }
+            if (raw.toString().trim().isEmpty()) return null;
+            JSONObject envelope = new JSONObject(raw.toString());
+            JSONObject release = envelope.optJSONObject("data");
+            if (release == null) release = envelope;
+            if (release.optJSONObject("release") != null) release = release.optJSONObject("release");
+            String version = firstNonBlank(release.optString("tag_name"), release.optString("tagName"),
+                    release.optString("version"));
+            if (version.isEmpty()) version = VersionUtils.extractVersion(release.optString("name"));
+            version = VersionUtils.extractVersion(version);
+            if (version.isEmpty()) return null;
+            String notes = firstNonBlank(release.optString("description"), release.optString("body"),
+                    release.optString("release_notes"), release.optString("content"));
+            if (notes.isEmpty()) notes = "请前往 GitCode 发布页查看本次更新内容。";
+            else notes = android.text.Html.fromHtml(notes, android.text.Html.FROM_HTML_MODE_LEGACY).toString().trim();
+            return new ReleaseInfo(version, notes);
+        } finally {
+            connection.disconnect();
+        }
+    }
+
+    private String firstNonBlank(String... values) {
+        for (String value : values) {
+            if (value != null && !value.trim().isEmpty()) return value.trim();
+        }
+        return "";
+    }
+
+    private void showUpdateDialogWhenReady(ReleaseInfo release) {
+        if (isFinishing() || isDestroyed()) return;
+        if (loginPromptVisible || automationWeb != null || informationDialog != null && informationDialog.isShowing()) {
+            root.postDelayed(() -> showUpdateDialogWhenReady(release), 600L);
+            return;
+        }
+        showDecisionDialog("发现新版本", "翱翔助手 v" + release.version,
+                "当前版本 " + appVersionName(), release.notes,
+                "跳过此版本", () -> store.edit().putString("update_skipped_version", release.version).apply(),
+                "更新", () -> startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(GITCODE_RELEASE_PAGE))), dp(460));
+    }
+
+    private void showDecisionDialog(String eyebrowText, String heading, String subtitle, String bodyText,
+                                    String secondaryText, Runnable secondaryAction,
+                                    String primaryText, Runnable primaryAction, int preferredHeight) {
+        Dialog dialog = new Dialog(this);
+        informationDialog = dialog;
+        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
+        LinearLayout shell = new LinearLayout(this);
+        shell.setOrientation(LinearLayout.VERTICAL);
+        shell.setPadding(dp(22), dp(20), dp(22), dp(16));
+        shell.setBackground(bg(panelColor(), 16));
+        applyRoundedOutline(shell, 16, 10);
+
+        TextView eyebrow = label(eyebrowText, 11, primaryColor());
+        eyebrow.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        shell.addView(eyebrow, new LinearLayout.LayoutParams(-1, dp(24)));
+        TextView title = label(heading, 21, textColor());
+        title.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        shell.addView(title);
+        TextView subtitleView = label(subtitle, 13, mutedColor());
+        subtitleView.setPadding(0, dp(7), 0, dp(8));
+        subtitleView.setTextIsSelectable(true);
+        shell.addView(subtitleView);
+
+        ScrollView scroll = new ScrollView(this);
+        TextView body = label(bodyText, 13, textColor());
+        body.setGravity(Gravity.TOP | Gravity.START);
+        body.setLineSpacing(dp(2), 1.08f);
+        body.setTextIsSelectable(true);
+        scroll.addView(body, new ScrollView.LayoutParams(-1, -2));
+        shell.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
+
+        LinearLayout actions = new LinearLayout(this);
+        Button secondary = action(secondaryText, false);
+        Button primary = action(primaryText, true);
+        actions.addView(secondary, new LinearLayout.LayoutParams(0, dp(44), 1));
+        addHorizontalGap(actions, 10);
+        actions.addView(primary, new LinearLayout.LayoutParams(0, dp(44), 1));
+        LinearLayout.LayoutParams actionParams = new LinearLayout.LayoutParams(-1, dp(44));
+        actionParams.topMargin = dp(14);
+        shell.addView(actions, actionParams);
+
+        secondary.setOnClickListener(v -> {
+            dialog.dismiss();
+            secondaryAction.run();
+        });
+        primary.setOnClickListener(v -> {
+            dialog.dismiss();
+            primaryAction.run();
+        });
+        dialog.setContentView(shell);
+        dialog.setCanceledOnTouchOutside(false);
+        dialog.setOnDismissListener(ignored -> {
+            if (informationDialog == dialog) informationDialog = null;
+        });
+        configureCustomDialogWindow(dialog, preferredHeight);
+        dialog.show();
+        configureCustomDialogWindow(dialog, preferredHeight);
+    }
+
+    private static final class ReleaseInfo {
+        final String version;
+        final String notes;
+
+        ReleaseInfo(String version, String notes) {
+            this.version = version;
+            this.notes = notes;
         }
     }
 
@@ -2717,6 +3090,7 @@ public class MainActivity extends Activity {
 
     private LinearLayout gradeRow(Grade grade) {
         LinearLayout row = new LinearLayout(this);
+        row.setBaselineAligned(false);
         row.setGravity(Gravity.CENTER_VERTICAL);
         row.setPadding(0, dp(11), 0, dp(11));
         LinearLayout left = new LinearLayout(this);
@@ -2732,9 +3106,14 @@ public class MainActivity extends Activity {
         right.setGravity(Gravity.CENTER);
         TextView point = label("绩点 " + grade.pointText(), 15, primaryColor());
         point.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
-        right.addView(point);
-        right.addView(label("成绩 " + grade.scoreText(), 11, mutedColor()));
-        row.addView(right, new LinearLayout.LayoutParams(dp(84), dp(64)));
+        point.setSingleLine(true);
+        point.setGravity(Gravity.CENTER);
+        right.addView(point, new LinearLayout.LayoutParams(-1, 0, 1));
+        TextView score = label("成绩 " + grade.scoreText(), 11, mutedColor());
+        score.setSingleLine(true);
+        score.setGravity(Gravity.CENTER);
+        right.addView(score, new LinearLayout.LayoutParams(-1, 0, 1));
+        row.addView(right, new LinearLayout.LayoutParams(dp(96), dp(64)));
         LinearLayout wrap = new LinearLayout(this);
         wrap.setOrientation(LinearLayout.VERTICAL);
         wrap.addView(row);
@@ -2962,8 +3341,8 @@ public class MainActivity extends Activity {
                 "semester-" + System.currentTimeMillis(),
                 now.getYear() + "-" + (now.getYear() + 1) + " 学年",
                 now.withMonth(9).withDayOfMonth(1).toString(),
-                now.withMonth(9).withDayOfMonth(1).plusWeeks(20).minusDays(1).toString(),
-                20,
+                now.withMonth(9).withDayOfMonth(1).plusWeeks(17).minusDays(1).toString(),
+                17,
                 13,
                 ScheduleModels.buildDefaultSectionTimes(13)
         );
@@ -2974,7 +3353,7 @@ public class MainActivity extends Activity {
                 "course-" + System.currentTimeMillis(),
                 "",
                 semesterId,
-                Arrays.asList(new ScheduleModels.TimeSlot("1-16", ScheduleModels.RepeatRule.ALL, 1, Arrays.asList(1, 2)))
+                Arrays.asList(new ScheduleModels.TimeSlot("1-17", ScheduleModels.RepeatRule.ALL, 1, Arrays.asList(1, 2)))
         );
         course.color = ScheduleModels.PRESET_COLORS.get(0);
         return course;
@@ -3496,6 +3875,7 @@ public class MainActivity extends Activity {
     }
 
     private String automationLabel(String target) {
+        if ("validate".equals(target)) return "账号";
         if ("schedule".equals(target)) return "课表";
         if ("electricity".equals(target)) return "电费";
         return "成绩";
@@ -3535,7 +3915,8 @@ public class MainActivity extends Activity {
 
     private boolean hasCredentials() {
         String[] credentials = readCredentials();
-        return !credentials[0].isEmpty() && !credentials[1].isEmpty();
+        return !credentials[0].isEmpty() && !credentials[1].isEmpty()
+                && store.getBoolean("credentials_verified", true);
     }
 
     private void bringAppToFront() {

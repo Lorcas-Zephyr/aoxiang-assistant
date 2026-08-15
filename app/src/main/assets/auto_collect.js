@@ -108,6 +108,9 @@
       return visible(input) && input !== passwordInput && /sms|message|verify|code|验证码|动态码/.test(descriptor);
     });
     const asksForSms = /短信|手机验证码|动态验证码/.test(loginBody) && smsField;
+    if (/验证码(?:错误|不正确|无效|已失效)|动态码(?:错误|不正确|无效|已失效)|校验码(?:错误|不正确|无效|已失效)/.test(loginBody)) {
+      return JSON.stringify({ phase: "sms_error", rows: [] });
+    }
     if (asksForSms) {
       if (canFillSms && smsCode) {
         setValue(smsField, smsCode);
@@ -126,10 +129,15 @@
       if (submit) clickElement(submit);
       return JSON.stringify({ phase: "credentials_submitting", rows: [] });
     }
-    if (/密码错误|账号或密码|登录失败|认证失败/.test(loginBody)) {
+    if (/密码(?:错误|不正确|无效)|账号或密码|用户名或密码|登录失败|认证失败/.test(loginBody)) {
       return JSON.stringify({ phase: "credentials_error", rows: [] });
     }
     return JSON.stringify({ phase: "credentials_required", rows: [] });
+  }
+
+  if (mode === "validate" && host === "jwxt.nwpu.edu.cn" &&
+      !location.pathname.includes("sso-login")) {
+    return JSON.stringify({ phase: "credentials_valid", rows: [] });
   }
 
   if ((mode === "grades" || mode === "schedule") && host === "jwxt.nwpu.edu.cn") {

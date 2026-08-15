@@ -5,9 +5,31 @@ import static org.junit.Assert.assertEquals;
 import org.junit.Test;
 
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
 
 public class ScheduleImportTest {
+    @Test public void importedSemesterDefaultsToSeventeenWeeks() {
+        ScheduleImport.RawSemester raw = new ScheduleImport.RawSemester("测试学期", null);
+
+        ScheduleModels.Semester semester = ScheduleImport.createImportedSemester(
+                raw, Collections.emptyList());
+
+        assertEquals(17, semester.weekCount);
+    }
+
+    @Test public void importedSemesterKeepsCoursesBeyondWeekSeventeen() {
+        ScheduleModels.Course course = new ScheduleModels.Course(
+                "course", "测试课程", "semester",
+                Collections.singletonList(new ScheduleModels.TimeSlot(
+                        "19", ScheduleModels.RepeatRule.ALL, 1, Arrays.asList(1, 2))));
+
+        ScheduleModels.Semester semester = ScheduleImport.createImportedSemester(
+                new ScheduleImport.RawSemester("测试学期", null), Collections.singletonList(course));
+
+        assertEquals(19, semester.weekCount);
+    }
+
     @Test public void parsesJwxtWeekAndSectionText() {
         List<ScheduleModels.TimeSlot> slots = ScheduleImport.parseScheduleText(
                 "1~4周 星期一 1-2节; 5~8周 星期一 1-2节; "

@@ -62,7 +62,8 @@ final class BackgroundSyncScheduler {
 
     private static boolean hasCredentials(SharedPreferences store) {
         String credentials = store.getString("login_credentials", "");
-        return credentials != null && !credentials.isEmpty();
+        return credentials != null && !credentials.isEmpty()
+                && store.getBoolean("credentials_verified", true);
     }
 
     private static boolean isEnabled(SharedPreferences store, String target) {
