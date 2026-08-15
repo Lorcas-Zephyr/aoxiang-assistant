@@ -20,14 +20,14 @@ jobs:
       - name: Clone release files
         run: |
           set -euo pipefail
-          git clone --quiet "https://gitcode.com/lorcas/aoxiang-assistant.git" repository
+          git clone --quiet "https://gitcode.com/lorcas/aoxiang-assistant.git" "$ATOMGIT_WORKSPACE/repository"
 
       - name: Create GitCode release and upload APK
         run: |
           set -euo pipefail
           phase="select-release-tag"
           trap 'status=$?; printf "Release failed in phase %s (exit %s).\n" "$phase" "$status" >> "$ATOMGIT_STEP_SUMMARY"' ERR
-          cd repository
+          cd "$ATOMGIT_WORKSPACE/repository"
           temp_dir="$(mktemp -d)"
           trap 'rm -rf "$temp_dir"' EXIT
 
