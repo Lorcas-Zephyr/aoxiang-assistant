@@ -17,19 +17,20 @@ jobs:
   release:
     runs-on: ubuntu-latest
     steps:
+      - name: Clone release files
+        run: |
+          set -euo pipefail
+          git clone --quiet "https://gitcode.com/lorcas/aoxiang-assistant.git" repository
+
       - name: Create GitCode release and upload APK
         run: |
           set -euo pipefail
-          phase="prepare-workspace"
+          phase="select-release-tag"
           trap 'status=$?; printf "Release failed in phase %s (exit %s).\n" "$phase" "$status" >> "$ATOMGIT_STEP_SUMMARY"' ERR
+          cd repository
           temp_dir="$(mktemp -d)"
           trap 'rm -rf "$temp_dir"' EXIT
 
-          phase="clone-repository"
-          git clone --quiet "https://gitcode.com/lorcas/aoxiang-assistant.git" "$temp_dir/repository"
-          cd "$temp_dir/repository"
-
-          phase="select-release-tag"
           if [[ "${ATOMGIT_REF:-}" == refs/tags/* ]]; then
             pushed_tag="${ATOMGIT_REF#refs/tags/}"
             release_tag="${pushed_tag%-publish}"
