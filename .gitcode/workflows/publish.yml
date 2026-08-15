@@ -9,11 +9,6 @@ on:
   schedule:
     - cron: "* * * * *"
   workflow_dispatch:
-    inputs:
-      tag:
-        description: "Release tag (defaults to the latest v* tag)"
-        required: false
-        type: string
 
 permissions:
   repository: write
@@ -23,14 +18,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Create GitCode release and upload APK
-        env:
-          REQUESTED_TAG: ${{ inputs.tag }}
         run: |
           set -euo pipefail
 
-          if [ -n "${REQUESTED_TAG:-}" ]; then
-            release_tag="$REQUESTED_TAG"
-          elif [[ "${ATOMGIT_REF:-}" == refs/tags/* ]]; then
+          if [[ "${ATOMGIT_REF:-}" == refs/tags/* ]]; then
             pushed_tag="${ATOMGIT_REF#refs/tags/}"
             release_tag="${pushed_tag%-publish}"
           else
