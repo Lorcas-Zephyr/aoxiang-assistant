@@ -20,9 +20,16 @@ jobs:
       - name: Create GitCode release and upload APK
         run: |
           set -euo pipefail
-          phase="select-release-tag"
-          trap 'status=$?; printf "Release failed in phase `%s` (exit %s).\n" "$phase" "$status" >> "$ATOMGIT_STEP_SUMMARY"' ERR
+          phase="prepare-workspace"
+          trap 'status=$?; printf "Release failed in phase %s (exit %s).\n" "$phase" "$status" >> "$ATOMGIT_STEP_SUMMARY"' ERR
+          temp_dir="$(mktemp -d)"
+          trap 'rm -rf "$temp_dir"' EXIT
 
+          phase="clone-repository"
+          git clone --quiet "https://gitcode.com/lorcas/aoxiang-assistant.git" "$temp_dir/repository"
+          cd "$temp_dir/repository"
+
+          phase="select-release-tag"
           if [[ "${ATOMGIT_REF:-}" == refs/tags/* ]]; then
             pushed_tag="${ATOMGIT_REF#refs/tags/}"
             release_tag="${pushed_tag%-publish}"
@@ -32,6 +39,7 @@ jobs:
 
           phase="verify-release-files"
           test -n "$release_tag"
+          git checkout --quiet "$release_tag"
           notes_path="release-notes/${release_tag}.md"
           asset_name="aoxiang-assistant-${release_tag}.apk"
           asset_path="release-assets/${asset_name}"
@@ -39,8 +47,6 @@ jobs:
           test -f "$asset_path"
 
           api_base="https://gitcode.com/api/v5/repos/lorcas/aoxiang-assistant"
-          temp_dir="$(mktemp -d)"
-          trap 'rm -rf "$temp_dir"' EXIT
 
           phase="query-release"
           get_status="$(curl --silent --show-error \
