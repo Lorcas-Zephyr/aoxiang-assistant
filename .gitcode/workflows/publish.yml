@@ -6,6 +6,8 @@ on:
       - main
     tags:
       - "v*"
+  schedule:
+    - cron: "*/5 * * * *"
   workflow_dispatch:
     inputs:
       tag:
