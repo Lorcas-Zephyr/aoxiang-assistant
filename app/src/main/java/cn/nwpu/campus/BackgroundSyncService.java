@@ -93,6 +93,11 @@ public class BackgroundSyncService extends Service {
             return START_NOT_STICKY;
         }
         target = next.target;
+        if ("electricity".equals(target) && SyncTimePolicy.isElectricitySettlementTime(now)) {
+            BackgroundSyncScheduler.schedule(this);
+            finishService();
+            return START_NOT_STICKY;
+        }
         running = true;
         // Preserve a retry wake if the process is killed during network collection.
         BackgroundSyncScheduler.schedule(this, RETRY_DELAY_MS);
@@ -170,15 +175,12 @@ public class BackgroundSyncService extends Service {
                         String raw = new JSONArray("[" + result + "]").getString(0);
                         JSONObject payload = new JSONObject(raw);
                         String phase = payload.optString("phase");
-                        if ("credentials_error".equals(phase)) {
+                        if ("credentials_error".equals(phase) || "credentials_required".equals(phase)) {
+                            boolean rejected = "credentials_error".equals(phase) || credentialsSubmitted[0];
                             store.edit().putBoolean("credentials_verified", false).apply();
-                            sendAuthenticationNotification("账号或翱翔门户密码错误，请重新登录");
-                            finishAttempt();
-                            return;
-                        }
-                        if ("credentials_required".equals(phase)) {
-                            store.edit().putBoolean("credentials_verified", false).apply();
-                            sendAuthenticationNotification("登录信息已失效，请打开翱翔助手重新登录");
+                            sendAuthenticationNotification(rejected
+                                    ? "账号或翱翔门户密码错误，请重新登录"
+                                    : "登录信息已失效，请打开翱翔助手重新登录");
                             finishAttempt();
                             return;
                         }

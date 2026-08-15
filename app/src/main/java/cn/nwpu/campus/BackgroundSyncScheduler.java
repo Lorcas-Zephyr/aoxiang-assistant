@@ -49,6 +49,9 @@ final class BackgroundSyncScheduler {
             if (!isEnabled(store, target)) continue;
             long last = store.getLong("auto_last_" + target, 0L);
             long dueAt = last == 0L ? now : last + intervalMillis(store, target);
+            if ("electricity".equals(target)) {
+                dueAt = SyncTimePolicy.deferElectricityDueAt(dueAt, now);
+            }
             if (next == null || dueAt < next.dueAt) next = new NextUpdate(target, dueAt);
         }
         return next;

@@ -107,8 +107,12 @@
       const descriptor = text([input.name, input.id, input.placeholder, input.type].join(" "));
       return visible(input) && input !== passwordInput && /sms|message|verify|code|验证码|动态码/.test(descriptor);
     });
+    const feedback = text([...loginDocument.querySelectorAll(
+      '[role="alert"], [aria-live], .error, .error-message, .el-message__content, .ant-message-notice-content, [class*="error" i]'
+    )].filter(visible).map((element) => element.innerText || element.textContent || element.value).join(" "));
+    const authText = text([loginBody, feedback, passwordInput && passwordInput.validationMessage].join(" "));
     const asksForSms = /短信|手机验证码|动态验证码/.test(loginBody) && smsField;
-    if (/验证码(?:错误|不正确|无效|已失效)|动态码(?:错误|不正确|无效|已失效)|校验码(?:错误|不正确|无效|已失效)/.test(loginBody)) {
+    if (/(?:验证码|动态码|校验码).{0,8}(?:错误|有误|不正确|无效|已失效|失败)|invalid.{0,8}(?:captcha|verification|sms).{0,8}code/i.test(authText)) {
       return JSON.stringify({ phase: "sms_error", rows: [] });
     }
     if (asksForSms) {
@@ -120,6 +124,12 @@
       }
       return JSON.stringify({ phase: "sms_required", rows: [] });
     }
+    const invalidPasswordField = passwordInput && !canAutofill &&
+      (passwordInput.getAttribute("aria-invalid") === "true" || /(?:^|\s)(?:error|invalid)(?:\s|$)/i.test(passwordInput.className || ""));
+    if (invalidPasswordField ||
+        /(?:账号|账户|用户名|用户|学号).{0,12}(?:或|和|\/)?\s*密码.{0,12}(?:错误|有误|不正确|无效|失败)|密码.{0,12}(?:错误|有误|不正确|无效)|(?:错误|无效)的?(?:账号|账户|用户名|用户|学号|密码)|(?:账号|账户|用户名|用户|学号).{0,8}(?:不存在|未注册)|登录失败|认证失败|凭据.{0,8}(?:错误|有误|无效)|invalid.{0,12}(?:username|account|password|credential)|incorrect.{0,12}(?:username|account|password|credential)|bad credentials|authentication failed|credentials you provided.{0,24}authentic|unable to log you in/i.test(authText)) {
+      return JSON.stringify({ phase: "credentials_error", rows: [] });
+    }
     const usernameInput = [...loginDocument.querySelectorAll('input[name="username"], #username, input[type="text"], input[type="tel"], input[type="email"]')]
       .find((input) => visible(input) && input !== passwordInput);
     if (canAutofill && username && password && usernameInput && passwordInput) {
@@ -128,9 +138,6 @@
       const submit = findButton(loginDocument, /登录|login|提交/i);
       if (submit) clickElement(submit);
       return JSON.stringify({ phase: "credentials_submitting", rows: [] });
-    }
-    if (/密码(?:错误|不正确|无效)|账号或密码|用户名或密码|登录失败|认证失败/.test(loginBody)) {
-      return JSON.stringify({ phase: "credentials_error", rows: [] });
     }
     return JSON.stringify({ phase: "credentials_required", rows: [] });
   }

@@ -160,6 +160,7 @@ public class MainActivity extends Activity {
     private int scheduleSwipeWidth;
     private boolean scheduleSwipeAnimating;
     private boolean initialSyncInProgress;
+    private boolean initialElectricityDeferred;
     private final List<String> initialSyncTargets = new ArrayList<>();
     private final List<String> initialSyncFailures = new ArrayList<>();
     private String automationTarget = "";
@@ -1626,6 +1627,7 @@ public class MainActivity extends Activity {
         Dialog dialog = loginDialog;
         String resumeTarget = automationWeb != null && !automationTarget.isEmpty()
                 && !"validate".equals(automationTarget) ? automationTarget : "validate";
+        boolean resumeInBackground = initialSyncInProgress || automaticRun;
         showLoginActionPanel(dialog, "账号", "登录翱翔门户",
                 invalid ? "账号或翱翔门户密码错误，请重新输入" : "保存前会先验证账号和密码",
                 form, "登录", () -> {
@@ -1643,7 +1645,7 @@ public class MainActivity extends Activity {
                 CookieManager cookies = CookieManager.getInstance();
                 cookies.removeAllCookies(ignored -> runOnUiThread(() -> {
                     cookies.flush();
-                    openPortal(resumeTarget, false);
+                    openPortal(resumeTarget, resumeInBackground);
                 }));
             }, () -> {
             loginPromptVisible = false;
@@ -1738,8 +1740,26 @@ public class MainActivity extends Activity {
         configureCustomDialogWindow(dialog, dp(430));
     }
 
+    private boolean deferElectricitySyncIfSettling(String target, boolean automatic) {
+        if (!"electricity".equals(target)
+                || !SyncTimePolicy.isElectricitySettlementTime(System.currentTimeMillis())) return false;
+        if (!automatic) {
+            Toast.makeText(this, "电费系统正在结算，请在 1:00 后更新", Toast.LENGTH_LONG).show();
+        }
+        if (initialSyncInProgress) {
+            initialElectricityDeferred = true;
+            store.edit().remove("auto_last_electricity").apply();
+            root.post(this::openNextInitialSyncTarget);
+        } else if (automatic) {
+            scheduleAllAutomaticUpdates(0L);
+            syncBackgroundService();
+        }
+        return true;
+    }
+
     @SuppressLint("SetJavaScriptEnabled")
     private void openPortal(String target, boolean automatic) {
+        if (deferElectricitySyncIfSettling(target, automatic)) return;
         cancelScheduledUpdates();
         cancelAutomation();
         automationTarget = target;
@@ -1769,7 +1789,7 @@ public class MainActivity extends Activity {
         String actionLabel = "validate".equals(target) ? "验证" : "schedule".equals(target) ? "导入" : "更新";
         TextView heading = label(actionLabel + targetLabel, 16, textColor());
         heading.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
-        TextView status = label("正在连接教务系统…", 11, mutedColor());
+        TextView status = label("正在登录…", 11, mutedColor());
         titles.addView(heading);
         if (!hideBrowser) titles.addView(status);
         bar.addView(titles, new LinearLayout.LayoutParams(0, dp(52), 1));
@@ -1810,7 +1830,7 @@ public class MainActivity extends Activity {
         settings.setAllowContentAccess(false);
         settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
         CookieManager.getInstance().setAcceptCookie(true);
-        web.setWebViewClient(new SafeClient(status));
+        web.setWebViewClient(new SafeClient());
         web.setWebChromeClient(new WebChromeClient() {
             @Override
             public void onProgressChanged(WebView view, int newProgress) {
@@ -1892,57 +1912,58 @@ public class MainActivity extends Activity {
                         String raw = new JSONArray("[" + result + "]").getString(0);
                         JSONObject payload = new JSONObject(raw);
                         String phase = payload.optString("phase");
-                        if ("credentials_required".equals(phase)) {
+                        if ("credentials_required".equals(phase) || "credentials_error".equals(phase)) {
+                            boolean rejected = "credentials_error".equals(phase) || credentialsSubmitted[0];
                             store.edit().putBoolean("credentials_verified", false).apply();
-                            if (automaticRun) {
-                                sendAuthenticationNotification("登录信息已失效，请打开翱翔助手重新登录");
+                            if (automaticRun && !initialSyncInProgress) {
+                                sendAuthenticationNotification(rejected
+                                        ? "账号或翱翔门户密码错误，请重新登录"
+                                        : "登录信息已失效，请打开翱翔助手重新登录");
                                 cancelAutomaticAttempt(target);
                                 return;
                             }
                             credentialsSubmitted[0] = true;
-                            status.setText("需要教务账号");
-                            showCredentialsDialog(false);
-                        } else if ("credentials_error".equals(phase)) {
-                            store.edit().putBoolean("credentials_verified", false).apply();
-                            if (automaticRun) {
-                                sendAuthenticationNotification("账号或翱翔门户密码错误，请重新登录");
-                                cancelAutomaticAttempt(target);
-                                return;
+                            status.setText(rejected ? "账号或翱翔门户密码错误" : "需要教务账号");
+                            if (!loginPromptVisible) {
+                                Toast.makeText(MainActivity.this, rejected
+                                        ? "账号或翱翔门户密码错误"
+                                        : "登录信息已失效，请重新登录", Toast.LENGTH_LONG).show();
+                                showCredentialsDialog(rejected);
                             }
-                            credentialsSubmitted[0] = true;
-                            status.setText("账号或翱翔门户密码错误");
-                            showCredentialsDialog(true);
                         } else if ("credentials_submitting".equals(phase)) {
                             credentialsSubmitted[0] = true;
-                            status.setText("正在验证账号…");
+                            status.setText("正在登录…");
                         } else if ("sms_required".equals(phase)) {
-                            if (automaticRun) {
+                            if (automaticRun && !initialSyncInProgress) {
                                 sendAuthenticationNotification("统一认证需要验证码，请打开翱翔助手完成验证");
                                 cancelAutomaticAttempt(target);
                                 return;
                             }
                             status.setText("需要短信验证码");
-                            showSmsDialog(false, () -> smsSubmitted[0] = false);
+                            if (!loginPromptVisible) showSmsDialog(false, () -> smsSubmitted[0] = false);
                         } else if ("sms_error".equals(phase)) {
                             pendingSmsCode = "";
-                            if (automaticRun) {
+                            if (automaticRun && !initialSyncInProgress) {
                                 sendAuthenticationNotification("统一认证验证码错误或已失效，请重新验证");
                                 cancelAutomaticAttempt(target);
                                 return;
                             }
                             status.setText("验证码错误或已失效");
-                            showSmsDialog(true, () -> smsSubmitted[0] = false);
+                            if (!loginPromptVisible) {
+                                Toast.makeText(MainActivity.this, "验证码错误或已失效", Toast.LENGTH_LONG).show();
+                                showSmsDialog(true, () -> smsSubmitted[0] = false);
+                            }
                         } else if ("sms_submitting".equals(phase)) {
                             smsSubmitted[0] = true;
-                            status.setText("正在验证短信验证码…");
+                            status.setText("正在登录…");
                         } else if ("clicked".equals(phase)) {
                             navigationCooldownUntil[0] = System.currentTimeMillis() + 2500L;
-                            status.setText("正在打开页面…");
+                            status.setText("正在打开目标页面…");
                         } else if ("page".equals(phase)) {
                             navigationCooldownUntil[0] = System.currentTimeMillis() + 1500L;
-                            status.setText("页面加载中，请稍候…");
+                            status.setText("正在读取数据…");
                         } else if ("waiting".equals(phase)) {
-                            status.setText("正在查找目标页面…");
+                            status.setText("正在读取数据…");
                         } else if ("credentials_valid".equals(phase) && "validate".equals(target)) {
                             handleCredentialsValidated();
                             return;
@@ -1950,9 +1971,8 @@ public class MainActivity extends Activity {
                             JSONArray rows = payload.optJSONArray("rows");
                             if (rows != null) {
                                 if (gradeReadyAt[0] == 0) gradeReadyAt[0] = System.currentTimeMillis() + 5000L;
-                                long seconds = Math.max(0, (gradeReadyAt[0] - System.currentTimeMillis() + 999L) / 1000L);
-                                if (seconds > 0) {
-                                    status.setText("成绩加载中，还需 " + seconds + " 秒…");
+                                if (System.currentTimeMillis() < gradeReadyAt[0]) {
+                                    status.setText("正在读取数据…");
                                 } else if (rows.length() > 0) {
                                     handleCollectedGrades(rows);
                                     return;
@@ -1972,7 +1992,7 @@ public class MainActivity extends Activity {
                             }
                         }
                     } catch (Exception ignored) {
-                        status.setText("正在等待页面加载…");
+                        status.setText("正在读取数据…");
                     }
                     if (generation == automationGeneration) automationHandler.postDelayed(this, 1000);
                 });
@@ -2124,12 +2144,13 @@ public class MainActivity extends Activity {
         markCredentialsVerified();
         cancelAutomation();
         initialSyncInProgress = true;
+        initialElectricityDeferred = false;
         initialSyncTargets.clear();
         initialSyncFailures.clear();
         initialSyncTargets.add("grades");
         initialSyncTargets.add("schedule");
         initialSyncTargets.add("electricity");
-        Toast.makeText(this, "登录验证成功，正在同步全部信息", Toast.LENGTH_SHORT).show();
+        Toast.makeText(this, "登录验证成功，正在后台同步全部信息", Toast.LENGTH_SHORT).show();
         openNextInitialSyncTarget();
     }
 
@@ -2141,7 +2162,13 @@ public class MainActivity extends Activity {
 
     private void finishInitialSyncStep(String target, boolean success) {
         if (!initialSyncInProgress) return;
-        if (!success) initialSyncFailures.add(automationLabel(target));
+        SharedPreferences.Editor editor = store.edit();
+        if (success) editor.putLong("auto_last_" + target, System.currentTimeMillis());
+        else {
+            editor.remove("auto_last_" + target);
+            initialSyncFailures.add(automationLabel(target));
+        }
+        editor.apply();
         openNextInitialSyncTarget();
     }
 
@@ -2150,28 +2177,31 @@ public class MainActivity extends Activity {
         if (!initialSyncTargets.isEmpty()) {
             String next = initialSyncTargets.remove(0);
             root.postDelayed(() -> {
-                if (initialSyncInProgress) openPortal(next, false);
+                if (initialSyncInProgress) openPortal(next, true);
             }, 250L);
             return;
         }
         initialSyncInProgress = false;
-        store.edit()
-                .remove("auto_last_grades")
-                .remove("auto_last_schedule")
-                .remove("auto_last_electricity")
-                .apply();
         scheduleAllAutomaticUpdates(30_000L);
         syncBackgroundService();
         showTab(currentTab);
-        String message = initialSyncFailures.isEmpty()
-                ? "登录成功，成绩、课表和电费已同步"
-                : "登录成功，以下信息同步失败：" + String.join("、", initialSyncFailures);
+        String message;
+        if (initialSyncFailures.isEmpty()) {
+            message = initialElectricityDeferred
+                    ? "登录成功，成绩和课表已同步；电费系统正在结算，将在 1:00 后自动更新"
+                    : "登录成功，成绩、课表和电费已同步";
+        } else {
+            message = "登录成功，以下信息同步失败：" + String.join("、", initialSyncFailures);
+            if (initialElectricityDeferred) message += "；电费将在 1:00 后自动更新";
+        }
         Toast.makeText(this, message, Toast.LENGTH_LONG).show();
         initialSyncFailures.clear();
+        initialElectricityDeferred = false;
     }
 
     private void cancelInitialSync() {
         initialSyncInProgress = false;
+        initialElectricityDeferred = false;
         initialSyncTargets.clear();
         initialSyncFailures.clear();
     }
@@ -2209,6 +2239,9 @@ public class MainActivity extends Activity {
             long lastAttempt = store.getLong("auto_last_" + target, 0L);
             long dueAt = lastAttempt == 0L ? now + Math.max(0, minimumDelayMillis)
                     : lastAttempt + intervalMillis(target);
+            if ("electricity".equals(target)) {
+                dueAt = SyncTimePolicy.deferElectricityDueAt(dueAt, now);
+            }
             if (dueAt < nextAt) {
                 nextAt = dueAt;
                 nextTarget = target;
@@ -2745,7 +2778,7 @@ public class MainActivity extends Activity {
             long versionCode = Build.VERSION.SDK_INT >= 28 ? info.getLongVersionCode() : info.versionCode;
             return info.versionName + " (" + versionCode + ")";
         } catch (Exception ignored) {
-            return "1.9.0 (11)";
+            return "1.9.1 (12)";
         }
     }
 
@@ -3946,17 +3979,6 @@ public class MainActivity extends Activity {
     }
 
     private class SafeClient extends WebViewClient {
-        private final TextView status;
-
-        SafeClient(TextView status) {
-            this.status = status;
-        }
-
-        @Override
-        public void onPageFinished(WebView view, String url) {
-            status.setText("正在识别教务页面…");
-        }
-
         @Override
         public boolean shouldOverrideUrlLoading(WebView view, String url) {
             try {
