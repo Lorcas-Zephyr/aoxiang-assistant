@@ -34,7 +34,8 @@ jobs:
           if [ -n "${REQUESTED_TAG:-}" ]; then
             release_tag="$REQUESTED_TAG"
           elif [[ "${ATOMGIT_REF:-}" == refs/tags/* ]]; then
-            release_tag="${ATOMGIT_REF#refs/tags/}"
+            pushed_tag="${ATOMGIT_REF#refs/tags/}"
+            release_tag="${pushed_tag%-publish}"
           else
             release_tag="$(git tag --list 'v*' --sort=-v:refname | head -n 1)"
           fi
