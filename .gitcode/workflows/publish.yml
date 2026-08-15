@@ -2,8 +2,6 @@ name: Publish release
 
 on:
   push:
-    branches:
-      - main
     tags:
       - "v*"
   schedule:
@@ -17,93 +15,94 @@ jobs:
   release:
     runs-on: ubuntu-latest
     steps:
-      - name: Clone release files
+      - name: Create GitCode release
         run: |
           set -euo pipefail
-          git clone --quiet "https://gitcode.com/lorcas/aoxiang-assistant.git" "$ATOMGIT_WORKSPACE/repository"
-
-      - name: Create GitCode release and upload APK
-        run: |
-          set -euo pipefail
-          phase="select-release-tag"
-          trap 'status=$?; printf "Release failed in phase %s (exit %s).\n" "$phase" "$status" >> "$ATOMGIT_STEP_SUMMARY"' ERR
-          cd "$ATOMGIT_WORKSPACE/repository"
           temp_dir="$(mktemp -d)"
           trap 'rm -rf "$temp_dir"' EXIT
+          git clone --quiet "https://gitcode.com/lorcas/aoxiang-assistant.git" "$temp_dir/repository"
 
           if [[ "${ATOMGIT_REF:-}" == refs/tags/* ]]; then
-            pushed_tag="${ATOMGIT_REF#refs/tags/}"
-            release_tag="${pushed_tag%-publish}"
+            release_tag="${ATOMGIT_REF#refs/tags/}"
           else
-            release_tag="$(git tag --list 'v*' --sort=-v:refname | head -n 1)"
+            release_tag="$(git -C "$temp_dir/repository" tag --list 'v*' --sort=-v:refname | head -n 1)"
           fi
-
-          phase="verify-release-files"
           test -n "$release_tag"
-          git checkout --quiet "$release_tag"
-          notes_path="release-notes/${release_tag}.md"
-          asset_name="aoxiang-assistant-${release_tag}.apk"
-          asset_path="release-assets/${asset_name}"
+          git -C "$temp_dir/repository" checkout --quiet "$release_tag"
+          notes_path="$temp_dir/repository/release-notes/${release_tag}.md"
           test -f "$notes_path"
-          test -f "$asset_path"
 
           api_base="https://gitcode.com/api/v5/repos/lorcas/aoxiang-assistant"
-
-          phase="query-release"
           get_status="$(curl --silent --show-error \
             --output "$temp_dir/release.json" \
             --write-out '%{http_code}' \
+            --header "Authorization: token ${ATOMGIT_TOKEN}" \
             --get "${api_base}/releases/${release_tag}" \
             --data-urlencode "access_token=${ATOMGIT_TOKEN}")"
-
-          if [ "$get_status" != "200" ]; then
-            phase="create-release-payload"
-            jq -n \
-              --arg tag "$release_tag" \
-              --arg name "翱翔助手 ${release_tag}" \
-              --rawfile body "$notes_path" \
-              '{tag_name: $tag, name: $name, body: $body, release_status: "latest"}' \
-              > "$temp_dir/create.json"
-
-            phase="create-release"
-            create_status="$(curl --silent --show-error \
-              --output "$temp_dir/release.json" \
-              --write-out '%{http_code}' \
-              --request POST "${api_base}/releases?access_token=${ATOMGIT_TOKEN}" \
-              --header 'Content-Type: application/json' \
-              --data-binary "@$temp_dir/create.json")"
-            case "$create_status" in
-              200|201) ;;
-              *)
-                echo "GitCode Release creation failed with HTTP ${create_status}" >&2
-                jq -r '.message // .error // .' "$temp_dir/release.json" >&2 || true
-                exit 1
-                ;;
-            esac
-          fi
-
-          phase="check-release-assets"
-          if jq -e --arg name "$asset_name" '.assets[]? | select(.name == $name)' \
-            "$temp_dir/release.json" >/dev/null; then
-            echo "Release asset already exists: ${asset_name}"
+          if [ "$get_status" = "200" ]; then
             exit 0
           fi
 
-          phase="request-upload-url"
+          jq -n \
+            --arg tag "$release_tag" \
+            --arg name "翱翔助手 ${release_tag}" \
+            --rawfile body "$notes_path" \
+            '{tag_name: $tag, name: $name, body: $body, release_status: "latest"}' \
+            > "$temp_dir/create.json"
+          create_status="$(curl --silent --show-error \
+            --output "$temp_dir/release.json" \
+            --write-out '%{http_code}' \
+            --request POST "${api_base}/releases?access_token=${ATOMGIT_TOKEN}" \
+            --header "Authorization: token ${ATOMGIT_TOKEN}" \
+            --header 'Content-Type: application/json' \
+            --data-binary "@$temp_dir/create.json")"
+          case "$create_status" in
+            200|201) ;;
+            *) exit 1 ;;
+          esac
+
+      - name: Upload GitCode APK
+        run: |
+          set -euo pipefail
+          temp_dir="$(mktemp -d)"
+          trap 'rm -rf "$temp_dir"' EXIT
+          git clone --quiet "https://gitcode.com/lorcas/aoxiang-assistant.git" "$temp_dir/repository"
+
+          if [[ "${ATOMGIT_REF:-}" == refs/tags/* ]]; then
+            release_tag="${ATOMGIT_REF#refs/tags/}"
+          else
+            release_tag="$(git -C "$temp_dir/repository" tag --list 'v*' --sort=-v:refname | head -n 1)"
+          fi
+          test -n "$release_tag"
+          git -C "$temp_dir/repository" checkout --quiet "$release_tag"
+          asset_name="aoxiang-assistant-${release_tag}.apk"
+          asset_path="$temp_dir/repository/release-assets/${asset_name}"
+          test -f "$asset_path"
+
+          api_base="https://gitcode.com/api/v5/repos/lorcas/aoxiang-assistant"
           curl --fail-with-body --silent --show-error \
+            --header "Authorization: token ${ATOMGIT_TOKEN}" \
+            --get "${api_base}/releases/${release_tag}" \
+            --data-urlencode "access_token=${ATOMGIT_TOKEN}" \
+            --output "$temp_dir/release.json"
+          if jq -e --arg name "$asset_name" '.assets[]? | select(.name == $name)' \
+            "$temp_dir/release.json" >/dev/null; then
+            exit 0
+          fi
+
+          curl --fail-with-body --silent --show-error \
+            --header "Authorization: token ${ATOMGIT_TOKEN}" \
             --get "${api_base}/releases/${release_tag}/upload_url" \
             --data-urlencode "access_token=${ATOMGIT_TOKEN}" \
             --data-urlencode "file_name=${asset_name}" \
             --output "$temp_dir/upload.json"
 
-          phase="parse-upload-response"
           upload_url="$(jq -er '.url' "$temp_dir/upload.json")"
           project_id="$(jq -er '.headers["x-obs-meta-project-id"]' "$temp_dir/upload.json")"
           acl="$(jq -er '.headers["x-obs-acl"]' "$temp_dir/upload.json")"
           callback="$(jq -er '.headers["x-obs-callback"]' "$temp_dir/upload.json")"
           content_type="$(jq -er '.headers["Content-Type"]' "$temp_dir/upload.json")"
 
-          phase="upload-release-asset"
           curl --fail-with-body --silent --show-error \
             --request PUT \
             --header "x-obs-meta-project-id: ${project_id}" \
@@ -112,5 +111,3 @@ jobs:
             --header "Content-Type: ${content_type}" \
             --upload-file "$asset_path" \
             "$upload_url"
-
-          echo "Published ${release_tag} with ${asset_name}"
