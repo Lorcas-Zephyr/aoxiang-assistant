@@ -4,6 +4,7 @@ import { preferences } from '@kit.ArkData';
 import { util } from '@kit.ArkTS';
 import { CredentialStore } from '../model/CredentialStore';
 import { Grade, GradeMath } from '../model/GradeModel';
+import { Course, Semester } from '../model/CourseModel';
 import { Constants, LoginPhase, LoginTarget } from '../common/Constants';
 import { BusinessError } from '@kit.BasicServicesKit';
 
@@ -26,6 +27,9 @@ struct Index {
   @State grades: Grade[] = [];
   @State webViewSrc: string = '';
   @State electricityBalance: number = -1;
+  @State courses: Course[] = [];
+  @State semesters: Semester[] = [];
+  @State selectedSemesterIndex: number = 0;
 
   private webController: webview.WebviewController = new webview.WebviewController();
   private credentialStore: CredentialStore = new CredentialStore();
@@ -49,6 +53,7 @@ struct Index {
     await this.refreshCredentialState();
     this.loadGradesFromPref();
     this.loadElectricityFromPref();
+    this.loadCoursesFromPref();
     console.info(`aboutToAppear done: grades=${this.grades.length} electricity=${this.electricityBalance} hasCreds=${this.hasCredentials}`);
   }
 
@@ -151,8 +156,82 @@ struct Index {
     }
   }
 
+  private loadCoursesFromPref(): void {
+    if (this.gradePref === undefined) {
+      return;
+    }
+    try {
+      const raw: string = this.gradePref.getSync('courses', '') as string;
+      if (raw.length === 0) {
+        return;
+      }
+      const parsed: Record<string, Object> = JSON.parse(raw) as Record<string, Object>;
+      const semArr: Object[] = parsed['semesters'] as Object[];
+      const couArr: Object[] = parsed['courses'] as Object[];
+      const semOut: Semester[] = [];
+      for (let i = 0; i < semArr.length; i++) {
+        semOut.push(Semester.fromJsObject(semArr[i] as Record<string, Object>));
+      }
+      const couOut: Course[] = [];
+      for (let i = 0; i < couArr.length; i++) {
+        couOut.push(Course.fromRecord(couArr[i] as Record<string, Object>));
+      }
+      this.semesters = semOut;
+      this.courses = couOut;
+      if (this.selectedSemesterIndex >= this.semesters.length) {
+        this.selectedSemesterIndex = 0;
+      }
+    } catch (e) {
+      console.error('loadCourses failed');
+    }
+  }
+
+  private saveCoursesToPref(): void {
+    if (this.gradePref === undefined) {
+      return;
+    }
+    try {
+      const semArr: Object[] = [];
+      for (let i = 0; i < this.semesters.length; i++) {
+        semArr.push(this.semesters[i].toRecord() as Object);
+      }
+      const couArr: Object[] = [];
+      for (let i = 0; i < this.courses.length; i++) {
+        couArr.push(this.courses[i].toRecord() as Object);
+      }
+      const data: Record<string, Object> = { 'semesters': semArr, 'courses': couArr };
+      this.gradePref.putSync('courses', JSON.stringify(data));
+      this.gradePref.flushSync();
+    } catch (e) {
+      console.error('saveCourses failed');
+    }
+  }
+
   private electricityBalanceText(): string {
     return this.electricityBalance < 0 ? '--' : this.electricityBalance.toFixed(2);
+  }
+
+  private currentSemesterCourses(): Course[] {
+    if (this.semesters.length === 0) {
+      return this.courses;
+    }
+    const sem: Semester = this.semesters[this.selectedSemesterIndex];
+    const out: Course[] = [];
+    for (let i = 0; i < this.courses.length; i++) {
+      if (this.courses[i].dataSemester === sem.dataSemester) {
+        out.push(this.courses[i]);
+      }
+    }
+    const dayOrder: number[] = [1, 2, 3, 4, 5, 6, 7, 0];
+    out.sort((a: Course, b: Course) => {
+      const dayA: number = dayOrder.indexOf(a.dayOfWeek);
+      const dayB: number = dayOrder.indexOf(b.dayOfWeek);
+      if (dayA !== dayB) {
+        return dayA - dayB;
+      }
+      return a.sectionStart - b.sectionStart;
+    });
+    return out;
   }
 
   private weightedPoint(): string {
@@ -247,6 +326,9 @@ struct Index {
     this.showWebView = false;
     this.grades = [];
     this.electricityBalance = -1;
+    this.courses = [];
+    this.semesters = [];
+    this.selectedSemesterIndex = 0;
     this.statusText = '已退出登录';
   }
 
@@ -369,6 +451,10 @@ struct Index {
         }
         return;
       }
+      if (phase === LoginPhase.SCHEDULE_DATA && this.currentTarget === LoginTarget.SCHEDULE) {
+        this.handleCollectedSchedule(obj['payload']);
+        return;
+      }
       if (phase === LoginPhase.ELECTRICITY_DATA && this.currentTarget === LoginTarget.ELECTRICITY) {
         const balanceVal: Object | undefined = obj['balance'];
         console.info(`electricity_data balanceVal=${balanceVal} type=${typeof balanceVal}`);
@@ -436,6 +522,44 @@ struct Index {
     this.showWebView = false;
     this.currentTab = 2;
     console.info(`handleCollectedGrades: DONE, grades=${this.grades.length} GPA=${this.weightedPoint()} showWebView=${this.showWebView} currentTab=${this.currentTab}`);
+  }
+
+  private handleCollectedSchedule(payloadObj: Object | undefined): void {
+    console.info(`handleCollectedSchedule called, payloadObj type=${typeof payloadObj}`);
+    if (payloadObj === undefined || payloadObj === null) {
+      console.info('handleCollectedSchedule: payloadObj is null/undefined');
+      this.stopPolling();
+      this.showWebView = false;
+      this.statusText = '未能解析课表数据';
+      return;
+    }
+    const payload: Record<string, Object> = payloadObj as Record<string, Object>;
+    const semRaw: Object[] = payload['semesters'] as Object[];
+    const couRaw: Object[] = payload['courses'] as Object[];
+    console.info(`handleCollectedSchedule: semesters=${semRaw.length} courses=${couRaw.length}`);
+    if (couRaw.length === 0) {
+      this.stopPolling();
+      this.showWebView = false;
+      this.statusText = '没有解析到课表数据';
+      return;
+    }
+    const semOut: Semester[] = [];
+    for (let i = 0; i < semRaw.length; i++) {
+      semOut.push(Semester.fromJsObject(semRaw[i] as Record<string, Object>));
+    }
+    const couOut: Course[] = [];
+    for (let i = 0; i < couRaw.length; i++) {
+      couOut.push(Course.fromRecord(couRaw[i] as Record<string, Object>));
+    }
+    this.semesters = semOut;
+    this.courses = couOut;
+    this.selectedSemesterIndex = 0;
+    this.saveCoursesToPref();
+    this.stopPolling();
+    this.showWebView = false;
+    this.statusText = `已导入 ${couOut.length} 门课程`;
+    this.currentTab = 1;
+    console.info(`handleCollectedSchedule: DONE, courses=${this.courses.length} semesters=${this.semesters.length}`);
   }
 
   build() {
@@ -653,6 +777,22 @@ struct Index {
         }
         .layoutWeight(1)
         .alignItems(HorizontalAlign.Center)
+
+        Column() {
+          Text('课表')
+            .fontSize(11)
+            .fontColor('#888888')
+          Text(`${this.courses.length}`)
+            .fontSize(20)
+            .fontWeight(FontWeight.Bold)
+            .fontColor('#333333')
+            .margin({ top: 4, bottom: 2 })
+          Text('门')
+            .fontSize(10)
+            .fontColor('#AAAAAA')
+        }
+        .layoutWeight(1)
+        .alignItems(HorizontalAlign.Center)
       }
       .width('100%')
     }
@@ -725,47 +865,128 @@ struct Index {
   ScheduleContent() {
     Scroll() {
       Column() {
-        Text('课表')
-          .fontSize(24)
-          .fontWeight(FontWeight.Bold)
-          .fontColor('#333333')
-          .margin({ top: 20, bottom: 16 })
+        Row() {
+          Text('课表')
+            .fontSize(24)
+            .fontWeight(FontWeight.Bold)
+            .fontColor('#333333')
 
-        if (!this.hasCredentials) {
+          Blank()
+
+          Button('导入')
+            .height(32)
+            .backgroundColor(Color.Transparent)
+            .fontColor('#4A6CF7')
+            .fontSize(13)
+            .border({ width: 1, color: '#4A6CF7', radius: 6 })
+            .onClick(() => {
+              if (!this.hasCredentials) {
+                this.showLoginForm = true;
+                this.currentTarget = LoginTarget.SCHEDULE;
+                return;
+              }
+              this.startPortal(LoginTarget.SCHEDULE, false);
+            })
+        }
+        .width('92%')
+        .margin({ top: 20, bottom: 16 })
+
+        if (this.courses.length === 0) {
           Column() {
-            Text('尚未登录，请先在设置中登录')
+            Text('还没有课表数据')
               .fontSize(14)
-              .fontColor('#888888')
-            Button('前往登录')
-              .height(40)
+              .fontColor('#AAAAAA')
+              .margin({ top: 40 })
+            Button('导入课表')
+              .height(44)
               .backgroundColor('#4A6CF7')
               .fontColor(Color.White)
               .fontSize(14)
               .borderRadius(8)
               .margin({ top: 16 })
               .onClick(() => {
-                this.showLoginForm = true;
-                this.currentTarget = LoginTarget.SCHEDULE;
+                if (!this.hasCredentials) {
+                  this.showLoginForm = true;
+                  this.currentTarget = LoginTarget.SCHEDULE;
+                  return;
+                }
+                this.startPortal(LoginTarget.SCHEDULE, false);
               })
           }
           .width('100%')
           .alignItems(HorizontalAlign.Center)
-          .margin({ top: 60 })
         } else {
-          Text('导入课表后在此显示')
-            .fontSize(14)
-            .fontColor('#888888')
-            .margin({ top: 60 })
-          Button('导入课表')
-            .height(44)
-            .backgroundColor('#4A6CF7')
-            .fontColor(Color.White)
-            .fontSize(14)
-            .borderRadius(8)
-            .margin({ top: 16 })
-            .onClick(() => {
-              this.startPortal(LoginTarget.SCHEDULE, false);
-            })
+          if (this.semesters.length > 1) {
+            Row() {
+              Button('‹')
+                .fontSize(18)
+                .width(36)
+                .height(36)
+                .backgroundColor(Color.Transparent)
+                .fontColor('#4A6CF7')
+                .border({ width: 1, color: '#DDDDDD', radius: 6 })
+                .onClick(() => {
+                  if (this.selectedSemesterIndex > 0) {
+                    this.selectedSemesterIndex--;
+                  }
+                })
+              Text(this.semesters[this.selectedSemesterIndex].name)
+                .fontSize(14)
+                .fontColor('#333333')
+                .fontWeight(FontWeight.Medium)
+                .layoutWeight(1)
+                .textAlign(TextAlign.Center)
+                .maxLines(1)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
+              Button('›')
+                .fontSize(18)
+                .width(36)
+                .height(36)
+                .backgroundColor(Color.Transparent)
+                .fontColor('#4A6CF7')
+                .border({ width: 1, color: '#DDDDDD', radius: 6 })
+                .onClick(() => {
+                  if (this.selectedSemesterIndex < this.semesters.length - 1) {
+                    this.selectedSemesterIndex++;
+                  }
+                })
+            }
+            .width('92%')
+            .margin({ bottom: 12 })
+          }
+
+          Row() {
+            Text(`共 ${this.currentSemesterCourses().length} 门课程`)
+              .fontSize(12)
+              .fontColor('#888888')
+            Blank()
+            Button('刷新')
+              .height(28)
+              .backgroundColor(Color.Transparent)
+              .fontColor('#4A6CF7')
+              .fontSize(12)
+              .border({ width: 1, color: '#4A6CF7', radius: 6 })
+              .onClick(() => {
+                if (!this.hasCredentials) {
+                  this.showLoginForm = true;
+                  this.currentTarget = LoginTarget.SCHEDULE;
+                  return;
+                }
+                this.startPortal(LoginTarget.SCHEDULE, false);
+              })
+          }
+          .width('92%')
+          .margin({ bottom: 8 })
+
+          Column() {
+            ForEach(this.currentSemesterCourses(), (course: Course, index: number) => {
+              this.CourseRow(course)
+            }, (course: Course, index: number) => `${index}_${course.name}_${course.scheduleText}`)
+          }
+          .width('92%')
+          .backgroundColor(Color.White)
+          .borderRadius(12)
+          .padding({ left: 14, right: 14 })
         }
       }
       .width('100%')
@@ -886,6 +1107,61 @@ struct Index {
         .width('100%')
         .padding({ top: 11, bottom: 11 })
         .alignItems(VerticalAlign.Center)
+
+      Row()
+        .width('100%')
+        .height(0.5)
+        .backgroundColor('#EEEEEE')
+    }
+  }
+
+  @Builder
+  CourseRow(course: Course) {
+    Column() {
+      Row() {
+        Column() {
+          Text(course.name)
+            .fontSize(15)
+            .fontWeight(FontWeight.Bold)
+            .fontColor('#333333')
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+          if (course.teacher.length > 0) {
+            Text(course.teacher)
+              .fontSize(12)
+              .fontColor('#888888')
+              .margin({ top: 2 })
+          }
+        }
+        .layoutWeight(1)
+        .alignItems(HorizontalAlign.Start)
+
+        Column() {
+          Text(course.displayDay())
+            .fontSize(13)
+            .fontWeight(FontWeight.Bold)
+            .fontColor('#4A6CF7')
+          Text(course.displaySection())
+            .fontSize(11)
+            .fontColor('#888888')
+            .margin({ top: 2 })
+        }
+        .width(80)
+        .alignItems(HorizontalAlign.End)
+      }
+      .width('100%')
+      .padding({ top: 8, bottom: 4 })
+      .alignItems(VerticalAlign.Center)
+
+      if (course.location.length > 0) {
+        Row() {
+          Text(course.location)
+            .fontSize(11)
+            .fontColor('#AAAAAA')
+        }
+        .width('100%')
+        .padding({ bottom: 4 })
+      }
 
       Row()
         .width('100%')
