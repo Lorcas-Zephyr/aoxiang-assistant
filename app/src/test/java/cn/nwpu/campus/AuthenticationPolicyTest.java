@@ -22,4 +22,12 @@ public class AuthenticationPolicyTest {
         assertFalse(AuthenticationPolicy.shouldWaitForCredentialRedirect(
                 "credentials_required", submittedAt, submittedAt + 1_000L));
     }
+
+    @Test public void collectionAuthenticationProblemsRequireVisibleUnifiedLogin() {
+        assertTrue(AuthenticationPolicy.requiresInteractiveCollectionLogin("grades", "interactive_login"));
+        assertTrue(AuthenticationPolicy.requiresInteractiveCollectionLogin("schedule", "sms_required"));
+        assertTrue(AuthenticationPolicy.requiresInteractiveCollectionLogin("electricity", "credentials_required"));
+        assertFalse(AuthenticationPolicy.requiresInteractiveCollectionLogin("validate", "sms_required"));
+        assertFalse(AuthenticationPolicy.requiresInteractiveCollectionLogin("grades", "data"));
+    }
 }

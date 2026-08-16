@@ -290,6 +290,7 @@ public class MainActivity extends Activity {
     protected void onResume() {
         super.onResume();
         if (!silentBoot && root != null) root.postDelayed(this::openRequiredInteractiveLogin, 250L);
+        refreshAutomaticUpdatePanelIfVisible();
         if (root != null && backgroundPermissionActivityPending) {
             backgroundPermissionActivityPending = false;
             root.postDelayed(this::continueBackgroundPermissionFlow, 350L);
@@ -911,14 +912,8 @@ public class MainActivity extends Activity {
                 BackgroundPermissionUtils.isIgnoringBatteryOptimizations(this) ? "已允许" : "受电池优化限制",
                 this::requestBatteryOptimizationPermission, true);
         addBackgroundPermissionRow(permissionCard, "自启动与后台启动",
-                store.getBoolean(AUTOSTART_SETTINGS_REQUESTED, false)
-                        ? "已打开系统设置，请确认允许" : "需要在系统设置中允许",
+                "无法检测，请自行确认",
                 this::requestAutostartSettings, false);
-        Button authorize = action("检查并授权", true);
-        authorize.setOnClickListener(v -> startBackgroundPermissionFlow());
-        LinearLayout.LayoutParams authorizeParams = new LinearLayout.LayoutParams(-1, dp(42));
-        authorizeParams.topMargin = dp(10);
-        permissionCard.addView(authorize, authorizeParams);
         parent.addView(permissionCard);
     }
 
@@ -1871,10 +1866,13 @@ public class MainActivity extends Activity {
                 refreshAccountPageIfVisible();
                 stopBackgroundService();
                 CookieManager cookies = CookieManager.getInstance();
-                cookies.removeAllCookies(ignored -> runOnUiThread(() -> {
-                    cookies.flush();
+                cookies.flush();
+                if (afterInteractiveLogin && "validate".equals(resumeTarget)) {
+                    handleCredentialsValidated();
+                } else {
+                    if (afterInteractiveLogin) markCredentialsVerified();
                     openPortal(resumeTarget, resumeInBackground);
-                }));
+                }
             }, () -> {
             loginPromptVisible = false;
             cancelInitialSync();
@@ -1886,18 +1884,12 @@ public class MainActivity extends Activity {
         if ("bootstrap".equals(automationTarget) || loginPromptVisible) return;
         interactiveResumeTarget = validAutomationTarget(resumeTarget);
         interactiveResumeAutomatic = resumeAutomatic;
-        store.edit()
-                .putBoolean(INTERACTIVE_AUTH_REQUIRED, true)
-                .putString(INTERACTIVE_AUTH_TARGET, interactiveResumeTarget)
-                .putBoolean("credentials_verified", false)
-                .apply();
+        rememberInteractiveLoginRequired(interactiveResumeTarget);
         cancelScheduledUpdates();
         stopBackgroundService();
         CookieManager cookies = CookieManager.getInstance();
-        cookies.removeAllCookies(ignored -> runOnUiThread(() -> {
-            cookies.flush();
-            if (!isFinishing()) openPortal("bootstrap", false);
-        }));
+        cookies.flush();
+        if (!isFinishing()) openPortal("bootstrap", false);
     }
 
     private void openRequiredInteractiveLogin() {
@@ -1907,8 +1899,32 @@ public class MainActivity extends Activity {
     }
 
     private String validAutomationTarget(String target) {
-        return "grades".equals(target) || "schedule".equals(target) || "electricity".equals(target)
-                ? target : "validate";
+        return isCollectionTarget(target) ? target : "validate";
+    }
+
+    private boolean isCollectionTarget(String target) {
+        return "grades".equals(target) || "schedule".equals(target) || "electricity".equals(target);
+    }
+
+    private void rememberInteractiveLoginRequired(String resumeTarget) {
+        store.edit()
+                .putBoolean(INTERACTIVE_AUTH_REQUIRED, true)
+                .putString(INTERACTIVE_AUTH_TARGET, validAutomationTarget(resumeTarget))
+                .putBoolean("credentials_verified", false)
+                .apply();
+        refreshAccountPageIfVisible();
+    }
+
+    private void requireInteractiveLoginForCollection(String target, TextView status) {
+        status.setText("需要在统一认证页完成登录");
+        if (automaticRun && !initialSyncInProgress) {
+            rememberInteractiveLoginRequired(target);
+            sendAuthenticationNotification("自动更新需要统一认证，请打开翱翔助手完成登录");
+            cancelAutomaticAttempt(target);
+            return;
+        }
+        Toast.makeText(this, "请在统一认证页完成登录", Toast.LENGTH_LONG).show();
+        beginInteractiveLogin(target, automaticRun || initialSyncInProgress);
     }
 
     private void handleInteractiveLoginPassed() {
@@ -1916,6 +1932,12 @@ public class MainActivity extends Activity {
         String resumeTarget = interactiveResumeTarget;
         boolean resumeAutomatic = interactiveResumeAutomatic || initialSyncInProgress;
         cancelAutomation();
+        CookieManager.getInstance().flush();
+        if (!"validate".equals(resumeTarget) && hasSavedCredentials()) {
+            markCredentialsVerified();
+            openPortal(resumeTarget, resumeAutomatic);
+            return;
+        }
         showCredentialsDialog(false, resumeTarget, resumeAutomatic, true);
     }
 
@@ -2157,6 +2179,7 @@ public class MainActivity extends Activity {
             @Override
             public void run() {
                 if (generation != automationGeneration || web.getParent() == null) return;
+                unifiedAuthTracker.record(web.getUrl());
                 if (collectedGradeRows[0] != null && portraitStartedAt[0] > 0L
                         && System.currentTimeMillis() - portraitStartedAt[0] >= PORTRAIT_TIMEOUT_MS) {
                     handleCollectedGrades(collectedGradeRows[0], portraitGpa, false);
@@ -2212,6 +2235,10 @@ public class MainActivity extends Activity {
                             }
                             status.setText("请在统一认证页面完成登录");
                             if (generation == automationGeneration) automationHandler.postDelayed(this, 1000);
+                            return;
+                        }
+                        if (AuthenticationPolicy.requiresInteractiveCollectionLogin(target, phase)) {
+                            requireInteractiveLoginForCollection(target, status);
                             return;
                         }
                         if ("credentials_required".equals(phase) || "credentials_error".equals(phase)) {
@@ -2524,6 +2551,7 @@ public class MainActivity extends Activity {
     }
 
     private void markCredentialsVerified() {
+        CookieManager.getInstance().flush();
         boolean changed = !store.getBoolean("credentials_verified", true)
                 || store.getInt(CREDENTIAL_FAILURE_COUNT, 0) != 0
                 || store.getBoolean(INTERACTIVE_AUTH_REQUIRED, false);
@@ -3160,8 +3188,7 @@ public class MainActivity extends Activity {
                     ? "已允许" : "受电池优化限制");
         }
         if (autostartPermissionStatusView != null) {
-            autostartPermissionStatusView.setText(store.getBoolean(AUTOSTART_SETTINGS_REQUESTED, false)
-                    ? "已打开系统设置，请确认允许" : "需要在系统设置中允许");
+            autostartPermissionStatusView.setText("无法检测，请自行确认");
         }
     }
 
@@ -4590,7 +4617,20 @@ public class MainActivity extends Activity {
         }
 
         @Override
+        public void onPageFinished(WebView view, String url) {
+            unifiedAuthTracker.record(url);
+            super.onPageFinished(view, url);
+        }
+
+        @Override
+        public void doUpdateVisitedHistory(WebView view, String url, boolean isReload) {
+            unifiedAuthTracker.record(url);
+            super.doUpdateVisitedHistory(view, url, isReload);
+        }
+
+        @Override
         public boolean shouldOverrideUrlLoading(WebView view, String url) {
+            unifiedAuthTracker.record(url);
             try {
                 String host = Uri.parse(url).getHost();
                 if (host != null && (host.equals("nwpu.edu.cn") || host.endsWith(".nwpu.edu.cn"))) return false;

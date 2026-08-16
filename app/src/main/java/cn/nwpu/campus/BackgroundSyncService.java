@@ -148,7 +148,18 @@ public class BackgroundSyncService extends Service {
                 super.onPageStarted(view, url, favicon);
             }
 
+            @Override public void onPageFinished(WebView view, String url) {
+                unifiedAuthTracker.record(url);
+                super.onPageFinished(view, url);
+            }
+
+            @Override public void doUpdateVisitedHistory(WebView view, String url, boolean isReload) {
+                unifiedAuthTracker.record(url);
+                super.doUpdateVisitedHistory(view, url, isReload);
+            }
+
             @Override public boolean shouldOverrideUrlLoading(WebView view, String url) {
+                unifiedAuthTracker.record(url);
                 try {
                     String host = Uri.parse(url).getHost();
                     return host == null || !(host.equals("nwpu.edu.cn") || host.endsWith(".nwpu.edu.cn"));
@@ -172,6 +183,7 @@ public class BackgroundSyncService extends Service {
         collectTask = new Runnable() {
             @Override public void run() {
                 if (!running || web == null) return;
+                unifiedAuthTracker.record(web.getUrl());
                 if (collectedGradeRows[0] != null && portraitStartedAt[0] > 0L
                         && System.currentTimeMillis() - portraitStartedAt[0] >= PORTRAIT_TIMEOUT_MS) {
                     saveGrades(collectedGradeRows[0], Double.NaN);
@@ -207,25 +219,8 @@ public class BackgroundSyncService extends Service {
                             }
                             phase = "credentials_required";
                         }
-                        if ("credentials_error".equals(phase) || "credentials_required".equals(phase)) {
-                            boolean rejected = AuthenticationPolicy.isExplicitCredentialError(phase);
-                            int failureCount = rejected ? recordCredentialFailure() : 0;
-                            store.edit().putBoolean("credentials_verified", false).apply();
-                            sendAuthenticationNotification(failureCount >= 2
-                                    ? "连续两次登录失败，请打开翱翔助手完成统一认证"
-                                    : rejected ? "账号或翱翔门户密码错误，请重新登录"
-                                    : "登录信息已失效，请打开翱翔助手重新登录");
-                            finishAttempt();
-                            return;
-                        }
-                        if ("sms_required".equals(phase)) {
-                            sendAuthenticationNotification("统一认证需要验证码，请打开翱翔助手完成验证");
-                            finishAttempt();
-                            return;
-                        }
-                        if ("sms_error".equals(phase)) {
-                            sendAuthenticationNotification("统一认证验证码错误或已失效，请重新验证");
-                            finishAttempt();
+                        if (AuthenticationPolicy.requiresInteractiveCollectionLogin(target, phase)) {
+                            requireInteractiveLogin();
                             return;
                         }
                         if ("credentials_submitting".equals(phase)) {
@@ -489,20 +484,18 @@ public class BackgroundSyncService extends Service {
         if (manager != null) manager.notify(1006, builder.build());
     }
 
-    private int recordCredentialFailure() {
-        int count = Math.min(2, store.getInt(CREDENTIAL_FAILURE_COUNT, 0) + 1);
-        SharedPreferences.Editor editor = store.edit()
-                .putInt(CREDENTIAL_FAILURE_COUNT, count)
-                .putBoolean("credentials_verified", false);
-        if (count >= 2) {
-            editor.putBoolean(INTERACTIVE_AUTH_REQUIRED, true)
-                    .putString(INTERACTIVE_AUTH_TARGET, target == null ? "validate" : target);
-        }
-        editor.apply();
-        return count;
+    private void requireInteractiveLogin() {
+        store.edit()
+                .putBoolean("credentials_verified", false)
+                .putBoolean(INTERACTIVE_AUTH_REQUIRED, true)
+                .putString(INTERACTIVE_AUTH_TARGET, target == null ? "validate" : target)
+                .apply();
+        sendAuthenticationNotification("自动更新需要统一认证，请打开翱翔助手完成登录");
+        finishAttempt();
     }
 
     private void markCredentialsVerified() {
+        CookieManager.getInstance().flush();
         store.edit().putBoolean("credentials_verified", true)
                 .putInt(CREDENTIAL_FAILURE_COUNT, 0)
                 .remove(INTERACTIVE_AUTH_REQUIRED)

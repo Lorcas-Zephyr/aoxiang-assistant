@@ -13,4 +13,13 @@ final class AuthenticationPolicy {
         return "credentials_pending".equals(phase) && submittedAt > 0L
                 && now - submittedAt < CREDENTIAL_REDIRECT_GRACE_MS;
     }
+
+    static boolean requiresInteractiveCollectionLogin(String target, String phase) {
+        boolean collection = "grades".equals(target) || "schedule".equals(target)
+                || "electricity".equals(target);
+        if (!collection) return false;
+        return "credentials_required".equals(phase) || "credentials_error".equals(phase)
+                || "interactive_login".equals(phase) || "sms_required".equals(phase)
+                || "sms_error".equals(phase);
+    }
 }
