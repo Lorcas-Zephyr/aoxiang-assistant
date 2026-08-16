@@ -23,6 +23,36 @@ public final class ScheduleModels {
             "#FFB300",
             "#3949AB"
     );
+    private static final String[][] FRIENDSHIP_SUMMER_SECTION_TIMES = {
+            {"08:00", "08:50"},
+            {"09:00", "09:50"},
+            {"10:10", "11:00"},
+            {"11:10", "12:00"},
+            {"12:20", "13:05"},
+            {"13:05", "13:50"},
+            {"14:30", "15:20"},
+            {"15:30", "16:20"},
+            {"16:40", "17:30"},
+            {"17:40", "18:30"},
+            {"19:30", "20:20"},
+            {"20:30", "21:20"},
+            {"21:30", "22:20"}
+    };
+    private static final String[][] FRIENDSHIP_WINTER_SECTION_TIMES = {
+            {"08:00", "08:50"},
+            {"09:00", "09:50"},
+            {"10:10", "11:00"},
+            {"11:10", "12:00"},
+            {"12:20", "13:05"},
+            {"13:05", "13:50"},
+            {"14:00", "14:50"},
+            {"15:00", "15:50"},
+            {"16:10", "17:00"},
+            {"17:10", "18:00"},
+            {"19:00", "19:50"},
+            {"20:00", "20:50"},
+            {"21:00", "21:50"}
+    };
 
     public enum RepeatRule {
         ALL("", "全部"),
@@ -343,6 +373,41 @@ public final class ScheduleModels {
         return times;
     }
 
+    public static boolean isFriendshipCampus(String location) {
+        return location != null && location.contains("友谊");
+    }
+
+    public static List<SectionTime> buildFriendshipSectionTimes(int count, LocalDate date) {
+        LocalDate effectiveDate = date == null ? LocalDate.now() : date;
+        int month = effectiveDate.getMonthValue();
+        String[][] standard = month >= 5 && month <= 9
+                ? FRIENDSHIP_SUMMER_SECTION_TIMES
+                : FRIENDSHIP_WINTER_SECTION_TIMES;
+        List<SectionTime> times = new ArrayList<>();
+        int standardCount = Math.min(Math.max(0, count), standard.length);
+        for (int i = 0; i < standardCount; i++) {
+            times.add(new SectionTime(standard[i][0], standard[i][1]));
+        }
+        int cursor = parseMinutes(standard[standard.length - 1][1]) + 10;
+        for (int i = standard.length; i < count; i++) {
+            times.add(new SectionTime(formatMinutes(cursor), formatMinutes(cursor + 50)));
+            cursor += 60;
+        }
+        return times;
+    }
+
+    public static SectionTime sectionTimeFor(Semester semester, String location,
+                                             LocalDate date, int section) {
+        if (section < 1) return null;
+        if (isFriendshipCampus(location)) {
+            int count = Math.max(section, semester == null ? 13 : semester.sectionCount);
+            List<SectionTime> times = buildFriendshipSectionTimes(count, date);
+            return section <= times.size() ? times.get(section - 1) : null;
+        }
+        if (semester == null || section > semester.sectionTimes.size()) return null;
+        return semester.sectionTimes.get(section - 1);
+    }
+
     public static Semester createDefaultSemester() {
         int year = LocalDate.now().getYear();
         return new Semester(
@@ -360,5 +425,10 @@ public final class ScheduleModels {
         int hour = totalMinutes / 60;
         int minute = totalMinutes % 60;
         return String.format(Locale.US, "%02d:%02d", hour, minute);
+    }
+
+    private static int parseMinutes(String value) {
+        String[] parts = value.split(":", 2);
+        return Integer.parseInt(parts[0]) * 60 + Integer.parseInt(parts[1]);
     }
 }

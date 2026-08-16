@@ -1169,15 +1169,20 @@ public class MainActivity extends Activity {
 
         LinearLayout body = new LinearLayout(this);
         body.setGravity(Gravity.TOP);
+        List<ScheduleModels.Course> weekCourses = coursesForWeek(semester, week);
+        boolean friendshipOnly = ScheduleUtils.allMeetingsUseFriendshipCampus(weekCourses, week);
+        LocalDate axisDate = friendshipOnly
+                ? firstMeetingDateForWeek(weekCourses, semester, week)
+                : null;
         LinearLayout timeColumn = new LinearLayout(this);
         timeColumn.setOrientation(LinearLayout.VERTICAL);
         for (int section = 1; section <= semester.sectionCount; section++) {
-            timeColumn.addView(sectionLabel(semester, section),
+            timeColumn.addView(sectionLabel(semester, section,
+                            friendshipOnly ? "友谊" : null, axisDate),
                     new LinearLayout.LayoutParams(-1, sectionHeight));
         }
         body.addView(timeColumn, new LinearLayout.LayoutParams(dp(44), -2));
 
-        List<ScheduleModels.Course> weekCourses = coursesForWeek(semester, week);
         for (int day = 1; day <= 7; day++) {
             LinearLayout dayColumn = new LinearLayout(this);
             dayColumn.setOrientation(LinearLayout.VERTICAL);
@@ -1442,7 +1447,11 @@ public class MainActivity extends Activity {
             box.addView(label("没有课程", 14, mutedColor()));
         } else {
             for (ScheduleModels.Course course : sortedCourses(daily)) {
-                TextView item = label(course.name + "\n" + ScheduleUtils.formatCourseTime(course), 13, textColor());
+                ScheduleModels.TimeSlot slot = primarySlotForDate(course, date);
+                ScheduleModels.Semester semester = selectedSemester();
+                String time = slot == null ? ScheduleUtils.formatCourseTime(course)
+                        : ScheduleUtils.formatMeetingTime(semester, slot, course.location, date);
+                TextView item = label(course.name + "\n" + time, 13, textColor());
                 item.setPadding(0, dp(8), 0, dp(8));
                 box.addView(item);
             }
@@ -2517,6 +2526,7 @@ public class MainActivity extends Activity {
                 .putString("electricity_balance", Double.toString(balance))
                 .putString("electricity_balance_source", ELECTRICITY_HOME)
                 .apply();
+        ScheduleWidgetUpdater.updateAll(this);
         updateElectricityAlert(balance);
         refreshDataPage("electricity");
         cancelAutomation();
@@ -3787,8 +3797,9 @@ public class MainActivity extends Activity {
         TextView name = label(course.name, 15, textColor());
         name.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
         card.addView(name);
+        ScheduleModels.Semester semester = selectedSemester();
         card.addView(label(slot == null ? primaryTimeForDate(course, date)
-                : ScheduleUtils.formatSections(slot.classSections), 12, mutedColor()));
+                : ScheduleUtils.formatMeetingTime(semester, slot, course.location, date), 12, mutedColor()));
         String location = slot != null && slot.location != null ? slot.location : course.location;
         if (location != null) card.addView(label(location, 12, mutedColor()));
         card.setOnClickListener(v -> showCourseMeetingDetailDialog(course, slot));
@@ -3856,6 +3867,11 @@ public class MainActivity extends Activity {
     }
 
     private View sectionLabel(ScheduleModels.Semester semester, int section) {
+        return sectionLabel(semester, section, null, null);
+    }
+
+    private View sectionLabel(ScheduleModels.Semester semester, int section,
+                              String location, LocalDate date) {
         LinearLayout cell = new LinearLayout(this);
         cell.setOrientation(LinearLayout.VERTICAL);
         cell.setGravity(Gravity.CENTER);
@@ -3864,8 +3880,9 @@ public class MainActivity extends Activity {
         name.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
         name.setGravity(Gravity.CENTER);
         cell.addView(name);
-        if (section - 1 < semester.sectionTimes.size()) {
-            ScheduleModels.SectionTime time = semester.sectionTimes.get(section - 1);
+        ScheduleModels.SectionTime time = ScheduleModels.sectionTimeFor(
+                semester, location, date, section);
+        if (time != null) {
             TextView range = label(time.start + "\n" + time.end, 8, mutedColor());
             range.setGravity(Gravity.CENTER);
             cell.addView(range);
@@ -3893,9 +3910,16 @@ public class MainActivity extends Activity {
         TextView title = label(course.name, 10, contrastText(fill));
         title.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
         block.addView(title);
-        TextView time = label(slot == null ? dayPrimarySectionLabel(course, week, day)
-                : ScheduleUtils.formatSections(slot.classSections), 8, contrastText(fill));
-        time.setMaxLines(1);
+        String meetingTime = dayPrimarySectionLabel(course, week, day);
+        ScheduleModels.Semester semester = selectedSemester();
+        if (slot != null && semester != null) {
+            LocalDate date = weekStartForSelection(semester, week).plusDays(day - 1L);
+            String range = ScheduleUtils.meetingTimeRange(semester, slot, course.location, date);
+            meetingTime = ScheduleUtils.formatSections(slot.classSections)
+                    + (range.isEmpty() ? "" : "\n" + range);
+        }
+        TextView time = label(meetingTime, 8, contrastText(fill));
+        time.setMaxLines(2);
         block.addView(time);
         String slotLocation = slot != null && slot.location != null ? slot.location : course.location;
         if (slotLocation != null) {
@@ -4044,6 +4068,23 @@ public class MainActivity extends Activity {
             if (matches) out.add(course);
         }
         return sortedCourses(out);
+    }
+
+    private LocalDate firstMeetingDateForWeek(List<ScheduleModels.Course> weekCourses,
+                                              ScheduleModels.Semester semester,
+                                              int week) {
+        int firstDay = 7;
+        boolean found = false;
+        for (ScheduleModels.Course course : weekCourses) {
+            for (ScheduleModels.TimeSlot slot : course.timeSlots) {
+                if (!ScheduleUtils.isWeekInRange(week, slot.weekRange)
+                        || !ScheduleUtils.matchesRepeatRule(week, slot.repeatRule)
+                        || slot.classSections == null || slot.classSections.isEmpty()) continue;
+                firstDay = Math.min(firstDay, Math.max(1, Math.min(7, slot.dayOfWeek)));
+                found = true;
+            }
+        }
+        return found ? weekStartForSelection(semester, week).plusDays(firstDay - 1L) : null;
     }
 
     private List<ScheduleModels.Course> coursesForDate(LocalDate date, ScheduleModels.Semester semester) {
@@ -4353,6 +4394,7 @@ public class MainActivity extends Activity {
             if (Double.isNaN(portraitGpa)) editor.remove(PORTRAIT_GPA);
             else editor.putString(PORTRAIT_GPA, Double.toString(portraitGpa));
             editor.apply();
+            ScheduleWidgetUpdater.updateAll(this);
         } catch (Exception ignored) {}
     }
 

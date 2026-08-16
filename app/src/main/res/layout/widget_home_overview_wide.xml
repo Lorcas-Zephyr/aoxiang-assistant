@@ -1,0 +1,199 @@
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/widget_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@drawable/widget_background"
+    android:orientation="horizontal"
+    android:padding="8dp">
+
+    <LinearLayout
+        android:id="@+id/widget_gpa_area"
+        android:layout_width="0dp"
+        android:layout_height="match_parent"
+        android:layout_weight="1"
+        android:gravity="center"
+        android:orientation="vertical"
+        android:padding="5dp">
+
+        <TextView
+            android:id="@+id/widget_gpa_label"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center"
+            android:maxLines="1"
+            android:text="GPA"
+            android:textColor="#5E7185"
+            android:textSize="10sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/widget_gpa_value"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:ellipsize="end"
+            android:gravity="center"
+            android:maxLines="1"
+            android:text="3.842"
+            android:textColor="#19324D"
+            android:textSize="22sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/widget_gpa_unit"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center"
+            android:text="绩点"
+            android:textColor="#5E7185"
+            android:textSize="8sp" />
+    </LinearLayout>
+
+    <TextView
+        android:id="@+id/widget_primary_divider"
+        android:layout_width="1dp"
+        android:layout_height="match_parent"
+        android:layout_marginVertical="8dp"
+        android:background="#E5EDF5"
+        android:text="" />
+
+    <LinearLayout
+        android:id="@+id/widget_weighted_area"
+        android:layout_width="0dp"
+        android:layout_height="match_parent"
+        android:layout_weight="1"
+        android:gravity="center"
+        android:orientation="vertical"
+        android:padding="5dp">
+
+        <TextView
+            android:id="@+id/widget_weighted_label"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center"
+            android:maxLines="1"
+            android:text="加权成绩"
+            android:textColor="#5E7185"
+            android:textSize="10sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/widget_weighted_value"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:ellipsize="end"
+            android:gravity="center"
+            android:maxLines="1"
+            android:text="87.26"
+            android:textColor="#19324D"
+            android:textSize="22sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/widget_weighted_unit"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center"
+            android:text="分"
+            android:textColor="#5E7185"
+            android:textSize="8sp" />
+    </LinearLayout>
+
+    <TextView
+        android:id="@+id/widget_secondary_divider"
+        android:layout_width="1dp"
+        android:layout_height="match_parent"
+        android:layout_marginVertical="8dp"
+        android:background="#E5EDF5"
+        android:text="" />
+
+    <LinearLayout
+        android:id="@+id/widget_course_area"
+        android:layout_width="0dp"
+        android:layout_height="match_parent"
+        android:layout_weight="1"
+        android:gravity="center"
+        android:orientation="vertical"
+        android:padding="5dp">
+
+        <TextView
+            android:id="@+id/widget_course_label"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center"
+            android:maxLines="1"
+            android:text="课程"
+            android:textColor="#5E7185"
+            android:textSize="10sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/widget_course_value"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center"
+            android:maxLines="1"
+            android:text="27"
+            android:textColor="#19324D"
+            android:textSize="22sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/widget_course_unit"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center"
+            android:text="门"
+            android:textColor="#5E7185"
+            android:textSize="8sp" />
+    </LinearLayout>
+
+    <TextView
+        android:id="@+id/widget_tertiary_divider"
+        android:layout_width="1dp"
+        android:layout_height="match_parent"
+        android:layout_marginVertical="8dp"
+        android:background="#E5EDF5"
+        android:text="" />
+
+    <LinearLayout
+        android:id="@+id/widget_electricity_area"
+        android:layout_width="0dp"
+        android:layout_height="match_parent"
+        android:layout_weight="1"
+        android:gravity="center"
+        android:orientation="vertical"
+        android:padding="5dp">
+
+        <TextView
+            android:id="@+id/widget_electricity_label"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center"
+            android:maxLines="1"
+            android:text="剩余电费"
+            android:textColor="#5E7185"
+            android:textSize="10sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/widget_electricity_value"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:ellipsize="end"
+            android:gravity="center"
+            android:maxLines="1"
+            android:text="32.50"
+            android:textColor="#19324D"
+            android:textSize="22sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/widget_electricity_unit"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center"
+            android:text="元"
+            android:textColor="#5E7185"
+            android:textSize="8sp" />
+    </LinearLayout>
+</LinearLayout>

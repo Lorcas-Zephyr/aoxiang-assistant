@@ -3,4 +3,14 @@
     <string name="widget_two_day_label">今明课表 · 4×2</string>
     <string name="widget_today_description">显示今天的课程</string>
     <string name="widget_two_day_description">并列显示今天和明天的课程</string>
+    <string name="widget_gpa_label">GPA · 1×1</string>
+    <string name="widget_gpa_description">显示当前 GPA</string>
+    <string name="widget_electricity_label">剩余电费 · 1×1</string>
+    <string name="widget_electricity_description">显示当前剩余电费</string>
+    <string name="widget_gpa_electricity_label">GPA 与电费 · 2×1</string>
+    <string name="widget_gpa_electricity_wide_label">GPA 与电费 · 4×1</string>
+    <string name="widget_gpa_electricity_description">并列显示 GPA 和剩余电费</string>
+    <string name="widget_home_overview_label">首页数据概览 · 2×2</string>
+    <string name="widget_home_overview_wide_label">首页数据概览 · 4×1</string>
+    <string name="widget_home_overview_description">显示 GPA、加权成绩、课程数和剩余电费</string>
 </resources>

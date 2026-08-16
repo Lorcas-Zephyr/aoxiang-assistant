@@ -1,0 +1,12 @@
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    android:label="@string/widget_gpa_electricity_label"
+    android:description="@string/widget_gpa_electricity_description"
+    android:initialLayout="@layout/widget_gpa_electricity_compact"
+    android:previewLayout="@layout/widget_gpa_electricity_compact"
+    android:minWidth="110dp"
+    android:minHeight="40dp"
+    android:targetCellWidth="2"
+    android:targetCellHeight="1"
+    android:resizeMode="none"
+    android:updatePeriodMillis="0"
+    android:widgetCategory="home_screen" />

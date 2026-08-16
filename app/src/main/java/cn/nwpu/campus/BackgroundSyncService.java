@@ -292,6 +292,7 @@ public class BackgroundSyncService extends Service {
         SharedPreferences.Editor editor = store.edit().putString("grades", updated.toString());
         if (!Double.isNaN(gpa)) editor.putString(PORTRAIT_GPA, Double.toString(gpa));
         editor.apply();
+        ScheduleWidgetUpdater.updateAll(this);
         markCredentialsVerified();
         if (!changedCourses.isEmpty() && store.getBoolean("grade_update_notification_enabled", true)) {
             sendChangeNotification(true, changedCourses);
@@ -380,6 +381,7 @@ public class BackgroundSyncService extends Service {
         if (!Double.isNaN(balance) && balance >= 0.0) {
             store.edit().putString("electricity_balance", Double.toString(balance))
                     .putString("electricity_balance_source", ELECTRICITY_HOME).apply();
+            ScheduleWidgetUpdater.updateAll(this);
             updateElectricityAlert(balance);
             markCredentialsVerified();
         }

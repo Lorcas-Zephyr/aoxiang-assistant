@@ -123,6 +123,48 @@ public final class ScheduleUtils {
         return join(values, "\n");
     }
 
+    public static String meetingTimeRange(ScheduleModels.Semester semester,
+                                          ScheduleModels.TimeSlot slot,
+                                          String fallbackLocation,
+                                          LocalDate date) {
+        if (slot == null || slot.classSections == null || slot.classSections.isEmpty()) return "";
+        int first = Collections.min(slot.classSections);
+        int last = Collections.max(slot.classSections);
+        String location = slot.location == null ? fallbackLocation : slot.location;
+        ScheduleModels.SectionTime firstTime = ScheduleModels.sectionTimeFor(
+                semester, location, date, first);
+        ScheduleModels.SectionTime lastTime = ScheduleModels.sectionTimeFor(
+                semester, location, date, last);
+        if (firstTime == null || lastTime == null) return "";
+        return firstTime.start + "-" + lastTime.end;
+    }
+
+    public static String formatMeetingTime(ScheduleModels.Semester semester,
+                                           ScheduleModels.TimeSlot slot,
+                                           String fallbackLocation,
+                                           LocalDate date) {
+        if (slot == null) return "";
+        String sections = formatSections(slot.classSections);
+        String range = meetingTimeRange(semester, slot, fallbackLocation, date);
+        return range.isEmpty() ? sections : sections + " · " + range;
+    }
+
+    public static boolean allMeetingsUseFriendshipCampus(List<ScheduleModels.Course> courses,
+                                                          int week) {
+        boolean foundMeeting = false;
+        for (ScheduleModels.Course course : courses) {
+            for (ScheduleModels.TimeSlot slot : course.timeSlots) {
+                if (!isWeekInRange(week, slot.weekRange)
+                        || !matchesRepeatRule(week, slot.repeatRule)
+                        || slot.classSections == null || slot.classSections.isEmpty()) continue;
+                foundMeeting = true;
+                String location = slot.location == null ? course.location : slot.location;
+                if (!ScheduleModels.isFriendshipCampus(location)) return false;
+            }
+        }
+        return foundMeeting;
+    }
+
     public static String join(List<String> values, String separator) {
         StringBuilder result = new StringBuilder();
         for (String value : values) {

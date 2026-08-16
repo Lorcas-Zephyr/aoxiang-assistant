@@ -53,6 +53,60 @@
             </intent-filter>
             <meta-data android:name="android.appwidget.provider" android:resource="@xml/widget_course_small_info" />
         </receiver>
+        <receiver android:name=".GpaWidgetProvider"
+            android:label="@string/widget_gpa_label"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data android:name="android.appwidget.provider" android:resource="@xml/widget_gpa_info" />
+        </receiver>
+        <receiver android:name=".ElectricityWidgetProvider"
+            android:label="@string/widget_electricity_label"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data android:name="android.appwidget.provider" android:resource="@xml/widget_electricity_info" />
+        </receiver>
+        <receiver android:name=".GpaElectricityWidgetProvider"
+            android:label="@string/widget_gpa_electricity_label"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data android:name="android.appwidget.provider" android:resource="@xml/widget_gpa_electricity_info" />
+        </receiver>
+        <receiver android:name=".WideGpaElectricityWidgetProvider"
+            android:label="@string/widget_gpa_electricity_wide_label"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data android:name="android.appwidget.provider" android:resource="@xml/widget_gpa_electricity_wide_info" />
+        </receiver>
+        <receiver android:name=".HomeOverviewWidgetProvider"
+            android:label="@string/widget_home_overview_label"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data android:name="android.appwidget.provider" android:resource="@xml/widget_home_overview_info" />
+        </receiver>
+        <receiver android:name=".WideHomeOverviewWidgetProvider"
+            android:label="@string/widget_home_overview_wide_label"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data android:name="android.appwidget.provider" android:resource="@xml/widget_home_overview_wide_info" />
+        </receiver>
         <service android:name=".ScheduleWidgetService"
             android:permission="android.permission.BIND_REMOTEVIEWS"
             android:exported="false" />

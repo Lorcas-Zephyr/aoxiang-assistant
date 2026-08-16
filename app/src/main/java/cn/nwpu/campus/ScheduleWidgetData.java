@@ -63,9 +63,10 @@ final class ScheduleWidgetData {
                 Collections.sort(sections);
                 int first = sections.get(0);
                 int last = sections.get(sections.size() - 1);
-                String start = sectionTime(semester, first, true);
-                String end = sectionTime(semester, last, false);
-                items.add(new Item(course.name, safe(slot.location == null ? course.location : slot.location), safe(course.color),
+                String location = safe(slot.location == null ? course.location : slot.location);
+                String start = sectionTime(semester, location, date, first, true);
+                String end = sectionTime(semester, location, date, last, false);
+                items.add(new Item(course.name, location, safe(course.color),
                         ScheduleUtils.formatSections(sections), start, end, first));
             }
         }
@@ -95,9 +96,11 @@ final class ScheduleWidgetData {
         return null;
     }
 
-    static String sectionTime(ScheduleModels.Semester semester, int section, boolean start) {
-        if (section < 1 || section > semester.sectionTimes.size()) return "";
-        ScheduleModels.SectionTime time = semester.sectionTimes.get(section - 1);
+    static String sectionTime(ScheduleModels.Semester semester, String location,
+                              LocalDate date, int section, boolean start) {
+        ScheduleModels.SectionTime time = ScheduleModels.sectionTimeFor(
+                semester, location, date, section);
+        if (time == null) return "";
         return start ? time.start : time.end;
     }
 
