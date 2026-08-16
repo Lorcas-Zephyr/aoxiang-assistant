@@ -41,9 +41,15 @@ import javax.crypto.spec.GCMParameterSpec;
 
 public class BackgroundSyncService extends Service {
     private static final String EDUCATION_SSO = "https://jwxt.nwpu.edu.cn/student/sso-login";
+    private static final String STUDENT_PORTRAIT =
+            "https://jwxt.nwpu.edu.cn/student/for-std/student-portrait";
     private static final String ELECTRICITY_HOME = "https://yktapp.nwpu.edu.cn/plat/shouyeUser";
     private static final String ELECTRICITY_SSO = "https://yktapp.nwpu.edu.cn/berserker-auth/cas/login/supwisdom?targetUrl=https%3A%2F%2Fyktapp.nwpu.edu.cn%2Fplat";
     private static final String CREDENTIAL_KEY = "campus_login_credentials";
+    private static final String CREDENTIAL_FAILURE_COUNT = "credential_failure_count";
+    private static final String INTERACTIVE_AUTH_REQUIRED = "interactive_auth_required";
+    private static final String INTERACTIVE_AUTH_TARGET = "interactive_auth_target";
+    private static final String PORTRAIT_GPA = "portrait_gpa";
     private static final String SERVICE_CHANNEL = "background_sync";
     private static final String GRADE_CHANNEL = "grade_updates";
     private static final String SCHEDULE_CHANNEL = "schedule_updates";
@@ -51,6 +57,7 @@ public class BackgroundSyncService extends Service {
     private static final String AUTHENTICATION_CHANNEL = "authentication";
     private static final int SERVICE_NOTIFICATION_ID = 1004;
     private static final long RETRY_DELAY_MS = 5 * 60_000L;
+    private static final long PORTRAIT_TIMEOUT_MS = 15_000L;
 
     private final Handler handler = new Handler(Looper.getMainLooper());
     private SharedPreferences store;
@@ -149,11 +156,18 @@ public class BackgroundSyncService extends Service {
     private void startCollector(String[] credentials) {
         final int[] attempts = {0};
         final long[] gradeReadyAt = {0L};
+        final long[] portraitStartedAt = {0L};
         final long[] navigationCooldownUntil = {0L};
         final boolean[] credentialsSubmitted = {false};
+        final JSONArray[] collectedGradeRows = {null};
         collectTask = new Runnable() {
             @Override public void run() {
                 if (!running || web == null) return;
+                if (collectedGradeRows[0] != null && portraitStartedAt[0] > 0L
+                        && System.currentTimeMillis() - portraitStartedAt[0] >= PORTRAIT_TIMEOUT_MS) {
+                    saveGrades(collectedGradeRows[0], Double.NaN);
+                    return;
+                }
                 if (++attempts[0] > 180) {
                     finishAttempt();
                     return;
@@ -177,9 +191,11 @@ public class BackgroundSyncService extends Service {
                         String phase = payload.optString("phase");
                         if ("credentials_error".equals(phase) || "credentials_required".equals(phase)) {
                             boolean rejected = "credentials_error".equals(phase) || credentialsSubmitted[0];
+                            int failureCount = rejected ? recordCredentialFailure() : 0;
                             store.edit().putBoolean("credentials_verified", false).apply();
-                            sendAuthenticationNotification(rejected
-                                    ? "账号或翱翔门户密码错误，请重新登录"
+                            sendAuthenticationNotification(failureCount >= 2
+                                    ? "连续两次登录失败，请打开翱翔助手完成统一认证"
+                                    : rejected ? "账号或翱翔门户密码错误，请重新登录"
                                     : "登录信息已失效，请打开翱翔助手重新登录");
                             finishAttempt();
                             return;
@@ -202,8 +218,21 @@ public class BackgroundSyncService extends Service {
                             navigationCooldownUntil[0] = System.currentTimeMillis() + 1500L;
                         } else if ("data".equals(phase) && "grades".equals(target)) {
                             if (gradeReadyAt[0] == 0L) gradeReadyAt[0] = System.currentTimeMillis() + 5000L;
-                            if (System.currentTimeMillis() >= gradeReadyAt[0]) {
-                                saveGrades(payload.optJSONArray("rows"));
+                            if (System.currentTimeMillis() >= gradeReadyAt[0]
+                                    && collectedGradeRows[0] == null) {
+                                JSONArray rows = payload.optJSONArray("rows");
+                                if (rows != null && rows.length() > 0) {
+                                    collectedGradeRows[0] = rows;
+                                    navigationCooldownUntil[0] = System.currentTimeMillis() + 2000L;
+                                    portraitStartedAt[0] = System.currentTimeMillis();
+                                    web.loadUrl(STUDENT_PORTRAIT);
+                                }
+                            }
+                        } else if ("portrait_data".equals(phase) && "grades".equals(target)
+                                && collectedGradeRows[0] != null) {
+                            double gpa = payload.optDouble("gpa", Double.NaN);
+                            if (!Double.isNaN(gpa)) {
+                                saveGrades(collectedGradeRows[0], gpa);
                                 return;
                             }
                         } else if ("schedule_data".equals(phase) && "schedule".equals(target)) {
@@ -221,26 +250,20 @@ public class BackgroundSyncService extends Service {
         handler.postDelayed(collectTask, 700L);
     }
 
-    private void saveGrades(JSONArray rows) {
+    private void saveGrades(JSONArray rows, double gpa) {
         if (rows == null) {
             finishAttempt();
             return;
         }
-        JSONArray updated = new JSONArray();
+        List<GradeRecord> records = new ArrayList<>();
         for (int i = 0; i < rows.length(); i++) {
             JSONArray row = rows.optJSONArray(i);
             if (row == null || row.length() < 4) continue;
-            JSONObject grade = new JSONObject();
-            try {
-                grade.put("course", row.optString(0));
-                grade.put("credits", parseNumber(row.optString(1), 0.0));
-                putNullableNumber(grade, "point", row.optString(2));
-                putNullableNumber(grade, "score", row.optString(3));
-                grade.put("category", "课程");
-                grade.put("detail", row.optString(4));
-                updated.put(grade);
-            } catch (Exception ignored) {}
+            records.add(GradeRecord.from(row));
         }
+        records = GradeRecord.keepHighest(records);
+        JSONArray updated = new JSONArray();
+        for (GradeRecord record : records) updated.put(record.json());
         if (updated.length() == 0) {
             finishAttempt();
             return;
@@ -249,7 +272,10 @@ public class BackgroundSyncService extends Service {
         List<String> changedCourses = previous != null && !previous.isEmpty()
                 ? UpdateDiff.changedNames(gradeDiffItems(previous), gradeDiffItems(updated.toString()))
                 : Collections.emptyList();
-        store.edit().putString("grades", updated.toString()).apply();
+        SharedPreferences.Editor editor = store.edit().putString("grades", updated.toString());
+        if (!Double.isNaN(gpa)) editor.putString(PORTRAIT_GPA, Double.toString(gpa));
+        editor.apply();
+        markCredentialsVerified();
         if (!changedCourses.isEmpty() && store.getBoolean("grade_update_notification_enabled", true)) {
             sendChangeNotification(true, changedCourses);
         }
@@ -312,6 +338,7 @@ public class BackgroundSyncService extends Service {
             if (!changedCourses.isEmpty() && store.getBoolean("schedule_update_notification_enabled", true)) {
                 sendChangeNotification(false, changedCourses);
             }
+            markCredentialsVerified();
         }
         finishAttempt();
     }
@@ -336,6 +363,7 @@ public class BackgroundSyncService extends Service {
             store.edit().putString("electricity_balance", Double.toString(balance))
                     .putString("electricity_balance_source", ELECTRICITY_HOME).apply();
             updateElectricityAlert(balance);
+            markCredentialsVerified();
         }
         finishAttempt();
     }
@@ -435,6 +463,27 @@ public class BackgroundSyncService extends Service {
                 .setContentIntent(pending);
         NotificationManager manager = getSystemService(NotificationManager.class);
         if (manager != null) manager.notify(1006, builder.build());
+    }
+
+    private int recordCredentialFailure() {
+        int count = Math.min(2, store.getInt(CREDENTIAL_FAILURE_COUNT, 0) + 1);
+        SharedPreferences.Editor editor = store.edit()
+                .putInt(CREDENTIAL_FAILURE_COUNT, count)
+                .putBoolean("credentials_verified", false);
+        if (count >= 2) {
+            editor.putBoolean(INTERACTIVE_AUTH_REQUIRED, true)
+                    .putString(INTERACTIVE_AUTH_TARGET, target == null ? "validate" : target);
+        }
+        editor.apply();
+        return count;
+    }
+
+    private void markCredentialsVerified() {
+        store.edit().putBoolean("credentials_verified", true)
+                .putInt(CREDENTIAL_FAILURE_COUNT, 0)
+                .remove(INTERACTIVE_AUTH_REQUIRED)
+                .remove(INTERACTIVE_AUTH_TARGET)
+                .apply();
     }
 
     private void updateElectricityAlert(double balance) {

@@ -98,6 +98,9 @@
   const loginDocument = documents.find((doc) => doc.querySelector('input[type="password"]') ||
     (doc.querySelector("input") && /账号密码|密码登录|统一认证/.test(text(doc.body ? doc.body.innerText : ""))));
   if (loginDocument && !(mode === "electricity" && host === "yktapp.nwpu.edu.cn")) {
+    if (mode === "bootstrap") {
+      return JSON.stringify({ phase: "interactive_login", rows: [] });
+    }
     const loginBody = text(loginDocument.body ? loginDocument.body.innerText : "");
     const passwordTab = [...loginDocument.querySelectorAll("body *")].find((element) =>
       element.children.length === 0 && visible(element) && /^(账号密码|密码登录|User-Password)$/i.test(text(element.innerText)));
@@ -142,9 +145,14 @@
     return JSON.stringify({ phase: "credentials_required", rows: [] });
   }
 
-  if (mode === "validate" && host === "jwxt.nwpu.edu.cn" &&
-      !location.pathname.includes("sso-login")) {
-    return JSON.stringify({ phase: "credentials_valid", rows: [] });
+  if ((mode === "validate" || mode === "bootstrap") && host === "jwxt.nwpu.edu.cn") {
+    if (/^\/student\/home\/?$/.test(location.pathname)) {
+      return JSON.stringify({ phase: "credentials_valid", rows: [] });
+    }
+    if (!location.pathname.includes("sso-login") && allowNavigation) {
+      location.replace(location.origin + "/student/home");
+      return JSON.stringify({ phase: "clicked", clicked: "education_home" });
+    }
   }
 
   if ((mode === "grades" || mode === "schedule") && host === "jwxt.nwpu.edu.cn") {
@@ -237,6 +245,76 @@
     }
 
     return JSON.stringify({ phase: "waiting", body: body.slice(0, 1000), rows: [] });
+  }
+
+  const onPortraitPage = host === "jwxt.nwpu.edu.cn" && documents.some((doc) =>
+    doc.location && doc.location.pathname.includes("/for-std/student-portrait"));
+  if (mode === "grades" && onPortraitPage) {
+    const parseGpaNumber = (value) => {
+      const match = String(value == null ? "" : value).match(/(?:^|[^\d])(\d(?:\.\d{1,4})?)(?:[^\d]|$)/);
+      if (!match) return null;
+      const parsed = Number.parseFloat(match[1]);
+      return Number.isFinite(parsed) && parsed >= 0 && parsed <= 5 ? parsed : null;
+    };
+    for (const doc of documents) {
+      const scoreItems = [...doc.querySelectorAll(".myScore .score-item, .myScore .score-info, .score-content > li")];
+      for (const item of scoreItems) {
+        const compact = text(item.innerText || item.textContent);
+        const match = compact.match(/(\d(?:\.\d{1,4})?)\s*个人\s*GPA/i);
+        const gpa = match ? parseGpaNumber(match[1]) : null;
+        if (gpa !== null) return JSON.stringify({ phase: "portrait_data", gpa });
+      }
+    }
+
+    const gpaLabel = /(?:累计|总)?平均(?:学分)?绩点|GPA/i;
+    for (const doc of documents) {
+      const leaves = [...doc.querySelectorAll("body *")].filter((element) =>
+        element.children.length === 0 && gpaLabel.test(text(element.innerText || element.textContent)));
+      for (const leaf of leaves) {
+        const own = text(leaf.innerText || leaf.textContent);
+        const next = text(leaf.nextElementSibling &&
+          (leaf.nextElementSibling.innerText || leaf.nextElementSibling.textContent));
+        const parent = text(leaf.parentElement &&
+          (leaf.parentElement.innerText || leaf.parentElement.textContent));
+        const explicit = [own, own + " " + next, parent];
+        for (const value of explicit) {
+          const match = value.match(/(?:(?:累计|总)?平均(?:学分)?绩点|GPA)\s*[：:]?\s*(\d(?:\.\d{1,4})?)/i);
+          const gpa = match ? parseGpaNumber(match[1]) : null;
+          if (gpa !== null) return JSON.stringify({ phase: "portrait_data", gpa });
+        }
+        if (/^(?:(?:累计|总)?平均(?:学分)?绩点|GPA)$/i.test(own)) {
+          const gpa = parseGpaNumber(next);
+          if (gpa !== null) return JSON.stringify({ phase: "portrait_data", gpa });
+        }
+      }
+    }
+
+    const app = document.querySelector("#app");
+    const rootVue = app && app.__vue__;
+    const queue = rootVue ? [{ value: rootVue.$data, depth: 0 }] : [];
+    const visited = new Set();
+    const gpaKey = /^(?:gpa|avgGpa|averageGpa|gradePointAverage|averageGradePoint|平均(?:学分)?绩点)$/i;
+    while (queue.length && visited.size < 250) {
+      const current = queue.shift();
+      const value = current.value;
+      if (!value || typeof value !== "object" || visited.has(value) || current.depth > 5 ||
+          (typeof Node !== "undefined" && value instanceof Node)) continue;
+      visited.add(value);
+      let entries = [];
+      try {
+        entries = Object.entries(value);
+      } catch (ignored) {}
+      for (const [key, child] of entries) {
+        if (key.startsWith("$") || key.startsWith("_")) continue;
+        if (gpaKey.test(key)) {
+          const gpa = parseGpaNumber(child && typeof child === "object"
+            ? child.value || child.data || child.text : child);
+          if (gpa !== null) return JSON.stringify({ phase: "portrait_data", gpa });
+        }
+        if (child && typeof child === "object") queue.push({ value: child, depth: current.depth + 1 });
+      }
+    }
+    return JSON.stringify({ phase: "portrait_page", rows: [] });
   }
 
   const tables = documents.flatMap((doc) => [...doc.querySelectorAll("table")]).map((table) => {

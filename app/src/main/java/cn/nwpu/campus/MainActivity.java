@@ -84,6 +84,8 @@ import javax.crypto.spec.GCMParameterSpec;
 
 public class MainActivity extends Activity {
     private static final String EDUCATION_SSO = "https://jwxt.nwpu.edu.cn/student/sso-login";
+    private static final String STUDENT_PORTRAIT =
+            "https://jwxt.nwpu.edu.cn/student/for-std/student-portrait";
     private static final String ELECTRICITY_HOME = "https://yktapp.nwpu.edu.cn/plat/shouyeUser";
     private static final String ELECTRICITY_SSO = "https://yktapp.nwpu.edu.cn/berserker-auth/cas/login/supwisdom?targetUrl=https%3A%2F%2Fyktapp.nwpu.edu.cn%2Fplat";
     private static final String EXTRA_START_TAB = "start_tab";
@@ -92,10 +94,13 @@ public class MainActivity extends Activity {
     private static final String ELECTRICITY_CHANNEL = "electricity_alerts";
     private static final String AUTHENTICATION_CHANNEL = "authentication";
     private static final String CREDENTIAL_KEY = "campus_login_credentials";
+    private static final String CREDENTIAL_FAILURE_COUNT = "credential_failure_count";
+    private static final String INTERACTIVE_AUTH_REQUIRED = "interactive_auth_required";
+    private static final String INTERACTIVE_AUTH_TARGET = "interactive_auth_target";
+    private static final String PORTRAIT_GPA = "portrait_gpa";
+    private static final String STARTUP_TAB = "startup_tab";
     private static final String GITCODE_LATEST_RELEASE_API =
             "https://gitcode.com/api/v2/projects/10608171/releases/latest/tag";
-    private static final String GITCODE_RELEASE_PAGE =
-            "https://gitcode.com/lorcas/aoxiang-assistant/releases";
     private static final String USER_GROUP_NUMBER = "450804497";
     private static final int REQUEST_EXPORT_JSON = 11;
     private static final int REQUEST_IMPORT_JSON = 12;
@@ -107,6 +112,7 @@ public class MainActivity extends Activity {
     private static final String UNIT_MINUTES = "分钟";
     private static final String UNIT_HOURS = "小时";
     private static final String UNIT_DAYS = "天";
+    private static final long PORTRAIT_TIMEOUT_MS = 15_000L;
     private static final int SCHEDULE_SECTION_HEIGHT_DP = 48;
 
     private static volatile boolean activityAlive;
@@ -173,13 +179,16 @@ public class MainActivity extends Activity {
     private String scheduleIntervalUnit = UNIT_MINUTES;
     private String electricityIntervalUnit = UNIT_MINUTES;
     private String settingsPanel = "";
+    private String interactiveResumeTarget = "validate";
+    private boolean interactiveResumeAutomatic;
     private double electricityBalance = Double.NaN;
     private double electricityAlertThreshold = 20.0;
+    private double portraitGpa = Double.NaN;
 
     private Runnable automationTask;
     private Runnable scheduledUpdateTask;
 
-    private List<Grade> grades = new ArrayList<>();
+    private List<GradeRecord> grades = new ArrayList<>();
     private List<ScheduleModels.Semester> semesters = new ArrayList<>();
     private List<ScheduleModels.Course> courses = new ArrayList<>();
     private LocalDate scheduleMonthAnchor = LocalDate.now();
@@ -197,6 +206,7 @@ public class MainActivity extends Activity {
         darkMode = ScheduleStorage.loadDarkMode(store);
         autoCollectScript = loadAsset("auto_collect.js");
         grades = loadGrades();
+        portraitGpa = parseStoredDouble(PORTRAIT_GPA, Double.NaN);
         semesters = ScheduleStorage.loadSemesters(store);
         courses = ScheduleStorage.loadCourses(store);
         if (normalizeSemesterSectionTimes() | normalizeSemesterStartDates()) {
@@ -230,7 +240,7 @@ public class MainActivity extends Activity {
         applySystemBarInsets();
         buildShell();
         createNotificationChannel();
-        showTab(getIntent().getIntExtra(EXTRA_START_TAB, TAB_HOME));
+        showTab(startTabFromIntent(getIntent()));
         if (autoGradeEnabled || autoScheduleEnabled || electricityAlertEnabled) {
             requestNotificationPermission();
         }
@@ -245,20 +255,27 @@ public class MainActivity extends Activity {
     }
 
     @Override
+    protected void onResume() {
+        super.onResume();
+        if (!silentBoot && root != null) root.postDelayed(this::openRequiredInteractiveLogin, 250L);
+    }
+
+    @Override
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
         setIntent(intent);
         if (intent.hasExtra(EXTRA_START_TAB)) {
             cancelAutomation();
-            showTab(intent.getIntExtra(EXTRA_START_TAB, TAB_HOME));
+            showTab(validTab(intent.getIntExtra(EXTRA_START_TAB, TAB_HOME)));
             return;
         }
         if (Intent.ACTION_MAIN.equals(intent.getAction()) && intent.hasCategory(Intent.CATEGORY_LAUNCHER)) {
             silentBoot = false;
             cancelAutomation();
-            showTab(TAB_HOME);
+            showTab(startupTab());
             root.postDelayed(this::showUserGroupPrompt, 350L);
             root.postDelayed(this::checkForUpdates, 700L);
+            root.postDelayed(this::openRequiredInteractiveLogin, 250L);
         }
     }
 
@@ -305,6 +322,21 @@ public class MainActivity extends Activity {
         } else if (requestCode == REQUEST_IMPORT_JSON) {
             importBackupJson(uri);
         }
+    }
+
+    private int startTabFromIntent(Intent intent) {
+        if (intent != null && intent.hasExtra(EXTRA_START_TAB)) {
+            return validTab(intent.getIntExtra(EXTRA_START_TAB, TAB_HOME));
+        }
+        return startupTab();
+    }
+
+    private int startupTab() {
+        return validTab(store.getInt(STARTUP_TAB, TAB_HOME));
+    }
+
+    private int validTab(int tab) {
+        return tab >= TAB_HOME && tab <= TAB_SETTINGS ? tab : TAB_HOME;
     }
 
     private void buildShell() {
@@ -382,10 +414,15 @@ public class MainActivity extends Activity {
         }
         boolean reuseShell = !forceShellRebuild && previousTab == tab && mainShell != null
                 && content != null && mainShell.getParent() == root;
+        List<View> previousPages = new ArrayList<>();
+        if (reuseShell) {
+            for (int i = 0; i < content.getChildCount(); i++) {
+                previousPages.add(content.getChildAt(i));
+            }
+        }
         currentPage = null;
         currentTab = tab;
-        if (reuseShell) content.removeAllViews();
-        else buildShell();
+        if (!reuseShell) buildShell();
         switch (tab) {
             case TAB_SCHEDULE:
                 schedulePage();
@@ -402,6 +439,11 @@ public class MainActivity extends Activity {
             default:
                 homePage();
                 break;
+        }
+        for (View previousPage : previousPages) {
+            if (previousPage != currentPage && previousPage.getParent() == content) {
+                content.removeView(previousPage);
+            }
         }
         ScrollView renderedPage = currentPage;
         int scrollPosition = tabScrollPositions[tab];
@@ -444,7 +486,7 @@ public class MainActivity extends Activity {
 
         LinearLayout summary = card(panelColor());
         LinearLayout firstMetrics = new LinearLayout(this);
-        firstMetrics.addView(metric("GPA", grades.isEmpty() ? "--" : weightedPoint(), "绩点"), new LinearLayout.LayoutParams(0, dp(70), 1));
+        firstMetrics.addView(metric("GPA", portraitGpaText(), "绩点"), new LinearLayout.LayoutParams(0, dp(70), 1));
         firstMetrics.addView(metric("加权成绩", grades.isEmpty() ? "--" : weightedScore(), "分"), new LinearLayout.LayoutParams(0, dp(70), 1));
         summary.addView(firstMetrics);
         View divider = new View(this);
@@ -569,7 +611,7 @@ public class MainActivity extends Activity {
 
         LinearLayout summary = card(panelColor());
         summary.setOrientation(LinearLayout.HORIZONTAL);
-        summary.addView(metric("GPA", grades.isEmpty() ? "--" : weightedPoint(), "绩点"), new LinearLayout.LayoutParams(0, dp(76), 1));
+        summary.addView(metric("GPA", portraitGpaText(), "绩点"), new LinearLayout.LayoutParams(0, dp(76), 1));
         summary.addView(metric("加权成绩", grades.isEmpty() ? "--" : weightedScore(), "分"), new LinearLayout.LayoutParams(0, dp(76), 1));
         summary.addView(metric("课程", String.valueOf(grades.size()), "门"), new LinearLayout.LayoutParams(0, dp(76), 1));
         l.addView(summary);
@@ -580,7 +622,7 @@ public class MainActivity extends Activity {
         } else {
             LinearLayout gradeList = card(panelColor());
             gradeList.setPadding(dp(14), 0, dp(14), 0);
-            for (Grade grade : grades) gradeList.addView(gradeRow(grade));
+            for (GradeRecord grade : grades) gradeList.addView(gradeRow(grade));
             l.addView(gradeList);
         }
     }
@@ -753,9 +795,11 @@ public class MainActivity extends Activity {
         }
         addGap(account, 10);
         LinearLayout actions = new LinearLayout(this);
-        Button signIn = action(credentials[0].isEmpty() ? "登录" : "更换账号", true);
+        String signInText = credentials[0].isEmpty() ? "登录" : verified ? "更换账号" : "重新登录";
+        Button signIn = action(signInText, true);
         signIn.setOnClickListener(v -> {
-            if (credentials[0].isEmpty()) showCredentialsDialog(false);
+            if (credentials[0].isEmpty()) showCredentialsDialog(false, "validate", false, false);
+            else if (!verified) showCredentialsDialog(true, "validate", false, false);
             else switchAccount();
         });
         Button signOut = action("退出登录", false);
@@ -854,6 +898,32 @@ public class MainActivity extends Activity {
             showTab(TAB_SETTINGS, true);
         });
         appearance.addView(darkSwitch, new LinearLayout.LayoutParams(-1, dp(48)));
+        appearance.addView(settingDivider());
+        LinearLayout startupRow = new LinearLayout(this);
+        startupRow.setGravity(Gravity.CENTER_VERTICAL);
+        TextView startupTitle = label("打开 App 时进入", 14, textColor());
+        startupRow.addView(startupTitle, new LinearLayout.LayoutParams(0, dp(52), 1));
+        String[] startupLabels = {"首页", "课表", "成绩", "管理", "设置"};
+        Spinner startupPicker = new Spinner(this);
+        ArrayAdapter<String> startupAdapter = new ArrayAdapter<>(this,
+                android.R.layout.simple_spinner_dropdown_item, startupLabels);
+        startupPicker.setAdapter(startupAdapter);
+        startupPicker.setSelection(startupTab());
+        final boolean[] startupInitialized = {false};
+        startupPicker.setOnItemSelectedListener(new android.widget.AdapterView.OnItemSelectedListener() {
+            @Override public void onItemSelected(android.widget.AdapterView<?> parent, View view,
+                                                 int position, long id) {
+                if (!startupInitialized[0]) {
+                    startupInitialized[0] = true;
+                    return;
+                }
+                store.edit().putInt(STARTUP_TAB, validTab(position)).apply();
+            }
+
+            @Override public void onNothingSelected(android.widget.AdapterView<?> parent) {}
+        });
+        startupRow.addView(startupPicker, new LinearLayout.LayoutParams(dp(132), dp(48)));
+        appearance.addView(startupRow);
         appearance.addView(settingDivider());
         addGap(appearance, 10);
         LinearLayout swatchRow = new LinearLayout(this);
@@ -1510,7 +1580,7 @@ public class MainActivity extends Activity {
         shell.setOrientation(LinearLayout.VERTICAL);
         shell.setPadding(dp(22), dp(20), dp(22), dp(16));
         shell.setBackground(bg(panelColor(), 16));
-        applyRoundedOutline(shell, 16, 10);
+        applyRoundedOutline(shell, 16, 0);
 
         TextView eyebrow = label(eyebrowText, 11, primaryColor());
         eyebrow.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
@@ -1557,6 +1627,7 @@ public class MainActivity extends Activity {
         int dialogHeight = Math.min(height - dp(96), preferredHeight);
         window.setGravity(Gravity.CENTER);
         window.setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(Color.TRANSPARENT));
+        window.getDecorView().setElevation(0f);
         window.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
         WindowManager.LayoutParams params = window.getAttributes();
         params.width = dialogWidth;
@@ -1601,6 +1672,14 @@ public class MainActivity extends Activity {
     }
 
     private void showCredentialsDialog(boolean invalid) {
+        String resumeTarget = automationWeb != null && !automationTarget.isEmpty()
+                && !"validate".equals(automationTarget) ? automationTarget : "validate";
+        boolean resumeInBackground = initialSyncInProgress || automaticRun;
+        showCredentialsDialog(invalid, resumeTarget, resumeInBackground, false);
+    }
+
+    private void showCredentialsDialog(boolean invalid, String resumeTarget,
+                                       boolean resumeInBackground, boolean afterInteractiveLogin) {
         if (loginPromptVisible) return;
         loginPromptVisible = true;
         bringAppToFront();
@@ -1620,17 +1699,17 @@ public class MainActivity extends Activity {
         password.setHint("翱翔门户密码");
         password.setSingleLine(true);
         password.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
-        password.setText(invalid ? "" : saved[1]);
+        password.setText(invalid || afterInteractiveLogin ? "" : saved[1]);
         styleDialogInput(password);
         form.addView(password, new LinearLayout.LayoutParams(-1, dp(58)));
         loginDialog = new Dialog(this);
         Dialog dialog = loginDialog;
-        String resumeTarget = automationWeb != null && !automationTarget.isEmpty()
-                && !"validate".equals(automationTarget) ? automationTarget : "validate";
-        boolean resumeInBackground = initialSyncInProgress || automaticRun;
-        showLoginActionPanel(dialog, "账号", "登录翱翔门户",
-                invalid ? "账号或翱翔门户密码错误，请重新输入" : "保存前会先验证账号和密码",
-                form, "登录", () -> {
+        String heading = afterInteractiveLogin ? "保存账号密码" : "登录翱翔门户";
+        String subtitle = afterInteractiveLogin
+                ? "统一认证已通过，请保存账号和翱翔门户密码"
+                : invalid ? "账号或翱翔门户密码错误，请重新输入" : "保存前会先验证账号和密码";
+        showLoginActionPanel(dialog, "账号", heading, subtitle,
+                form, afterInteractiveLogin ? "保存并继续" : "登录", () -> {
                 String account = username.getText().toString().trim();
                 String secret = password.getText().toString();
                 if (account.isEmpty() || secret.isEmpty()) {
@@ -1638,9 +1717,12 @@ public class MainActivity extends Activity {
                     return;
                 }
                 if (!saveCredentials(account, secret)) return;
+                store.edit().remove(INTERACTIVE_AUTH_REQUIRED)
+                        .remove(INTERACTIVE_AUTH_TARGET).apply();
                 pendingSmsCode = "";
                 loginPromptVisible = false;
                 loginDialog.dismiss();
+                refreshAccountPageIfVisible();
                 stopBackgroundService();
                 CookieManager cookies = CookieManager.getInstance();
                 cookies.removeAllCookies(ignored -> runOnUiThread(() -> {
@@ -1652,6 +1734,43 @@ public class MainActivity extends Activity {
             cancelInitialSync();
             if (automationWeb != null) cancelAutomation();
         });
+    }
+
+    private void beginInteractiveLogin(String resumeTarget, boolean resumeAutomatic) {
+        if ("bootstrap".equals(automationTarget) || loginPromptVisible) return;
+        interactiveResumeTarget = validAutomationTarget(resumeTarget);
+        interactiveResumeAutomatic = resumeAutomatic;
+        store.edit()
+                .putBoolean(INTERACTIVE_AUTH_REQUIRED, true)
+                .putString(INTERACTIVE_AUTH_TARGET, interactiveResumeTarget)
+                .putBoolean("credentials_verified", false)
+                .apply();
+        cancelScheduledUpdates();
+        stopBackgroundService();
+        CookieManager cookies = CookieManager.getInstance();
+        cookies.removeAllCookies(ignored -> runOnUiThread(() -> {
+            cookies.flush();
+            if (!isFinishing()) openPortal("bootstrap", false);
+        }));
+    }
+
+    private void openRequiredInteractiveLogin() {
+        if (!store.getBoolean(INTERACTIVE_AUTH_REQUIRED, false)
+                || loginPromptVisible || "bootstrap".equals(automationTarget)) return;
+        beginInteractiveLogin(store.getString(INTERACTIVE_AUTH_TARGET, "validate"), false);
+    }
+
+    private String validAutomationTarget(String target) {
+        return "grades".equals(target) || "schedule".equals(target) || "electricity".equals(target)
+                ? target : "validate";
+    }
+
+    private void handleInteractiveLoginPassed() {
+        store.edit().putInt(CREDENTIAL_FAILURE_COUNT, 0).apply();
+        String resumeTarget = interactiveResumeTarget;
+        boolean resumeAutomatic = interactiveResumeAutomatic || initialSyncInProgress;
+        cancelAutomation();
+        showCredentialsDialog(false, resumeTarget, resumeAutomatic, true);
     }
 
     private void showSmsDialog(boolean invalid, Runnable submittedAction) {
@@ -1692,7 +1811,7 @@ public class MainActivity extends Activity {
         shell.setOrientation(LinearLayout.VERTICAL);
         shell.setPadding(dp(22), dp(20), dp(22), dp(16));
         shell.setBackground(bg(panelColor(), 16));
-        applyRoundedOutline(shell, 16, 10);
+        applyRoundedOutline(shell, 16, 0);
 
         TextView eyebrow = label(eyebrowText, 11, primaryColor());
         eyebrow.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
@@ -1759,12 +1878,16 @@ public class MainActivity extends Activity {
 
     @SuppressLint("SetJavaScriptEnabled")
     private void openPortal(String target, boolean automatic) {
+        if (!"bootstrap".equals(target) && !hasSavedCredentials()) {
+            if (!automatic) showCredentialsDialog(false, validAutomationTarget(target), false, false);
+            return;
+        }
         if (deferElectricitySyncIfSettling(target, automatic)) return;
         cancelScheduledUpdates();
         cancelAutomation();
         automationTarget = target;
         automaticRun = automatic;
-        boolean hideBrowser = true;
+        boolean hideBrowser = !"bootstrap".equals(target);
 
         FrameLayout overlay = new FrameLayout(this);
         overlay.setBackgroundColor(backgroundColor());
@@ -1785,8 +1908,9 @@ public class MainActivity extends Activity {
         bar.addView(back, new LinearLayout.LayoutParams(dp(40), dp(52)));
         LinearLayout titles = new LinearLayout(this);
         titles.setOrientation(LinearLayout.VERTICAL);
-        String targetLabel = automationLabel(target);
-        String actionLabel = "validate".equals(target) ? "验证" : "schedule".equals(target) ? "导入" : "更新";
+        String targetLabel = "bootstrap".equals(target) ? "统一认证" : automationLabel(target);
+        String actionLabel = "bootstrap".equals(target) ? "" : "validate".equals(target) ? "验证"
+                : "schedule".equals(target) ? "导入" : "更新";
         TextView heading = label(actionLabel + targetLabel, 16, textColor());
         heading.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
         TextView status = label("正在登录…", 11, mutedColor());
@@ -1873,7 +1997,9 @@ public class MainActivity extends Activity {
         final int generation = ++automationGeneration;
         final int[] attempts = {0};
         final long[] gradeReadyAt = {0};
+        final long[] portraitStartedAt = {0};
         final long[] navigationCooldownUntil = {0};
+        final JSONArray[] collectedGradeRows = {null};
         final boolean[] credentialsSubmitted = {false};
         final boolean[] smsSubmitted = {false};
         final String target = automationTarget;
@@ -1882,6 +2008,11 @@ public class MainActivity extends Activity {
             @Override
             public void run() {
                 if (generation != automationGeneration || web.getParent() == null) return;
+                if (collectedGradeRows[0] != null && portraitStartedAt[0] > 0L
+                        && System.currentTimeMillis() - portraitStartedAt[0] >= PORTRAIT_TIMEOUT_MS) {
+                    handleCollectedGrades(collectedGradeRows[0], portraitGpa, false);
+                    return;
+                }
                 if (++attempts[0] > 180) {
                     boolean wasAutomatic = automaticRun;
                     if (!wasAutomatic) Toast.makeText(MainActivity.this, "自动采集超时，请稍后重试", Toast.LENGTH_LONG).show();
@@ -1904,7 +2035,8 @@ public class MainActivity extends Activity {
                 script = script.replace("__USERNAME__", JSONObject.quote(credentials[0]))
                         .replace("__PASSWORD__", JSONObject.quote(credentials[1]))
                         .replace("__SMS_CODE__", JSONObject.quote(pendingSmsCode))
-                        .replace("__CAN_AUTOFILL__", Boolean.toString(!credentialsSubmitted[0] && !credentials[0].isEmpty() && !credentials[1].isEmpty()))
+                        .replace("__CAN_AUTOFILL__", Boolean.toString(!"bootstrap".equals(target)
+                                && !credentialsSubmitted[0] && !credentials[0].isEmpty() && !credentials[1].isEmpty()))
                         .replace("__CAN_FILL_SMS__", Boolean.toString(!smsSubmitted[0] && !pendingSmsCode.isEmpty()));
                 web.evaluateJavascript(script, result -> {
                     if (generation != automationGeneration) return;
@@ -1912,9 +2044,26 @@ public class MainActivity extends Activity {
                         String raw = new JSONArray("[" + result + "]").getString(0);
                         JSONObject payload = new JSONObject(raw);
                         String phase = payload.optString("phase");
+                        if ("bootstrap".equals(target)) {
+                            if ("credentials_valid".equals(phase)) {
+                                handleInteractiveLoginPassed();
+                                return;
+                            }
+                            status.setText("请在统一认证页面完成登录");
+                            if (generation == automationGeneration) automationHandler.postDelayed(this, 1000);
+                            return;
+                        }
                         if ("credentials_required".equals(phase) || "credentials_error".equals(phase)) {
                             boolean rejected = "credentials_error".equals(phase) || credentialsSubmitted[0];
                             store.edit().putBoolean("credentials_verified", false).apply();
+                            int failureCount = rejected ? recordCredentialFailure() : 0;
+                            if (failureCount >= 2) {
+                                status.setText("需要重新通过统一认证");
+                                Toast.makeText(MainActivity.this,
+                                        "连续两次登录失败，请先完成统一认证", Toast.LENGTH_LONG).show();
+                                beginInteractiveLogin(target, automaticRun || initialSyncInProgress);
+                                return;
+                            }
                             if (automaticRun && !initialSyncInProgress) {
                                 sendAuthenticationNotification(rejected
                                         ? "账号或翱翔门户密码错误，请重新登录"
@@ -1969,14 +2118,26 @@ public class MainActivity extends Activity {
                             return;
                         } else if ("data".equals(phase) && "grades".equals(target)) {
                             JSONArray rows = payload.optJSONArray("rows");
-                            if (rows != null) {
+                            if (rows != null && collectedGradeRows[0] == null) {
                                 if (gradeReadyAt[0] == 0) gradeReadyAt[0] = System.currentTimeMillis() + 5000L;
                                 if (System.currentTimeMillis() < gradeReadyAt[0]) {
                                     status.setText("正在读取数据…");
                                 } else if (rows.length() > 0) {
-                                    handleCollectedGrades(rows);
-                                    return;
+                                    collectedGradeRows[0] = rows;
+                                    navigationCooldownUntil[0] = System.currentTimeMillis() + 2000L;
+                                    portraitStartedAt[0] = System.currentTimeMillis();
+                                    status.setText("正在读取学生画像 GPA…");
+                                    web.loadUrl(STUDENT_PORTRAIT);
                                 }
+                            }
+                        } else if ("portrait_page".equals(phase) && "grades".equals(target)) {
+                            status.setText("正在读取学生画像 GPA…");
+                        } else if ("portrait_data".equals(phase) && "grades".equals(target)
+                                && collectedGradeRows[0] != null) {
+                            double gpa = payload.optDouble("gpa", Double.NaN);
+                            if (!Double.isNaN(gpa)) {
+                                handleCollectedGrades(collectedGradeRows[0], gpa, true);
+                                return;
                             }
                         } else if ("schedule_data".equals(phase) && "schedule".equals(target)) {
                             JSONObject schedulePayload = payload.optJSONObject("payload");
@@ -2001,13 +2162,14 @@ public class MainActivity extends Activity {
         automationHandler.postDelayed(automationTask, 700);
     }
 
-    private void handleCollectedGrades(JSONArray array) {
+    private void handleCollectedGrades(JSONArray array, double gpa, boolean gpaUpdated) {
         if (array == null) return;
-        List<Grade> out = new ArrayList<>();
+        List<GradeRecord> out = new ArrayList<>();
         for (int i = 0; i < array.length(); i++) {
             JSONArray row = array.optJSONArray(i);
-            if (row != null && row.length() >= 4) out.add(Grade.from(row));
+            if (row != null && row.length() >= 4) out.add(GradeRecord.from(row));
         }
+        out = GradeRecord.keepHighest(out);
         if (out.isEmpty()) return;
         boolean first = grades.isEmpty();
         List<String> changedCourses = first ? Collections.emptyList()
@@ -2015,7 +2177,9 @@ public class MainActivity extends Activity {
         boolean wasAutomatic = automaticRun;
         markCredentialsVerified();
         grades = out;
+        portraitGpa = gpa;
         saveGrades();
+        refreshDataPage("grades");
         cancelAutomation();
         if (initialSyncInProgress) {
             finishInitialSyncStep("grades", true);
@@ -2026,9 +2190,10 @@ public class MainActivity extends Activity {
                 sendGradeNotification(changedCourses);
             }
         } else {
-            Toast.makeText(this, "已更新 " + out.size() + " 门成绩", Toast.LENGTH_SHORT).show();
+            String message = "已更新 " + out.size() + " 门成绩";
+            if (!gpaUpdated) message += "，GPA 读取失败，已保留原数据";
+            Toast.makeText(this, message, gpaUpdated ? Toast.LENGTH_SHORT : Toast.LENGTH_LONG).show();
         }
-        if (!wasAutomatic || currentTab == TAB_HOME || currentTab == TAB_GRADES) showTab(currentTab);
         recordAutomaticAttempt("grades", wasAutomatic);
     }
 
@@ -2101,9 +2266,10 @@ public class MainActivity extends Activity {
                 : Collections.emptyList();
         if (!firstImportedId.isEmpty()) selectedSemesterId = firstImportedId;
         saveScheduleState();
-        cancelAutomation();
         scheduleShowMonth = false;
         scheduleWeekOffset = 0;
+        refreshDataPage("schedule");
+        cancelAutomation();
         if (initialSyncInProgress) {
             finishInitialSyncStep("schedule", true);
             return;
@@ -2112,9 +2278,7 @@ public class MainActivity extends Activity {
             if (scheduleUpdateNotificationEnabled && !changedCourses.isEmpty()) {
                 sendScheduleNotification(changedCourses);
             }
-            if (currentTab == TAB_HOME || currentTab == TAB_SCHEDULE) showTab(currentTab);
         } else {
-            showTab(TAB_SCHEDULE);
             Toast.makeText(this, "已导入 " + importedCount + " 门课程", Toast.LENGTH_LONG).show();
         }
         recordAutomaticAttempt("schedule", wasAutomatic);
@@ -2130,14 +2294,22 @@ public class MainActivity extends Activity {
                 .putString("electricity_balance_source", ELECTRICITY_HOME)
                 .apply();
         updateElectricityAlert(balance);
+        refreshDataPage("electricity");
         cancelAutomation();
         if (initialSyncInProgress) {
             finishInitialSyncStep("electricity", true);
             return;
         }
         if (!wasAutomatic) Toast.makeText(this, "剩余电费 " + scoreDf.format(balance) + " 元", Toast.LENGTH_LONG).show();
-        if (!wasAutomatic || currentTab == TAB_HOME || currentTab == TAB_SETTINGS) showTab(currentTab);
         recordAutomaticAttempt("electricity", wasAutomatic);
+    }
+
+    private void refreshDataPage(String target) {
+        boolean visible = currentTab == TAB_HOME
+                || ("grades".equals(target) && currentTab == TAB_GRADES)
+                || ("schedule".equals(target)
+                    && (currentTab == TAB_SCHEDULE || currentTab == TAB_MANAGE));
+        if (visible) showTab(currentTab);
     }
 
     private void handleCredentialsValidated() {
@@ -2155,9 +2327,35 @@ public class MainActivity extends Activity {
     }
 
     private void markCredentialsVerified() {
-        if (!store.getBoolean("credentials_verified", true)) {
-            store.edit().putBoolean("credentials_verified", true).apply();
+        boolean changed = !store.getBoolean("credentials_verified", true)
+                || store.getInt(CREDENTIAL_FAILURE_COUNT, 0) != 0
+                || store.getBoolean(INTERACTIVE_AUTH_REQUIRED, false);
+        store.edit().putBoolean("credentials_verified", true)
+                .putInt(CREDENTIAL_FAILURE_COUNT, 0)
+                .remove(INTERACTIVE_AUTH_REQUIRED)
+                .remove(INTERACTIVE_AUTH_TARGET)
+                .apply();
+        if (changed) refreshAccountPageIfVisible();
+    }
+
+    private int recordCredentialFailure() {
+        int count = Math.min(2, store.getInt(CREDENTIAL_FAILURE_COUNT, 0) + 1);
+        SharedPreferences.Editor editor = store.edit()
+                .putInt(CREDENTIAL_FAILURE_COUNT, count)
+                .putBoolean("credentials_verified", false);
+        if (count >= 2) {
+            editor.putBoolean(INTERACTIVE_AUTH_REQUIRED, true)
+                    .putString(INTERACTIVE_AUTH_TARGET, validAutomationTarget(automationTarget));
         }
+        editor.apply();
+        refreshAccountPageIfVisible();
+        return count;
+    }
+
+    private void refreshAccountPageIfVisible() {
+        if (currentTab != TAB_SETTINGS || !"account".equals(settingsPanel)) return;
+        tabScrollPositions[TAB_SETTINGS] = 0;
+        showTab(TAB_SETTINGS);
     }
 
     private void finishInitialSyncStep(String target, boolean success) {
@@ -2184,7 +2382,7 @@ public class MainActivity extends Activity {
         initialSyncInProgress = false;
         scheduleAllAutomaticUpdates(30_000L);
         syncBackgroundService();
-        showTab(currentTab);
+        if (currentTab >= TAB_HOME && currentTab <= TAB_MANAGE) showTab(currentTab);
         String message;
         if (initialSyncFailures.isEmpty()) {
             message = initialElectricityDeferred
@@ -2471,6 +2669,7 @@ public class MainActivity extends Activity {
         courses = new ArrayList<>();
         selectedSemesterId = "";
         electricityBalance = Double.NaN;
+        portraitGpa = Double.NaN;
         scheduleWeekOffset = 0;
         scheduleMonthAnchor = LocalDate.now();
         Arrays.fill(tabScrollPositions, 0);
@@ -2478,6 +2677,10 @@ public class MainActivity extends Activity {
                 .remove("login_credentials")
                 .remove("credentials_verified")
                 .remove("grades")
+                .remove(PORTRAIT_GPA)
+                .remove(CREDENTIAL_FAILURE_COUNT)
+                .remove(INTERACTIVE_AUTH_REQUIRED)
+                .remove(INTERACTIVE_AUTH_TARGET)
                 .remove(ScheduleStorage.KEY_SEMESTERS)
                 .remove(ScheduleStorage.KEY_COURSES)
                 .remove(ScheduleStorage.KEY_SELECTED_SEMESTER)
@@ -2499,13 +2702,15 @@ public class MainActivity extends Activity {
         cookies.removeAllCookies(null);
         cookies.flush();
         ScheduleWidgetUpdater.updateAll(this);
+        settingsPanel = "account";
+        tabScrollPositions[TAB_SETTINGS] = 0;
         showTab(TAB_SETTINGS);
         Toast.makeText(this, "已退出登录并清除成绩、课表和电费", Toast.LENGTH_SHORT).show();
     }
 
     private void switchAccount() {
         signOut();
-        root.postDelayed(() -> showCredentialsDialog(false), 250L);
+        root.postDelayed(() -> showCredentialsDialog(false, "validate", false, false), 250L);
     }
 
     private SecretKey credentialKey() throws Exception {
@@ -2531,6 +2736,8 @@ public class MainActivity extends Activity {
             store.edit()
                     .putString("login_credentials", payload)
                     .putBoolean("credentials_verified", false)
+                    .remove(INTERACTIVE_AUTH_REQUIRED)
+                    .remove(INTERACTIVE_AUTH_TARGET)
                     .apply();
             return true;
         } catch (Exception error) {
@@ -2894,7 +3101,8 @@ public class MainActivity extends Activity {
         showDecisionDialog("发现新版本", "翱翔助手 v" + release.version,
                 "当前版本 " + appVersionName(), release.notes,
                 "跳过此版本", () -> store.edit().putString("update_skipped_version", release.version).apply(),
-                "更新", () -> startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(GITCODE_RELEASE_PAGE))), dp(460));
+                "更新", () -> startActivity(new Intent(Intent.ACTION_VIEW,
+                        Uri.parse(VersionUtils.gitCodeApkDownloadUrl(release.version)))), dp(460));
     }
 
     private void showDecisionDialog(String eyebrowText, String heading, String subtitle, String bodyText,
@@ -2907,7 +3115,7 @@ public class MainActivity extends Activity {
         shell.setOrientation(LinearLayout.VERTICAL);
         shell.setPadding(dp(22), dp(20), dp(22), dp(16));
         shell.setBackground(bg(panelColor(), 16));
-        applyRoundedOutline(shell, 16, 10);
+        applyRoundedOutline(shell, 16, 0);
 
         TextView eyebrow = label(eyebrowText, 11, primaryColor());
         eyebrow.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
@@ -3121,7 +3329,7 @@ public class MainActivity extends Activity {
         return t;
     }
 
-    private LinearLayout gradeRow(Grade grade) {
+    private LinearLayout gradeRow(GradeRecord grade) {
         LinearLayout row = new LinearLayout(this);
         row.setBaselineAligned(false);
         row.setGravity(Gravity.CENTER_VERTICAL);
@@ -3661,36 +3869,31 @@ public class MainActivity extends Activity {
     }
 
     private String weightedScore() {
-        return weighted(false);
-    }
-
-    private String weightedPoint() {
-        return weighted(true);
-    }
-
-    private String weighted(boolean usePoint) {
         double[] credits = new double[grades.size()];
         double[] values = new double[grades.size()];
         for (int i = 0; i < grades.size(); i++) {
-            Grade grade = grades.get(i);
+            GradeRecord grade = grades.get(i);
             credits[i] = grade.credits;
-            Double value = usePoint ? grade.point : grade.score;
-            values[i] = value == null ? Double.NaN : value;
+            values[i] = grade.score == null ? Double.NaN : grade.score;
         }
         double result = GradeMath.weightedAverage(credits, values);
-        return Double.isNaN(result) ? "--" : (usePoint ? pointDf : scoreDf).format(result);
+        return Double.isNaN(result) ? "--" : scoreDf.format(result);
     }
 
-    private String gradeSignature(List<Grade> values) {
+    private String portraitGpaText() {
+        return Double.isNaN(portraitGpa) ? "--" : pointDf.format(portraitGpa);
+    }
+
+    private String gradeSignature(List<GradeRecord> values) {
         List<String> rows = new ArrayList<>();
-        for (Grade g : values) rows.add(g.course + "|" + g.credits + "|" + g.point + "|" + g.score + "|" + g.detail);
+        for (GradeRecord g : values) rows.add(g.course + "|" + g.credits + "|" + g.point + "|" + g.score + "|" + g.detail);
         Collections.sort(rows);
         return rows.toString();
     }
 
-    private List<UpdateDiff.Item> gradeDiffItems(List<Grade> values) {
+    private List<UpdateDiff.Item> gradeDiffItems(List<GradeRecord> values) {
         List<UpdateDiff.Item> items = new ArrayList<>();
-        for (Grade grade : values) {
+        for (GradeRecord grade : values) {
             String signature = grade.course + "|" + grade.credits + "|" + grade.point + "|"
                     + grade.score + "|" + grade.detail;
             items.add(new UpdateDiff.Item(grade.course, grade.course, signature));
@@ -3712,14 +3915,14 @@ public class MainActivity extends Activity {
         return rows.toString();
     }
 
-    private List<Grade> loadGrades() {
+    private List<GradeRecord> loadGrades() {
         try {
             String raw = store.getString("grades", "");
             if (raw == null || raw.isEmpty()) return new ArrayList<>();
             JSONArray array = new JSONArray(raw);
-            List<Grade> out = new ArrayList<>();
-            for (int i = 0; i < array.length(); i++) out.add(Grade.from(array.getJSONObject(i)));
-            return out;
+            List<GradeRecord> out = new ArrayList<>();
+            for (int i = 0; i < array.length(); i++) out.add(GradeRecord.from(array.getJSONObject(i)));
+            return GradeRecord.keepHighest(out);
         } catch (Exception ignored) {
             return new ArrayList<>();
         }
@@ -3728,8 +3931,11 @@ public class MainActivity extends Activity {
     private void saveGrades() {
         try {
             JSONArray array = new JSONArray();
-            for (Grade grade : grades) array.put(grade.json());
-            store.edit().putString("grades", array.toString()).apply();
+            for (GradeRecord grade : grades) array.put(grade.json());
+            SharedPreferences.Editor editor = store.edit().putString("grades", array.toString());
+            if (Double.isNaN(portraitGpa)) editor.remove(PORTRAIT_GPA);
+            else editor.putString(PORTRAIT_GPA, Double.toString(portraitGpa));
+            editor.apply();
         } catch (Exception ignored) {}
     }
 
@@ -3952,6 +4158,11 @@ public class MainActivity extends Activity {
                 && store.getBoolean("credentials_verified", true);
     }
 
+    private boolean hasSavedCredentials() {
+        String[] credentials = readCredentials();
+        return !credentials[0].isEmpty() && !credentials[1].isEmpty();
+    }
+
     private void bringAppToFront() {
         silentBoot = false;
         ActivityManager manager = (ActivityManager) getSystemService(ACTIVITY_SERVICE);
@@ -3992,64 +4203,4 @@ public class MainActivity extends Activity {
         }
     }
 
-    private static class Grade {
-        String course;
-        String category;
-        String detail;
-        double credits;
-        Double point;
-        Double score;
-
-        Grade(String course, double credits, Double point, Double score, String category, String detail) {
-            this.course = course;
-            this.credits = credits;
-            this.point = point;
-            this.score = score;
-            this.category = category;
-            this.detail = detail;
-        }
-
-        String pointText() {
-            return point == null ? "--" : String.format(Locale.US, "%.1f", point);
-        }
-
-        String scoreText() {
-            return score == null ? "--" : String.format(Locale.US, "%.0f", score);
-        }
-
-        JSONObject json() {
-            JSONObject o = new JSONObject();
-            try {
-                o.put("course", course).put("credits", credits).put("point", point == null ? JSONObject.NULL : point).put("score", score == null ? JSONObject.NULL : score).put("category", category).put("detail", detail);
-            } catch (Exception ignored) {}
-            return o;
-        }
-
-        static Grade from(JSONObject o) {
-            return new Grade(
-                    o.optString("course"),
-                    o.optDouble("credits", 0),
-                    o.isNull("point") ? null : o.optDouble("point"),
-                    o.isNull("score") ? null : o.optDouble("score"),
-                    o.optString("category", "必修"),
-                    o.optString("detail", "")
-            );
-        }
-
-        static Grade from(JSONArray c) {
-            String course = c.optString(0);
-            double credits = parse(c.optString(1));
-            double point = parse(c.optString(2));
-            double score = parse(c.optString(3));
-            return new Grade(course, credits, Double.isNaN(point) ? null : point, Double.isNaN(score) ? null : score, "课程", c.optString(4));
-        }
-
-        static double parse(String x) {
-            try {
-                return Double.parseDouble(x.replaceAll("[^0-9.]", ""));
-            } catch (Exception ignored) {
-                return Double.NaN;
-            }
-        }
-    }
 }

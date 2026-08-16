@@ -18,4 +18,11 @@ public class VersionUtilsTest {
         assertFalse(VersionUtils.isNewer("1.9.0", "1.9"));
         assertFalse(VersionUtils.isNewer("1.8.1", "1.9.0"));
     }
+
+    @Test public void buildsDirectGitCodeApkDownloadUrl() {
+        assertEquals("https://gitcode.com/lorcas/aoxiang-assistant/releases/download/"
+                        + "v1.9.1/aoxiang-assistant-v1.9.1.apk",
+                VersionUtils.gitCodeApkDownloadUrl("v1.9.1"));
+        assertEquals("", VersionUtils.gitCodeApkDownloadUrl("latest"));
+    }
 }
