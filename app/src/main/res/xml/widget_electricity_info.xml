@@ -2,6 +2,7 @@
     android:label="@string/widget_electricity_label"
     android:description="@string/widget_electricity_description"
     android:initialLayout="@layout/widget_electricity"
+    android:previewImage="@drawable/widget_preview_electricity"
     android:previewLayout="@layout/widget_electricity"
     android:minWidth="40dp"
     android:minHeight="40dp"

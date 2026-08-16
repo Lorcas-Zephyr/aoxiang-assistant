@@ -32,7 +32,6 @@ import java.nio.charset.StandardCharsets;
 import java.security.KeyStore;
 import java.text.DecimalFormat;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
 
 import javax.crypto.Cipher;
@@ -286,13 +285,13 @@ public class BackgroundSyncService extends Service {
             return;
         }
         String previous = store.getString("grades", "");
-        List<String> changedCourses = previous != null && !previous.isEmpty()
-                ? UpdateDiff.changedNames(gradeDiffItems(previous), gradeDiffItems(updated.toString()))
-                : Collections.emptyList();
+        List<String> changedCourses = UpdateDiff.changedNames(
+                gradeDiffItems(previous), gradeDiffItems(updated.toString()));
         SharedPreferences.Editor editor = store.edit().putString("grades", updated.toString());
         if (!Double.isNaN(gpa)) editor.putString(PORTRAIT_GPA, Double.toString(gpa));
         editor.apply();
         ScheduleWidgetUpdater.updateAll(this);
+        DataUpdateSignal.publish(this, DataUpdateSignal.TARGET_GRADES);
         markCredentialsVerified();
         if (!changedCourses.isEmpty() && store.getBoolean("grade_update_notification_enabled", true)) {
             sendChangeNotification(true, changedCourses);
@@ -308,7 +307,6 @@ public class BackgroundSyncService extends Service {
         ScheduleImport.ParsedData parsed = ScheduleImport.parsePayload(payload);
         List<ScheduleModels.Semester> semesters = ScheduleStorage.loadSemesters(store);
         List<ScheduleModels.Course> courses = ScheduleStorage.loadCourses(store);
-        boolean hadPrevious = !courses.isEmpty();
         List<UpdateDiff.Item> previousItems = UpdateDiff.scheduleItems(courses);
         int importedCount = 0;
         String firstImportedId = "";
@@ -347,13 +345,13 @@ public class BackgroundSyncService extends Service {
             }
         }
         if (importedCount > 0) {
-            List<String> changedCourses = hadPrevious
-                    ? UpdateDiff.changedNames(previousItems, UpdateDiff.scheduleItems(courses))
-                    : Collections.emptyList();
+            List<String> changedCourses = UpdateDiff.changedNames(
+                    previousItems, UpdateDiff.scheduleItems(courses));
             ScheduleStorage.saveSemesters(store, semesters);
             ScheduleStorage.saveCourses(store, courses);
             if (!firstImportedId.isEmpty()) ScheduleStorage.saveSelectedSemester(store, firstImportedId);
             ScheduleWidgetUpdater.updateAll(this);
+            DataUpdateSignal.publish(this, DataUpdateSignal.TARGET_SCHEDULE);
             if (!changedCourses.isEmpty() && store.getBoolean("schedule_update_notification_enabled", true)) {
                 sendChangeNotification(false, changedCourses);
             }
@@ -382,6 +380,7 @@ public class BackgroundSyncService extends Service {
             store.edit().putString("electricity_balance", Double.toString(balance))
                     .putString("electricity_balance_source", ELECTRICITY_HOME).apply();
             ScheduleWidgetUpdater.updateAll(this);
+            DataUpdateSignal.publish(this, DataUpdateSignal.TARGET_ELECTRICITY);
             updateElectricityAlert(balance);
             markCredentialsVerified();
         }

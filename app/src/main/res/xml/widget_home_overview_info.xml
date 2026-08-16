@@ -2,6 +2,7 @@
     android:label="@string/widget_home_overview_label"
     android:description="@string/widget_home_overview_description"
     android:initialLayout="@layout/widget_home_overview_compact"
+    android:previewImage="@drawable/widget_preview_home_overview_compact"
     android:previewLayout="@layout/widget_home_overview_compact"
     android:minWidth="110dp"
     android:minHeight="110dp"

@@ -27,6 +27,25 @@ public class UpdateDiffTest {
                 UpdateDiff.changedNames(before, after));
     }
 
+    @Test public void treatsAFullImportAfterLocalDeletionAsAddedCourses() {
+        List<UpdateDiff.Item> imported = Arrays.asList(
+                item("math", "高等数学", "周一1-2节"),
+                item("english", "大学英语", "周三3-4节"));
+
+        assertEquals(Arrays.asList("大学英语", "高等数学"),
+                UpdateDiff.changedNames(Collections.emptyList(), imported));
+    }
+
+    @Test public void formatsAFullGradeImportAfterLocalDeletionAsAnUpdate() {
+        List<String> changed = UpdateDiff.changedNames(Collections.emptyList(), Arrays.asList(
+                item("math", "高等数学", "90"),
+                item("english", "大学英语", "85"),
+                item("physics", "大学物理", "88")));
+
+        assertEquals("大学物理、大学英语等 3 门成绩有更新",
+                UpdateDiff.notificationText(changed, true));
+    }
+
     @Test public void formatsCourseSpecificNotifications() {
         assertEquals("离散数学成绩有更新",
                 UpdateDiff.notificationText(Collections.singletonList("离散数学"), true));

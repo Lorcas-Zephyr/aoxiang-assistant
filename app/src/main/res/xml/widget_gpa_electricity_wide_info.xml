@@ -2,6 +2,7 @@
     android:label="@string/widget_gpa_electricity_wide_label"
     android:description="@string/widget_gpa_electricity_description"
     android:initialLayout="@layout/widget_gpa_electricity_wide"
+    android:previewImage="@drawable/widget_preview_gpa_electricity_wide"
     android:previewLayout="@layout/widget_gpa_electricity_wide"
     android:minWidth="360dp"
     android:minHeight="40dp"

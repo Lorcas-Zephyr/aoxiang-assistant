@@ -9,8 +9,10 @@ import android.app.Dialog;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
+import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
@@ -184,6 +186,7 @@ public class MainActivity extends Activity {
     private boolean scheduleSwipeAnimating;
     private boolean initialSyncInProgress;
     private boolean initialElectricityDeferred;
+    private boolean dataUpdateReceiverRegistered;
     private final List<String> initialSyncTargets = new ArrayList<>();
     private final List<String> initialSyncFailures = new ArrayList<>();
     private String automationTarget = "";
@@ -201,6 +204,9 @@ public class MainActivity extends Activity {
     private double electricityBalance = Double.NaN;
     private double electricityAlertThreshold = 20.0;
     private double portraitGpa = Double.NaN;
+    private long gradesDataRevision;
+    private long scheduleDataRevision;
+    private long electricityDataRevision;
 
     private Runnable automationTask;
     private Runnable scheduledUpdateTask;
@@ -209,6 +215,13 @@ public class MainActivity extends Activity {
     private List<ScheduleModels.Semester> semesters = new ArrayList<>();
     private List<ScheduleModels.Course> courses = new ArrayList<>();
     private LocalDate scheduleMonthAnchor = LocalDate.now();
+
+    private final BroadcastReceiver dataUpdateReceiver = new BroadcastReceiver() {
+        @Override public void onReceive(Context context, Intent intent) {
+            if (!DataUpdateSignal.ACTION_DATA_UPDATED.equals(intent.getAction())) return;
+            handlePersistedDataUpdate(intent.getStringExtra(DataUpdateSignal.EXTRA_TARGET));
+        }
+    };
 
     private interface SemesterCallback {
         void onPick(ScheduleModels.Semester semester);
@@ -251,6 +264,7 @@ public class MainActivity extends Activity {
         electricityBalance = ELECTRICITY_HOME.equals(store.getString("electricity_balance_source", ""))
                 ? parseStoredDouble("electricity_balance", Double.NaN) : Double.NaN;
         electricityAlertThreshold = parseStoredDouble("electricity_alert_threshold", 20.0);
+        captureDataRevisions();
         silentBoot = getIntent().getBooleanExtra("silent_boot", false);
         ensureSelectedSemester();
         applyWindowTheme();
@@ -280,6 +294,8 @@ public class MainActivity extends Activity {
     protected void onStart() {
         super.onStart();
         activityVisible = true;
+        registerDataUpdateReceiver();
+        refreshChangedPersistedData();
         if (root != null) {
             scheduleAllAutomaticUpdates(500L);
             syncBackgroundService();
@@ -301,6 +317,7 @@ public class MainActivity extends Activity {
 
     @Override
     protected void onStop() {
+        unregisterDataUpdateReceiver();
         activityVisible = false;
         cancelScheduledUpdates();
         syncBackgroundService();
@@ -322,6 +339,7 @@ public class MainActivity extends Activity {
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
         setIntent(intent);
+        refreshChangedPersistedData();
         if (intent.hasExtra(EXTRA_START_TAB)) {
             cancelAutomation();
             showTab(validTab(intent.getIntExtra(EXTRA_START_TAB, TAB_HOME)));
@@ -339,11 +357,99 @@ public class MainActivity extends Activity {
 
     @Override
     protected void onDestroy() {
+        unregisterDataUpdateReceiver();
         cancelScheduledUpdates();
         cancelAutomation();
         if (informationDialog != null) informationDialog.dismiss();
         activityVisible = false;
         super.onDestroy();
+    }
+
+    @SuppressLint("UnspecifiedRegisterReceiverFlag")
+    private void registerDataUpdateReceiver() {
+        if (dataUpdateReceiverRegistered) return;
+        IntentFilter filter = new IntentFilter(DataUpdateSignal.ACTION_DATA_UPDATED);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(dataUpdateReceiver, filter, Context.RECEIVER_NOT_EXPORTED);
+        } else {
+            registerReceiver(dataUpdateReceiver, filter);
+        }
+        dataUpdateReceiverRegistered = true;
+    }
+
+    private void unregisterDataUpdateReceiver() {
+        if (!dataUpdateReceiverRegistered) return;
+        unregisterReceiver(dataUpdateReceiver);
+        dataUpdateReceiverRegistered = false;
+    }
+
+    private void captureDataRevisions() {
+        gradesDataRevision = DataUpdateSignal.revision(store, DataUpdateSignal.TARGET_GRADES);
+        scheduleDataRevision = DataUpdateSignal.revision(store, DataUpdateSignal.TARGET_SCHEDULE);
+        electricityDataRevision = DataUpdateSignal.revision(store, DataUpdateSignal.TARGET_ELECTRICITY);
+    }
+
+    private void refreshChangedPersistedData() {
+        long nextGradesRevision = DataUpdateSignal.revision(store, DataUpdateSignal.TARGET_GRADES);
+        long nextScheduleRevision = DataUpdateSignal.revision(store, DataUpdateSignal.TARGET_SCHEDULE);
+        long nextElectricityRevision = DataUpdateSignal.revision(store, DataUpdateSignal.TARGET_ELECTRICITY);
+        boolean gradesChanged = nextGradesRevision != gradesDataRevision;
+        boolean scheduleChanged = nextScheduleRevision != scheduleDataRevision;
+        boolean electricityChanged = nextElectricityRevision != electricityDataRevision;
+        if (!gradesChanged && !scheduleChanged && !electricityChanged) return;
+
+        gradesDataRevision = nextGradesRevision;
+        scheduleDataRevision = nextScheduleRevision;
+        electricityDataRevision = nextElectricityRevision;
+        if (gradesChanged) reloadPersistedData(DataUpdateSignal.TARGET_GRADES);
+        if (scheduleChanged) reloadPersistedData(DataUpdateSignal.TARGET_SCHEDULE);
+        if (electricityChanged) reloadPersistedData(DataUpdateSignal.TARGET_ELECTRICITY);
+
+        boolean visible = currentTab == TAB_HOME
+                || (gradesChanged && currentTab == TAB_GRADES)
+                || (scheduleChanged && (currentTab == TAB_SCHEDULE || currentTab == TAB_MANAGE));
+        if (visible && root != null) showTab(currentTab);
+    }
+
+    private void handlePersistedDataUpdate(String target) {
+        if (!DataUpdateSignal.isValidTarget(target)) return;
+        long revision = DataUpdateSignal.revision(store, target);
+        if (revision == dataRevision(target)) return;
+        setDataRevision(target, revision);
+        reloadPersistedData(target);
+        if (root != null) refreshDataPage(target);
+    }
+
+    private long dataRevision(String target) {
+        if (DataUpdateSignal.TARGET_GRADES.equals(target)) return gradesDataRevision;
+        if (DataUpdateSignal.TARGET_SCHEDULE.equals(target)) return scheduleDataRevision;
+        return electricityDataRevision;
+    }
+
+    private void setDataRevision(String target, long revision) {
+        if (DataUpdateSignal.TARGET_GRADES.equals(target)) gradesDataRevision = revision;
+        else if (DataUpdateSignal.TARGET_SCHEDULE.equals(target)) scheduleDataRevision = revision;
+        else electricityDataRevision = revision;
+    }
+
+    private void reloadPersistedData(String target) {
+        if (DataUpdateSignal.TARGET_GRADES.equals(target)) {
+            grades = loadGrades();
+            portraitGpa = parseStoredDouble(PORTRAIT_GPA, Double.NaN);
+            return;
+        }
+        if (DataUpdateSignal.TARGET_SCHEDULE.equals(target)) {
+            semesters = ScheduleStorage.loadSemesters(store);
+            courses = ScheduleStorage.loadCourses(store);
+            selectedSemesterId = ScheduleStorage.loadSelectedSemester(store);
+            if (normalizeSemesterSectionTimes() | normalizeSemesterStartDates()) {
+                ScheduleStorage.saveSemesters(store, semesters);
+            }
+            ensureSelectedSemester();
+            return;
+        }
+        electricityBalance = ELECTRICITY_HOME.equals(store.getString("electricity_balance_source", ""))
+                ? parseStoredDouble("electricity_balance", Double.NaN) : Double.NaN;
     }
 
     @Override
@@ -2379,9 +2485,8 @@ public class MainActivity extends Activity {
         }
         out = GradeRecord.keepHighest(out);
         if (out.isEmpty()) return;
-        boolean first = grades.isEmpty();
-        List<String> changedCourses = first ? Collections.emptyList()
-                : UpdateDiff.changedNames(gradeDiffItems(grades), gradeDiffItems(out));
+        List<String> changedCourses = UpdateDiff.changedNames(
+                gradeDiffItems(grades), gradeDiffItems(out));
         boolean wasAutomatic = automaticRun;
         markCredentialsVerified();
         grades = out;
@@ -2409,7 +2514,6 @@ public class MainActivity extends Activity {
         if (payload == null) return;
         boolean wasAutomatic = automaticRun;
         markCredentialsVerified();
-        boolean hadPreviousSchedule = !courses.isEmpty();
         List<UpdateDiff.Item> previousItems = UpdateDiff.scheduleItems(courses);
         ScheduleImport.ParsedData parsed = ScheduleImport.parsePayload(payload);
         int importedCount = 0;
@@ -2491,9 +2595,8 @@ public class MainActivity extends Activity {
 
         semesters = updatedSemesters;
         courses = updatedCourses;
-        List<String> changedCourses = hadPreviousSchedule
-                ? UpdateDiff.changedNames(previousItems, UpdateDiff.scheduleItems(courses))
-                : Collections.emptyList();
+        List<String> changedCourses = UpdateDiff.changedNames(
+                previousItems, UpdateDiff.scheduleItems(courses));
         if (!firstImportedId.isEmpty()) selectedSemesterId = firstImportedId;
         saveScheduleState();
         scheduleShowMonth = false;

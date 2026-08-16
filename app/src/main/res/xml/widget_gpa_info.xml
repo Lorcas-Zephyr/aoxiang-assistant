@@ -2,6 +2,7 @@
     android:label="@string/widget_gpa_label"
     android:description="@string/widget_gpa_description"
     android:initialLayout="@layout/widget_gpa"
+    android:previewImage="@drawable/widget_preview_gpa"
     android:previewLayout="@layout/widget_gpa"
     android:minWidth="40dp"
     android:minHeight="40dp"
