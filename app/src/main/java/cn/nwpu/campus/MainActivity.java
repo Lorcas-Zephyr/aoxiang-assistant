@@ -13,6 +13,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
+import android.graphics.Bitmap;
 import android.graphics.Color;
 import android.graphics.Outline;
 import android.graphics.Typeface;
@@ -100,10 +101,16 @@ public class MainActivity extends Activity {
     private static final String PORTRAIT_GPA = "portrait_gpa";
     private static final String STARTUP_TAB = "startup_tab";
     private static final String GITCODE_LATEST_RELEASE_API =
-            "https://gitcode.com/api/v2/projects/10608171/releases/latest/tag";
+            "https://gitcode.com/api/v5/repos/lorcas/aoxiang-assistant/releases/latest";
     private static final String USER_GROUP_NUMBER = "450804497";
     private static final int REQUEST_EXPORT_JSON = 11;
     private static final int REQUEST_IMPORT_JSON = 12;
+    private static final int REQUEST_EXACT_ALARM = 21;
+    private static final int REQUEST_BATTERY_OPTIMIZATION = 22;
+    private static final int REQUEST_AUTOSTART_SETTINGS = 23;
+    private static final String BACKGROUND_PERMISSION_PROMPT_SHOWN = "background_permission_prompt_shown";
+    private static final String BACKGROUND_PERMISSION_FLOW_STEP = "background_permission_flow_step";
+    private static final String AUTOSTART_SETTINGS_REQUESTED = "autostart_settings_requested";
     private static final int TAB_HOME = 0;
     private static final int TAB_SCHEDULE = 1;
     private static final int TAB_GRADES = 2;
@@ -115,15 +122,16 @@ public class MainActivity extends Activity {
     private static final long PORTRAIT_TIMEOUT_MS = 15_000L;
     private static final int SCHEDULE_SECTION_HEIGHT_DP = 48;
 
-    private static volatile boolean activityAlive;
+    private static volatile boolean activityVisible;
 
-    public static boolean isActivityAlive() {
-        return activityAlive;
+    public static boolean isActivityVisible() {
+        return activityVisible;
     }
 
     private final DecimalFormat scoreDf = new DecimalFormat("0.00");
     private final DecimalFormat pointDf = new DecimalFormat("0.000");
     private final Handler automationHandler = new Handler(Looper.getMainLooper());
+    private final UnifiedAuthTracker unifiedAuthTracker = new UnifiedAuthTracker();
     private final DateTimeFormatter monthDayFormatter = DateTimeFormatter.ofPattern("M/d", Locale.CHINA);
 
     private SharedPreferences store;
@@ -141,6 +149,12 @@ public class MainActivity extends Activity {
 
     private boolean loginPromptVisible;
     private boolean updateCheckRunning;
+    private boolean backgroundPermissionPromptPending;
+    private boolean backgroundPermissionActivityPending;
+    private TextView notificationPermissionStatusView;
+    private TextView exactAlarmPermissionStatusView;
+    private TextView batteryPermissionStatusView;
+    private TextView autostartPermissionStatusView;
     private boolean autoGradeEnabled;
     private boolean autoScheduleEnabled;
     private boolean autoElectricityEnabled;
@@ -148,6 +162,9 @@ public class MainActivity extends Activity {
     private boolean gradeUpdateNotificationEnabled;
     private boolean scheduleUpdateNotificationEnabled;
     private boolean bootAutoStart;
+    private boolean showElectricityCollectionWeb;
+    private boolean showGradeCollectionWeb;
+    private boolean showScheduleCollectionWeb;
     private boolean automaticRun;
     private boolean silentBoot;
     private boolean darkMode;
@@ -200,7 +217,6 @@ public class MainActivity extends Activity {
     @Override
     protected void onCreate(Bundle state) {
         super.onCreate(state);
-        activityAlive = true;
         store = getSharedPreferences("campus_private", MODE_PRIVATE);
         themeColor = ScheduleStorage.loadThemeColor(store);
         darkMode = ScheduleStorage.loadDarkMode(store);
@@ -220,6 +236,11 @@ public class MainActivity extends Activity {
         gradeUpdateNotificationEnabled = store.getBoolean("grade_update_notification_enabled", true);
         scheduleUpdateNotificationEnabled = store.getBoolean("schedule_update_notification_enabled", true);
         bootAutoStart = store.getBoolean("boot_auto_start", true);
+        boolean debugBuild = (getApplicationInfo().flags
+                & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0;
+        showElectricityCollectionWeb = store.getBoolean("show_electricity_collection_web", debugBuild);
+        showGradeCollectionWeb = store.getBoolean("show_grade_collection_web", debugBuild);
+        showScheduleCollectionWeb = store.getBoolean("show_schedule_collection_web", debugBuild);
         int legacyGradeSeconds = Math.max(60, store.getInt("grade_interval_seconds", 600));
         gradeIntervalValue = Math.max(1, store.getInt("grade_interval_value", (legacyGradeSeconds + 59) / 60));
         scheduleIntervalValue = Math.max(1, store.getInt("schedule_interval_value", 60));
@@ -246,6 +267,7 @@ public class MainActivity extends Activity {
         }
         scheduleAllAutomaticUpdates(1500);
         syncBackgroundService();
+        scheduleBackgroundPermissionPrompt(1600L);
         if (silentBoot) {
             root.postDelayed(() -> moveTaskToBack(true), 300);
         } else {
@@ -255,9 +277,44 @@ public class MainActivity extends Activity {
     }
 
     @Override
+    protected void onStart() {
+        super.onStart();
+        activityVisible = true;
+        if (root != null) {
+            scheduleAllAutomaticUpdates(500L);
+            syncBackgroundService();
+        }
+    }
+
+    @Override
     protected void onResume() {
         super.onResume();
         if (!silentBoot && root != null) root.postDelayed(this::openRequiredInteractiveLogin, 250L);
+        if (root != null && backgroundPermissionActivityPending) {
+            backgroundPermissionActivityPending = false;
+            root.postDelayed(this::continueBackgroundPermissionFlow, 350L);
+        } else if (root != null && store.getInt(BACKGROUND_PERMISSION_FLOW_STEP, 0) > 0) {
+            root.postDelayed(this::continueBackgroundPermissionFlow, 500L);
+        }
+    }
+
+    @Override
+    protected void onStop() {
+        activityVisible = false;
+        cancelScheduledUpdates();
+        syncBackgroundService();
+        super.onStop();
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == 7) {
+            refreshAutomaticUpdatePanelIfVisible();
+            if (store.getInt(BACKGROUND_PERMISSION_FLOW_STEP, 0) > 0) {
+                root.postDelayed(this::continueBackgroundPermissionFlow, 250L);
+            }
+        }
     }
 
     @Override
@@ -284,7 +341,7 @@ public class MainActivity extends Activity {
         cancelScheduledUpdates();
         cancelAutomation();
         if (informationDialog != null) informationDialog.dismiss();
-        activityAlive = false;
+        activityVisible = false;
         super.onDestroy();
     }
 
@@ -315,6 +372,12 @@ public class MainActivity extends Activity {
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == REQUEST_EXACT_ALARM || requestCode == REQUEST_BATTERY_OPTIMIZATION
+                || requestCode == REQUEST_AUTOSTART_SETTINGS) {
+            refreshAutomaticUpdatePanelIfVisible();
+            if (requestCode == REQUEST_EXACT_ALARM) syncBackgroundService();
+            return;
+        }
         if (resultCode != RESULT_OK || data == null || data.getData() == null) return;
         Uri uri = data.getData();
         if (requestCode == REQUEST_EXPORT_JSON) {
@@ -706,6 +769,10 @@ public class MainActivity extends Activity {
                 title = "自动更新";
                 subtitle = "后台同步频率与运行方式";
                 break;
+            case "manual_updates":
+                title = "手动更新";
+                subtitle = "采集过程中的网页显示";
+                break;
             case "notifications":
                 title = "通知";
                 subtitle = "数据变化时提醒";
@@ -735,6 +802,9 @@ public class MainActivity extends Activity {
             case "updates":
                 addUpdateSettings(l);
                 break;
+            case "manual_updates":
+                addManualUpdateSettings(l);
+                break;
             case "notifications":
                 addNotificationSettings(l);
                 break;
@@ -762,6 +832,7 @@ public class MainActivity extends Activity {
         sync.setPadding(dp(14), 0, dp(8), 0);
         addSettingNavigation(sync, "账号", accountSummary, "account", true);
         addSettingNavigation(sync, "自动更新", automaticUpdateSummary(), "updates", true);
+        addSettingNavigation(sync, "手动更新", manualUpdateSummary(), "manual_updates", true);
         addSettingNavigation(sync, "通知", notificationSummary(), "notifications", false);
         parent.addView(sync);
 
@@ -823,9 +894,84 @@ public class MainActivity extends Activity {
         bootSwitch.setOnCheckedChangeListener((button, checked) -> {
             bootAutoStart = checked;
             store.edit().putBoolean("boot_auto_start", checked).apply();
+            if (checked) scheduleBackgroundPermissionPrompt(250L);
         });
         runCard.addView(bootSwitch, new LinearLayout.LayoutParams(-1, dp(48)));
         parent.addView(runCard);
+
+        parent.addView(section("后台权限"));
+        LinearLayout permissionCard = card(panelColor());
+        addBackgroundPermissionRow(permissionCard, "通知",
+                hasNotificationPermission() ? "已授权" : "未授权，后台结果可能无法提醒",
+                this::requestNotificationPermission, true);
+        addBackgroundPermissionRow(permissionCard, "定时唤醒",
+                BackgroundPermissionUtils.canScheduleExactAlarms(this) ? "已授权" : "未授权，将使用延迟唤醒",
+                this::requestExactAlarmPermission, true);
+        addBackgroundPermissionRow(permissionCard, "后台运行",
+                BackgroundPermissionUtils.isIgnoringBatteryOptimizations(this) ? "已允许" : "受电池优化限制",
+                this::requestBatteryOptimizationPermission, true);
+        addBackgroundPermissionRow(permissionCard, "自启动与后台启动",
+                store.getBoolean(AUTOSTART_SETTINGS_REQUESTED, false)
+                        ? "已打开系统设置，请确认允许" : "需要在系统设置中允许",
+                this::requestAutostartSettings, false);
+        Button authorize = action("检查并授权", true);
+        authorize.setOnClickListener(v -> startBackgroundPermissionFlow());
+        LinearLayout.LayoutParams authorizeParams = new LinearLayout.LayoutParams(-1, dp(42));
+        authorizeParams.topMargin = dp(10);
+        permissionCard.addView(authorize, authorizeParams);
+        parent.addView(permissionCard);
+    }
+
+    private void addBackgroundPermissionRow(LinearLayout parent, String heading, String summary,
+                                            Runnable action, boolean divider) {
+        LinearLayout row = new LinearLayout(this);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        LinearLayout text = new LinearLayout(this);
+        text.setOrientation(LinearLayout.VERTICAL);
+        text.setGravity(Gravity.CENTER_VERTICAL);
+        TextView title = label(heading, 14, textColor());
+        title.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        text.addView(title);
+        TextView status = label(summary, 11, mutedColor());
+        text.addView(status);
+        if ("通知".equals(heading)) notificationPermissionStatusView = status;
+        else if ("定时唤醒".equals(heading)) exactAlarmPermissionStatusView = status;
+        else if ("后台运行".equals(heading)) batteryPermissionStatusView = status;
+        else if ("自启动与后台启动".equals(heading)) autostartPermissionStatusView = status;
+        row.addView(text, new LinearLayout.LayoutParams(0, dp(58), 1));
+        Button open = action("设置", false);
+        open.setOnClickListener(v -> action.run());
+        row.setOnClickListener(v -> action.run());
+        row.addView(open, new LinearLayout.LayoutParams(dp(76), dp(38)));
+        parent.addView(row);
+        if (divider) parent.addView(settingDivider());
+    }
+
+    private void addManualUpdateSettings(LinearLayout parent) {
+        LinearLayout browserCard = card(panelColor());
+        Switch electricityBrowser = settingSwitch("更新电费时显示网页", showElectricityCollectionWeb);
+        electricityBrowser.setOnCheckedChangeListener((button, checked) -> {
+            showElectricityCollectionWeb = checked;
+            store.edit().putBoolean("show_electricity_collection_web", checked).apply();
+        });
+        browserCard.addView(electricityBrowser, new LinearLayout.LayoutParams(-1, dp(48)));
+        browserCard.addView(settingDivider());
+
+        Switch gradeBrowser = settingSwitch("更新成绩时显示网页", showGradeCollectionWeb);
+        gradeBrowser.setOnCheckedChangeListener((button, checked) -> {
+            showGradeCollectionWeb = checked;
+            store.edit().putBoolean("show_grade_collection_web", checked).apply();
+        });
+        browserCard.addView(gradeBrowser, new LinearLayout.LayoutParams(-1, dp(48)));
+        browserCard.addView(settingDivider());
+
+        Switch scheduleBrowser = settingSwitch("更新课表时显示网页", showScheduleCollectionWeb);
+        scheduleBrowser.setOnCheckedChangeListener((button, checked) -> {
+            showScheduleCollectionWeb = checked;
+            store.edit().putBoolean("show_schedule_collection_web", checked).apply();
+        });
+        browserCard.addView(scheduleBrowser, new LinearLayout.LayoutParams(-1, dp(48)));
+        parent.addView(browserCard);
     }
 
     private void addNotificationSettings(LinearLayout parent) {
@@ -1887,7 +2033,9 @@ public class MainActivity extends Activity {
         cancelAutomation();
         automationTarget = target;
         automaticRun = automatic;
+        unifiedAuthTracker.reset();
         boolean hideBrowser = !"bootstrap".equals(target);
+        boolean showBrowser = !hideBrowser || !automatic && showCollectionWeb(target);
 
         FrameLayout overlay = new FrameLayout(this);
         overlay.setBackgroundColor(backgroundColor());
@@ -1915,14 +2063,14 @@ public class MainActivity extends Activity {
         heading.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
         TextView status = label("正在登录…", 11, mutedColor());
         titles.addView(heading);
-        if (!hideBrowser) titles.addView(status);
+        if (showBrowser) titles.addView(status);
         bar.addView(titles, new LinearLayout.LayoutParams(0, dp(52), 1));
         shell.addView(bar);
 
         ProgressBar progress = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
         shell.addView(progress, new LinearLayout.LayoutParams(-1, dp(3)));
 
-        if (hideBrowser) {
+        if (!showBrowser) {
             LinearLayout center = new LinearLayout(this);
             center.setOrientation(LinearLayout.VERTICAL);
             center.setGravity(Gravity.CENTER);
@@ -1962,7 +2110,7 @@ public class MainActivity extends Activity {
             }
         });
 
-        if (hideBrowser) {
+        if (!showBrowser) {
             if (!automatic) {
                 web.setAlpha(0f);
                 overlay.addView(shell, new FrameLayout.LayoutParams(-1, -1));
@@ -1999,6 +2147,7 @@ public class MainActivity extends Activity {
         final long[] gradeReadyAt = {0};
         final long[] portraitStartedAt = {0};
         final long[] navigationCooldownUntil = {0};
+        final long[] credentialsSubmittedAt = {0};
         final JSONArray[] collectedGradeRows = {null};
         final boolean[] credentialsSubmitted = {false};
         final boolean[] smsSubmitted = {false};
@@ -2030,7 +2179,8 @@ public class MainActivity extends Activity {
                 }
                 String script = autoCollectScript
                         .replace("__MODE__", target)
-                        .replace("__ALLOW_NAV__", Boolean.toString(System.currentTimeMillis() >= navigationCooldownUntil[0]));
+                        .replace("__ALLOW_NAV__", Boolean.toString(System.currentTimeMillis() >= navigationCooldownUntil[0]))
+                        .replace("__AUTH_EXITED__", Boolean.toString(unifiedAuthTracker.hasExited()));
                 String[] credentials = readCredentials();
                 script = script.replace("__USERNAME__", JSONObject.quote(credentials[0]))
                         .replace("__PASSWORD__", JSONObject.quote(credentials[1]))
@@ -2044,6 +2194,17 @@ public class MainActivity extends Activity {
                         String raw = new JSONArray("[" + result + "]").getString(0);
                         JSONObject payload = new JSONObject(raw);
                         String phase = payload.optString("phase");
+                        if ("credentials_pending".equals(phase)) {
+                            if (AuthenticationPolicy.shouldWaitForCredentialRedirect(
+                                    phase, credentialsSubmittedAt[0], System.currentTimeMillis())) {
+                                status.setText("正在验证账号…");
+                                if (generation == automationGeneration) {
+                                    automationHandler.postDelayed(this, 1000);
+                                }
+                                return;
+                            }
+                            phase = "credentials_required";
+                        }
                         if ("bootstrap".equals(target)) {
                             if ("credentials_valid".equals(phase)) {
                                 handleInteractiveLoginPassed();
@@ -2054,7 +2215,7 @@ public class MainActivity extends Activity {
                             return;
                         }
                         if ("credentials_required".equals(phase) || "credentials_error".equals(phase)) {
-                            boolean rejected = "credentials_error".equals(phase) || credentialsSubmitted[0];
+                            boolean rejected = AuthenticationPolicy.isExplicitCredentialError(phase);
                             store.edit().putBoolean("credentials_verified", false).apply();
                             int failureCount = rejected ? recordCredentialFailure() : 0;
                             if (failureCount >= 2) {
@@ -2071,7 +2232,6 @@ public class MainActivity extends Activity {
                                 cancelAutomaticAttempt(target);
                                 return;
                             }
-                            credentialsSubmitted[0] = true;
                             status.setText(rejected ? "账号或翱翔门户密码错误" : "需要教务账号");
                             if (!loginPromptVisible) {
                                 Toast.makeText(MainActivity.this, rejected
@@ -2081,6 +2241,7 @@ public class MainActivity extends Activity {
                             }
                         } else if ("credentials_submitting".equals(phase)) {
                             credentialsSubmitted[0] = true;
+                            credentialsSubmittedAt[0] = System.currentTimeMillis();
                             status.setText("正在登录…");
                         } else if ("sms_required".equals(phase)) {
                             if (automaticRun && !initialSyncInProgress) {
@@ -2113,6 +2274,17 @@ public class MainActivity extends Activity {
                             status.setText("正在读取数据…");
                         } else if ("waiting".equals(phase)) {
                             status.setText("正在读取数据…");
+                        } else if ("target_error".equals(phase) && "schedule".equals(target)) {
+                            if (initialSyncInProgress) {
+                                cancelAutomation();
+                                finishInitialSyncStep(target, false);
+                                return;
+                            }
+                            if (automaticRun) {
+                                cancelAutomaticAttempt(target);
+                                return;
+                            }
+                            status.setText("教务系统将课表页退回首页，请稍后重试");
                         } else if ("credentials_valid".equals(phase) && "validate".equals(target)) {
                             handleCredentialsValidated();
                             return;
@@ -2206,6 +2378,7 @@ public class MainActivity extends Activity {
         ScheduleImport.ParsedData parsed = ScheduleImport.parsePayload(payload);
         int importedCount = 0;
         String firstImportedId = "";
+        boolean importedEmptySchedule = false;
 
         List<ScheduleModels.Semester> updatedSemesters = new ArrayList<>(semesters);
         List<ScheduleModels.Course> updatedCourses = new ArrayList<>(courses);
@@ -2222,9 +2395,8 @@ public class MainActivity extends Activity {
                 semester.weekCount = imported.weekCount;
                 semester.sectionCount = imported.sectionCount;
                 semester.sectionTimes = imported.sectionTimes;
-                semester.startDate = normalizeSemesterStartDate(semester.startDate);
-                semester.endDate = LocalDate.parse(semester.startDate)
-                        .plusWeeks(Math.max(1, semester.weekCount)).minusDays(1).toString();
+                semester.startDate = imported.startDate;
+                semester.endDate = imported.endDate;
             } else {
                 semester = ScheduleImport.createImportedSemester(rawSemester, semesterCourses);
                 updatedSemesters.add(semester);
@@ -2245,7 +2417,29 @@ public class MainActivity extends Activity {
             }
         }
 
-        if (importedCount == 0) {
+        if (parsed.courses.isEmpty() && !parsed.semesters.isEmpty()) {
+            ScheduleImport.RawSemester rawSemester = parsed.semesters.get(0);
+            int semesterIndex = findSemesterIndexByName(updatedSemesters, rawSemester.name);
+            ScheduleModels.Semester semester;
+            if (semesterIndex >= 0) {
+                semester = updatedSemesters.get(semesterIndex);
+                ScheduleModels.Semester imported = ScheduleImport.createImportedSemester(rawSemester, new ArrayList<>());
+                semester.name = imported.name;
+                semester.weekCount = imported.weekCount;
+                semester.sectionCount = imported.sectionCount;
+                semester.sectionTimes = imported.sectionTimes;
+                semester.startDate = imported.startDate;
+                semester.endDate = imported.endDate;
+            } else {
+                semester = ScheduleImport.createImportedSemester(rawSemester, new ArrayList<>());
+                updatedSemesters.add(semester);
+            }
+            replaceCoursesForSemester(updatedCourses, semester.id, Collections.emptyList());
+            firstImportedId = semester.id;
+            importedEmptySchedule = true;
+        }
+
+        if (importedCount == 0 && !importedEmptySchedule) {
             cancelAutomation();
             if (initialSyncInProgress) {
                 finishInitialSyncStep("schedule", false);
@@ -2279,7 +2473,10 @@ public class MainActivity extends Activity {
                 sendScheduleNotification(changedCourses);
             }
         } else {
-            Toast.makeText(this, "已导入 " + importedCount + " 门课程", Toast.LENGTH_LONG).show();
+            String message = importedEmptySchedule
+                    ? "当前课表为空，已更新学期信息"
+                    : "已导入 " + importedCount + " 门课程";
+            Toast.makeText(this, message, Toast.LENGTH_LONG).show();
         }
         recordAutomaticAttempt("schedule", wasAutomatic);
     }
@@ -2335,7 +2532,10 @@ public class MainActivity extends Activity {
                 .remove(INTERACTIVE_AUTH_REQUIRED)
                 .remove(INTERACTIVE_AUTH_TARGET)
                 .apply();
-        if (changed) refreshAccountPageIfVisible();
+        if (changed) {
+            refreshAccountPageIfVisible();
+            scheduleBackgroundPermissionPrompt(700L);
+        }
     }
 
     private int recordCredentialFailure() {
@@ -2422,6 +2622,7 @@ public class MainActivity extends Activity {
         automationHost.setLayoutParams(new FrameLayout.LayoutParams(-1, -1));
         automationTarget = "";
         automaticRun = false;
+        unifiedAuthTracker.reset();
         pendingSmsCode = "";
     }
 
@@ -2592,11 +2793,20 @@ public class MainActivity extends Activity {
         boolean changed = false;
         for (ScheduleModels.Semester semester : semesters) {
             String start = normalizeSemesterStartDate(semester.startDate);
-            String end = LocalDate.parse(start)
-                    .plusWeeks(Math.max(1, semester.weekCount)).minusDays(1).toString();
-            if (!start.equals(semester.startDate) || !end.equals(semester.endDate)) {
+            String end = semester.endDate;
+            try {
+                if (!start.equals(semester.startDate)) throw new IllegalArgumentException();
+                if (LocalDate.parse(end).isBefore(LocalDate.parse(start))) throw new IllegalArgumentException();
+            } catch (Exception ignored) {
+                end = LocalDate.parse(start)
+                        .plusWeeks(Math.max(1, semester.weekCount)).minusDays(1).toString();
+            }
+            int weekCount = ScheduleUtils.weekCountForRange(LocalDate.parse(start), LocalDate.parse(end));
+            if (!start.equals(semester.startDate) || !end.equals(semester.endDate)
+                    || weekCount != semester.weekCount) {
                 semester.startDate = start;
                 semester.endDate = end;
+                semester.weekCount = weekCount;
                 changed = true;
             }
         }
@@ -2781,6 +2991,177 @@ public class MainActivity extends Activity {
     private void requestNotificationPermission() {
         if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission("android.permission.POST_NOTIFICATIONS") != PackageManager.PERMISSION_GRANTED) {
             requestPermissions(new String[]{"android.permission.POST_NOTIFICATIONS"}, 7);
+        } else {
+            refreshAutomaticUpdatePanelIfVisible();
+        }
+    }
+
+    private boolean hasNotificationPermission() {
+        return Build.VERSION.SDK_INT < 33
+                || checkSelfPermission("android.permission.POST_NOTIFICATIONS") == PackageManager.PERMISSION_GRANTED;
+    }
+
+    private boolean hasEnabledAutomaticUpdates() {
+        return autoGradeEnabled || autoScheduleEnabled || autoElectricityEnabled;
+    }
+
+    private boolean hasCoreBackgroundPermissions() {
+        return hasNotificationPermission()
+                && BackgroundPermissionUtils.canScheduleExactAlarms(this)
+                && BackgroundPermissionUtils.isIgnoringBatteryOptimizations(this);
+    }
+
+    private void scheduleBackgroundPermissionPrompt(long delayMillis) {
+        if (root == null || backgroundPermissionPromptPending) return;
+        backgroundPermissionPromptPending = true;
+        root.postDelayed(() -> {
+            backgroundPermissionPromptPending = false;
+            promptBackgroundPermissionsIfNeeded();
+        }, delayMillis);
+    }
+
+    private void promptBackgroundPermissionsIfNeeded() {
+        if (silentBoot || isFinishing() || isDestroyed() || !hasCredentials()
+                || !hasEnabledAutomaticUpdates()
+                || store.getBoolean(BACKGROUND_PERMISSION_PROMPT_SHOWN, false)) return;
+        if (hasCoreBackgroundPermissions()
+                && store.getBoolean(AUTOSTART_SETTINGS_REQUESTED, false)) {
+            store.edit().putBoolean(BACKGROUND_PERMISSION_PROMPT_SHOWN, true).apply();
+            return;
+        }
+        if (loginPromptVisible || automationWeb != null
+                || informationDialog != null && informationDialog.isShowing()) {
+            scheduleBackgroundPermissionPrompt(600L);
+            return;
+        }
+        showDecisionDialog("后台更新", "允许后台自动更新", "需要完成系统授权",
+                "翱翔助手会申请通知、定时唤醒和忽略电池优化，并打开系统的自启动与后台启动设置。完成后，关闭应用界面也能继续按设定时间检查数据。",
+                "稍后", () -> store.edit().putBoolean(BACKGROUND_PERMISSION_PROMPT_SHOWN, true).apply(),
+                "开始授权", this::startBackgroundPermissionFlow, dp(420));
+    }
+
+    private void startBackgroundPermissionFlow() {
+        store.edit()
+                .putBoolean(BACKGROUND_PERMISSION_PROMPT_SHOWN, true)
+                .putInt(BACKGROUND_PERMISSION_FLOW_STEP, 1)
+                .apply();
+        continueBackgroundPermissionFlow();
+    }
+
+    private void continueBackgroundPermissionFlow() {
+        if (root == null || isFinishing() || isDestroyed()) return;
+        if (loginPromptVisible || automationWeb != null
+                || informationDialog != null && informationDialog.isShowing()) {
+            root.postDelayed(this::continueBackgroundPermissionFlow, 500L);
+            return;
+        }
+        while (true) {
+            int step = store.getInt(BACKGROUND_PERMISSION_FLOW_STEP, 0);
+            if (step <= 0) {
+                refreshAutomaticUpdatePanelIfVisible();
+                syncBackgroundService();
+                return;
+            }
+            if (step == 1) {
+                store.edit().putInt(BACKGROUND_PERMISSION_FLOW_STEP, 2).apply();
+                if (!hasNotificationPermission()) {
+                    requestNotificationPermission();
+                    return;
+                }
+                continue;
+            }
+            if (step == 2) {
+                store.edit().putInt(BACKGROUND_PERMISSION_FLOW_STEP, 3).apply();
+                if (!BackgroundPermissionUtils.canScheduleExactAlarms(this)) {
+                    requestExactAlarmPermission();
+                    if (backgroundPermissionActivityPending) return;
+                }
+                continue;
+            }
+            if (step == 3) {
+                store.edit().putInt(BACKGROUND_PERMISSION_FLOW_STEP, 4).apply();
+                if (!BackgroundPermissionUtils.isIgnoringBatteryOptimizations(this)) {
+                    requestBatteryOptimizationPermission();
+                    if (backgroundPermissionActivityPending) return;
+                }
+                continue;
+            }
+            store.edit().putInt(BACKGROUND_PERMISSION_FLOW_STEP, 0).apply();
+            if (!store.getBoolean(AUTOSTART_SETTINGS_REQUESTED, false)) {
+                requestAutostartSettings();
+                return;
+            }
+        }
+    }
+
+    private void requestExactAlarmPermission() {
+        if (BackgroundPermissionUtils.canScheduleExactAlarms(this)) {
+            refreshAutomaticUpdatePanelIfVisible();
+            return;
+        }
+        startBackgroundPermissionActivity(BackgroundPermissionUtils.exactAlarmPermissionIntent(this),
+                REQUEST_EXACT_ALARM);
+    }
+
+    private void requestBatteryOptimizationPermission() {
+        if (BackgroundPermissionUtils.isIgnoringBatteryOptimizations(this)) {
+            refreshAutomaticUpdatePanelIfVisible();
+            return;
+        }
+        startBackgroundPermissionActivity(BackgroundPermissionUtils.batteryOptimizationPermissionIntent(this),
+                REQUEST_BATTERY_OPTIMIZATION);
+    }
+
+    private void requestAutostartSettings() {
+        Intent intent = BackgroundPermissionUtils.autostartSettingsIntent(this);
+        if (startBackgroundPermissionActivity(intent, REQUEST_AUTOSTART_SETTINGS)) {
+            store.edit().putBoolean(AUTOSTART_SETTINGS_REQUESTED, true).apply();
+            Toast.makeText(this, BackgroundPermissionUtils.hasDedicatedAutostartSettings(this)
+                    ? "请允许翱翔助手自启动和后台启动" : "请允许后台运行并取消电池限制",
+                    Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private boolean startBackgroundPermissionActivity(Intent intent, int requestCode) {
+        try {
+            backgroundPermissionActivityPending = true;
+            startActivityForResult(intent, requestCode);
+            return true;
+        } catch (Exception ignored) {
+            backgroundPermissionActivityPending = false;
+            try {
+                startActivityForResult(BackgroundPermissionUtils.applicationDetailsIntent(this), requestCode);
+                backgroundPermissionActivityPending = true;
+                return true;
+            } catch (Exception unavailable) {
+                Toast.makeText(this, "无法打开系统权限设置", Toast.LENGTH_LONG).show();
+                return false;
+            }
+        }
+    }
+
+    private void refreshAutomaticUpdatePanelIfVisible() {
+        if (currentTab == TAB_SETTINGS && "updates".equals(settingsPanel)) {
+            updateBackgroundPermissionStatusViews();
+        }
+    }
+
+    private void updateBackgroundPermissionStatusViews() {
+        if (notificationPermissionStatusView != null) {
+            notificationPermissionStatusView.setText(hasNotificationPermission()
+                    ? "已授权" : "未授权，后台结果可能无法提醒");
+        }
+        if (exactAlarmPermissionStatusView != null) {
+            exactAlarmPermissionStatusView.setText(BackgroundPermissionUtils.canScheduleExactAlarms(this)
+                    ? "已授权" : "未授权，将使用延迟唤醒");
+        }
+        if (batteryPermissionStatusView != null) {
+            batteryPermissionStatusView.setText(BackgroundPermissionUtils.isIgnoringBatteryOptimizations(this)
+                    ? "已允许" : "受电池优化限制");
+        }
+        if (autostartPermissionStatusView != null) {
+            autostartPermissionStatusView.setText(store.getBoolean(AUTOSTART_SETTINGS_REQUESTED, false)
+                    ? "已打开系统设置，请确认允许" : "需要在系统设置中允许");
         }
     }
 
@@ -2969,7 +3350,22 @@ public class MainActivity extends Activity {
     private String automaticUpdateSummary() {
         int enabled = (autoGradeEnabled ? 1 : 0) + (autoScheduleEnabled ? 1 : 0)
                 + (autoElectricityEnabled ? 1 : 0);
-        return enabled == 0 ? "全部关闭" : "已开启 " + enabled + " 项";
+        if (enabled == 0) return "全部关闭";
+        String summary = "已开启 " + enabled + " 项";
+        return hasCoreBackgroundPermissions() ? summary : summary + " · 权限待完善";
+    }
+
+    private String manualUpdateSummary() {
+        int visible = (showElectricityCollectionWeb ? 1 : 0) + (showGradeCollectionWeb ? 1 : 0)
+                + (showScheduleCollectionWeb ? 1 : 0);
+        return visible == 0 ? "网页全部隐藏" : "显示 " + visible + " 项网页";
+    }
+
+    private boolean showCollectionWeb(String target) {
+        if ("electricity".equals(target)) return showElectricityCollectionWeb;
+        if ("grades".equals(target)) return showGradeCollectionWeb;
+        if ("schedule".equals(target)) return showScheduleCollectionWeb;
+        return false;
     }
 
     private String notificationSummary() {
@@ -3056,6 +3452,7 @@ public class MainActivity extends Activity {
         connection.setReadTimeout(8_000);
         connection.setRequestProperty("Accept", "application/json");
         connection.setRequestProperty("Referer", "https://gitcode.com/lorcas/aoxiang-assistant");
+        connection.setRequestProperty("User-Agent", "AoxiangAssistant/" + appVersionName() + " Android");
         try {
             int status = connection.getResponseCode();
             if (status < 200 || status >= 300) return null;
@@ -3070,12 +3467,12 @@ public class MainActivity extends Activity {
             JSONObject release = envelope.optJSONObject("data");
             if (release == null) release = envelope;
             if (release.optJSONObject("release") != null) release = release.optJSONObject("release");
-            String version = firstNonBlank(release.optString("tag_name"), release.optString("tagName"),
+            String version = VersionUtils.firstNonBlank(release.optString("tag_name"), release.optString("tagName"),
                     release.optString("version"));
             if (version.isEmpty()) version = VersionUtils.extractVersion(release.optString("name"));
             version = VersionUtils.extractVersion(version);
             if (version.isEmpty()) return null;
-            String notes = firstNonBlank(release.optString("description"), release.optString("body"),
+            String notes = VersionUtils.firstNonBlank(release.optString("description"), release.optString("body"),
                     release.optString("release_notes"), release.optString("content"));
             if (notes.isEmpty()) notes = "请前往 GitCode 发布页查看本次更新内容。";
             else notes = android.text.Html.fromHtml(notes, android.text.Html.FROM_HTML_MODE_LEGACY).toString().trim();
@@ -3083,13 +3480,6 @@ public class MainActivity extends Activity {
         } finally {
             connection.disconnect();
         }
-    }
-
-    private String firstNonBlank(String... values) {
-        for (String value : values) {
-            if (value != null && !value.trim().isEmpty()) return value.trim();
-        }
-        return "";
     }
 
     private void showUpdateDialogWhenReady(ReleaseInfo release) {
@@ -3985,7 +4375,10 @@ public class MainActivity extends Activity {
 
         enabled.setOnCheckedChangeListener((button, checked) -> {
             setAutomaticEnabled(target, checked);
-            if (checked) requestNotificationPermission();
+            if (checked) {
+                requestNotificationPermission();
+                scheduleBackgroundPermissionPrompt(300L);
+            }
             if (!checked && target.equals(automationTarget) && automaticRun) cancelAutomation();
             store.edit().remove("auto_last_" + target).apply();
             scheduleAllAutomaticUpdates(0L);
@@ -4190,6 +4583,12 @@ public class MainActivity extends Activity {
     }
 
     private class SafeClient extends WebViewClient {
+        @Override
+        public void onPageStarted(WebView view, String url, Bitmap favicon) {
+            unifiedAuthTracker.record(url);
+            super.onPageStarted(view, url, favicon);
+        }
+
         @Override
         public boolean shouldOverrideUrlLoading(WebView view, String url) {
             try {

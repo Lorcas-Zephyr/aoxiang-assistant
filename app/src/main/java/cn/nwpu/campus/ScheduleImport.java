@@ -21,10 +21,18 @@ public final class ScheduleImport {
     public static class RawSemester {
         public String name;
         public String dataSemester;
+        public String startDate;
+        public String endDate;
 
         public RawSemester(String name, String dataSemester) {
+            this(name, dataSemester, null, null);
+        }
+
+        public RawSemester(String name, String dataSemester, String startDate, String endDate) {
             this.name = name;
             this.dataSemester = dataSemester;
+            this.startDate = startDate;
+            this.endDate = endDate;
         }
     }
 
@@ -68,7 +76,9 @@ public final class ScheduleImport {
                 if (item == null) continue;
                 String name = item.optString("name");
                 String value = item.optString("dataSemester", name);
-                if (!name.isEmpty()) result.semesters.add(new RawSemester(name, value));
+                String startDate = item.isNull("startDate") ? null : item.optString("startDate", null);
+                String endDate = item.isNull("endDate") ? null : item.optString("endDate", null);
+                if (!name.isEmpty()) result.semesters.add(new RawSemester(name, value, startDate, endDate));
             }
         }
         if (courses != null) {
@@ -131,7 +141,7 @@ public final class ScheduleImport {
     }
 
     public static ScheduleModels.Semester createImportedSemester(RawSemester raw, List<ScheduleModels.Course> courses) {
-        int maxWeek = Math.max(17, calculateMaxWeek(courses));
+        int fallbackWeekCount = Math.max(17, calculateMaxWeek(courses));
         int year = LocalDate.now().getYear();
         int month = 9;
         if (raw.dataSemester != null) {
@@ -143,14 +153,33 @@ public final class ScheduleImport {
                 if (term == 2) year = Integer.parseInt(matcher.group(2));
             }
         }
-        LocalDate start = ScheduleUtils.mondayOnOrBefore(LocalDate.of(year, month, month == 2 ? 24 : 1));
-        LocalDate end = start.plusWeeks(maxWeek).minusDays(1);
+        LocalDate start;
+        try {
+            start = raw.startDate == null || raw.startDate.trim().isEmpty()
+                    ? ScheduleUtils.mondayOnOrBefore(LocalDate.of(year, month, month == 2 ? 24 : 1))
+                    : ScheduleUtils.mondayOnOrBefore(LocalDate.parse(raw.startDate.trim()));
+        } catch (Exception ignored) {
+            start = ScheduleUtils.mondayOnOrBefore(LocalDate.of(year, month, month == 2 ? 24 : 1));
+        }
+        LocalDate end = calculateLastCourseDate(start, courses);
+        LocalDate minimumEnd = start.plusWeeks(2).minusDays(1);
+        if (end != null && end.isBefore(minimumEnd)) end = minimumEnd;
+        if (end == null) {
+            try {
+                end = raw.endDate == null || raw.endDate.trim().isEmpty()
+                        ? start.plusWeeks(fallbackWeekCount).minusDays(1)
+                        : LocalDate.parse(raw.endDate.trim());
+            } catch (Exception ignored) {
+                end = start.plusWeeks(fallbackWeekCount).minusDays(1);
+            }
+        }
+        int weekCount = ScheduleUtils.weekCountForRange(start, end);
         return new ScheduleModels.Semester(
                 "semester-" + UUID.randomUUID(),
                 raw.name == null || raw.name.trim().isEmpty() ? "导入学期" : raw.name.trim(),
                 start.toString(),
                 end.toString(),
-                maxWeek,
+                weekCount,
                 13,
                 ScheduleModels.buildDefaultSectionTimes(13)
         );
@@ -300,6 +329,20 @@ public final class ScheduleImport {
             }
         }
         return max;
+    }
+
+    private static LocalDate calculateLastCourseDate(LocalDate semesterStart, List<ScheduleModels.Course> courses) {
+        LocalDate last = null;
+        for (ScheduleModels.Course course : courses) {
+            for (ScheduleModels.TimeSlot slot : course.timeSlots) {
+                for (Integer week : ScheduleUtils.parseWeeks(slot.weekRange)) {
+                    if (!ScheduleUtils.matchesRepeatRule(week, slot.repeatRule)) continue;
+                    LocalDate date = ScheduleUtils.dateForWeekDay(semesterStart, week, slot.dayOfWeek);
+                    if (last == null || date.isAfter(last)) last = date;
+                }
+            }
+        }
+        return last;
     }
 
     private static ScheduleModels.AssessmentMethod parseAssessment(String value) {

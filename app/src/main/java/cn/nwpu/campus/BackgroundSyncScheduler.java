@@ -5,6 +5,7 @@ import android.app.PendingIntent;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.os.Build;
 
 final class BackgroundSyncScheduler {
     static final String ACTION_WAKE = "cn.nwpu.campus.action.BACKGROUND_WAKE";
@@ -32,7 +33,15 @@ final class BackgroundSyncScheduler {
         long triggerAt = Math.max(next.dueAt, now + Math.max(1000L, minimumDelayMillis));
         AlarmManager manager = (AlarmManager) app.getSystemService(Context.ALARM_SERVICE);
         if (manager != null) {
-            manager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAt, pendingIntent(app));
+            try {
+                if (Build.VERSION.SDK_INT < 31 || manager.canScheduleExactAlarms()) {
+                    manager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAt, pendingIntent(app));
+                } else {
+                    manager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAt, pendingIntent(app));
+                }
+            } catch (SecurityException ignored) {
+                manager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAt, pendingIntent(app));
+            }
         }
     }
 

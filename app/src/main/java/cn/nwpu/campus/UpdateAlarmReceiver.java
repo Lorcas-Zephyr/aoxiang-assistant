@@ -8,7 +8,7 @@ import android.os.Build;
 public class UpdateAlarmReceiver extends BroadcastReceiver {
     @Override public void onReceive(Context context, Intent intent) {
         if (!BackgroundSyncScheduler.ACTION_WAKE.equals(intent.getAction())) return;
-        if (MainActivity.isActivityAlive()) {
+        if (MainActivity.isActivityVisible()) {
             BackgroundSyncScheduler.schedule(context, 60_000L);
             return;
         }

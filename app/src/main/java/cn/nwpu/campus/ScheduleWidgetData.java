@@ -81,7 +81,12 @@ final class ScheduleWidgetData {
         for (ScheduleModels.Semester semester : semesters) {
             try {
                 LocalDate start = ScheduleUtils.mondayOnOrBefore(LocalDate.parse(semester.startDate));
-                LocalDate end = start.plusWeeks(Math.max(1, semester.weekCount)).minusDays(1);
+                LocalDate end;
+                try {
+                    end = LocalDate.parse(semester.endDate);
+                } catch (Exception ignored) {
+                    end = start.plusWeeks(Math.max(1, semester.weekCount)).minusDays(1);
+                }
                 if (!date.isBefore(start) && !date.isAfter(end)) return semester;
             } catch (Exception ignored) {
                 // Ignore malformed semester entries and continue looking for a valid one.

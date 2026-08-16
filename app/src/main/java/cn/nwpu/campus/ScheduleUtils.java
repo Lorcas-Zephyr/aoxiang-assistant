@@ -55,6 +55,11 @@ public final class ScheduleUtils {
         return semesterStart.plusDays((long) (safeWeek - 1) * 7 + safeDay - 1);
     }
 
+    public static int weekCountForRange(LocalDate start, LocalDate end) {
+        if (start == null || end == null || end.isBefore(start)) return 1;
+        return (int) (ChronoUnit.DAYS.between(start, end) / 7) + 1;
+    }
+
     /** Returns the Monday on the selected date's week, including the date itself. */
     public static LocalDate mondayOnOrBefore(LocalDate date) {
         if (date == null) return null;

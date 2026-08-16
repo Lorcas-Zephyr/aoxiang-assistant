@@ -30,6 +30,43 @@ public class ScheduleImportTest {
         assertEquals(19, semester.weekCount);
     }
 
+    @Test public void importedSemesterUsesJwxtStartDate() {
+        ScheduleModels.Semester semester = ScheduleImport.createImportedSemester(
+                new ScheduleImport.RawSemester("2026-2027秋", "362", "2026-08-31", "2026-12-27"),
+                Collections.emptyList());
+
+        assertEquals("2026-08-31", semester.startDate);
+        assertEquals("2026-12-27", semester.endDate);
+    }
+
+    @Test public void importedSemesterEndsOnTheLastScheduledCourse() {
+        ScheduleModels.Course course = new ScheduleModels.Course(
+                "course", "测试课程", "semester",
+                Collections.singletonList(new ScheduleModels.TimeSlot(
+                        "16", ScheduleModels.RepeatRule.ALL, 6, Arrays.asList(1, 2))));
+
+        ScheduleModels.Semester semester = ScheduleImport.createImportedSemester(
+                new ScheduleImport.RawSemester("2026-2027秋", "362", "2026-08-31", "2027-01-17"),
+                Collections.singletonList(course));
+
+        assertEquals(16, semester.weekCount);
+        assertEquals("2026-12-19", semester.endDate);
+    }
+
+    @Test public void importedSemesterLastsAtLeastTwoWeeks() {
+        ScheduleModels.Course course = new ScheduleModels.Course(
+                "course", "测试课程", "semester",
+                Collections.singletonList(new ScheduleModels.TimeSlot(
+                        "1", ScheduleModels.RepeatRule.ALL, 1, Arrays.asList(1, 2))));
+
+        ScheduleModels.Semester semester = ScheduleImport.createImportedSemester(
+                new ScheduleImport.RawSemester("2026-2027秋", "362", "2026-08-31", null),
+                Collections.singletonList(course));
+
+        assertEquals(2, semester.weekCount);
+        assertEquals("2026-09-13", semester.endDate);
+    }
+
     @Test public void parsesJwxtWeekAndSectionText() {
         List<ScheduleModels.TimeSlot> slots = ScheduleImport.parseScheduleText(
                 "1~4周 星期一 1-2节; 5~8周 星期一 1-2节; "

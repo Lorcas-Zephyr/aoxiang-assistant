@@ -8,6 +8,7 @@ import android.app.PendingIntent;
 import android.app.Service;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.graphics.Bitmap;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Handler;
@@ -60,6 +61,7 @@ public class BackgroundSyncService extends Service {
     private static final long PORTRAIT_TIMEOUT_MS = 15_000L;
 
     private final Handler handler = new Handler(Looper.getMainLooper());
+    private final UnifiedAuthTracker unifiedAuthTracker = new UnifiedAuthTracker();
     private SharedPreferences store;
     private WebView web;
     private String script;
@@ -82,7 +84,7 @@ public class BackgroundSyncService extends Service {
 
     @Override public int onStartCommand(Intent intent, int flags, int startId) {
         if (running) return START_REDELIVER_INTENT;
-        if (MainActivity.isActivityAlive()) {
+        if (MainActivity.isActivityVisible()) {
             BackgroundSyncScheduler.schedule(this, 60_000L);
             finishService();
             return START_NOT_STICKY;
@@ -125,6 +127,7 @@ public class BackgroundSyncService extends Service {
 
     @SuppressLint("SetJavaScriptEnabled")
     private void beginCollection() {
+        unifiedAuthTracker.reset();
         String[] credentials = readCredentials();
         if (credentials[0].isEmpty() || credentials[1].isEmpty()) {
             finishAttempt();
@@ -140,6 +143,11 @@ public class BackgroundSyncService extends Service {
         settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
         CookieManager.getInstance().setAcceptCookie(true);
         web.setWebViewClient(new WebViewClient() {
+            @Override public void onPageStarted(WebView view, String url, Bitmap favicon) {
+                unifiedAuthTracker.record(url);
+                super.onPageStarted(view, url, favicon);
+            }
+
             @Override public boolean shouldOverrideUrlLoading(WebView view, String url) {
                 try {
                     String host = Uri.parse(url).getHost();
@@ -158,6 +166,7 @@ public class BackgroundSyncService extends Service {
         final long[] gradeReadyAt = {0L};
         final long[] portraitStartedAt = {0L};
         final long[] navigationCooldownUntil = {0L};
+        final long[] credentialsSubmittedAt = {0L};
         final boolean[] credentialsSubmitted = {false};
         final JSONArray[] collectedGradeRows = {null};
         collectTask = new Runnable() {
@@ -178,6 +187,7 @@ public class BackgroundSyncService extends Service {
                 }
                 String source = script.replace("__MODE__", target)
                         .replace("__ALLOW_NAV__", Boolean.toString(System.currentTimeMillis() >= navigationCooldownUntil[0]))
+                        .replace("__AUTH_EXITED__", Boolean.toString(unifiedAuthTracker.hasExited()))
                         .replace("__USERNAME__", JSONObject.quote(credentials[0]))
                         .replace("__PASSWORD__", JSONObject.quote(credentials[1]))
                         .replace("__SMS_CODE__", JSONObject.quote(""))
@@ -189,8 +199,16 @@ public class BackgroundSyncService extends Service {
                         String raw = new JSONArray("[" + result + "]").getString(0);
                         JSONObject payload = new JSONObject(raw);
                         String phase = payload.optString("phase");
+                        if ("credentials_pending".equals(phase)) {
+                            if (AuthenticationPolicy.shouldWaitForCredentialRedirect(
+                                    phase, credentialsSubmittedAt[0], System.currentTimeMillis())) {
+                                if (running) handler.postDelayed(this, 1000L);
+                                return;
+                            }
+                            phase = "credentials_required";
+                        }
                         if ("credentials_error".equals(phase) || "credentials_required".equals(phase)) {
-                            boolean rejected = "credentials_error".equals(phase) || credentialsSubmitted[0];
+                            boolean rejected = AuthenticationPolicy.isExplicitCredentialError(phase);
                             int failureCount = rejected ? recordCredentialFailure() : 0;
                             store.edit().putBoolean("credentials_verified", false).apply();
                             sendAuthenticationNotification(failureCount >= 2
@@ -212,10 +230,14 @@ public class BackgroundSyncService extends Service {
                         }
                         if ("credentials_submitting".equals(phase)) {
                             credentialsSubmitted[0] = true;
+                            credentialsSubmittedAt[0] = System.currentTimeMillis();
                         } else if ("clicked".equals(phase)) {
                             navigationCooldownUntil[0] = System.currentTimeMillis() + 2500L;
                         } else if ("page".equals(phase)) {
                             navigationCooldownUntil[0] = System.currentTimeMillis() + 1500L;
+                        } else if ("target_error".equals(phase)) {
+                            finishAttempt();
+                            return;
                         } else if ("data".equals(phase) && "grades".equals(target)) {
                             if (gradeReadyAt[0] == 0L) gradeReadyAt[0] = System.currentTimeMillis() + 5000L;
                             if (System.currentTimeMillis() >= gradeReadyAt[0]
@@ -308,7 +330,8 @@ public class BackgroundSyncService extends Service {
                 semester.weekCount = replacement.weekCount;
                 semester.sectionCount = replacement.sectionCount;
                 semester.sectionTimes = replacement.sectionTimes;
-                normalizeSemesterDates(semester);
+                semester.startDate = replacement.startDate;
+                semester.endDate = replacement.endDate;
             } else {
                 semester = ScheduleImport.createImportedSemester(rawSemester, imported);
                 semesters.add(semester);
@@ -396,6 +419,7 @@ public class BackgroundSyncService extends Service {
             web.destroy();
             web = null;
         }
+        unifiedAuthTracker.reset();
     }
 
     private void replaceCourses(List<ScheduleModels.Course> courses, String semesterId,

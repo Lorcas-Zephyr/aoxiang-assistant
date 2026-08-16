@@ -25,4 +25,9 @@ public class VersionUtilsTest {
                 VersionUtils.gitCodeApkDownloadUrl("v1.9.1"));
         assertEquals("", VersionUtils.gitCodeApkDownloadUrl("latest"));
     }
+
+    @Test public void skipsNullLikeReleaseFields() {
+        assertEquals("完整更新内容", VersionUtils.firstNonBlank(null, "", "null", " undefined ", " 完整更新内容 "));
+        assertEquals("", VersionUtils.firstNonBlank(null, "null", "undefined"));
+    }
 }

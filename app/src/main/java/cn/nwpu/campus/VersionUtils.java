@@ -31,6 +31,17 @@ final class VersionUtils {
         return false;
     }
 
+    static String firstNonBlank(String... values) {
+        if (values == null) return "";
+        for (String value : values) {
+            if (value == null) continue;
+            String candidate = value.trim();
+            if (!candidate.isEmpty() && !"null".equalsIgnoreCase(candidate)
+                    && !"undefined".equalsIgnoreCase(candidate)) return candidate;
+        }
+        return "";
+    }
+
     static String gitCodeApkDownloadUrl(String value) {
         String version = extractVersion(value);
         if (version.isEmpty()) return "";

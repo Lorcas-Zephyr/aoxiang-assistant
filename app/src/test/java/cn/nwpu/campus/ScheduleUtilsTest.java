@@ -21,4 +21,11 @@ public class ScheduleUtilsTest {
         assertEquals(1, ScheduleUtils.weekNumberForDate(LocalDate.of(2026, 8, 13), semester));
         assertEquals(2, ScheduleUtils.weekNumberForDate(LocalDate.of(2026, 8, 17), semester));
     }
+
+    @Test public void weekCountUsesSemesterStartAndEndDates() {
+        assertEquals(16, ScheduleUtils.weekCountForRange(
+                LocalDate.of(2026, 8, 31), LocalDate.of(2026, 12, 19)));
+        assertEquals(17, ScheduleUtils.weekCountForRange(
+                LocalDate.of(2026, 8, 31), LocalDate.of(2026, 12, 27)));
+    }
 }

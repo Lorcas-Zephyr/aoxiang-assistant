@@ -5,8 +5,9 @@
   const smsCode = __SMS_CODE__;
   const canAutofill = __CAN_AUTOFILL__;
   const canFillSms = __CAN_FILL_SMS__;
+  const unifiedAuthExited = __AUTH_EXITED__;
 
-  const text = (value) => (value || "").replace(/\s+/g, " ").trim();
+  const text = (value) => String(value == null ? "" : value).replace(/\s+/g, " ").trim();
   const visible = (element) => {
     try {
       const style = getComputedStyle(element);
@@ -37,6 +38,10 @@
 
   const body = text(documents.map((doc) => (doc.body ? doc.body.innerText : "")).join(" "));
   const host = location.hostname;
+
+  if ((mode === "validate" || mode === "bootstrap") && unifiedAuthExited) {
+    return JSON.stringify({ phase: "credentials_valid", rows: [] });
+  }
 
   const setValue = (input, value) => {
     const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
@@ -95,8 +100,24 @@
     if (clicked) return JSON.stringify({ phase: "clicked", clicked });
   }
 
-  const loginDocument = documents.find((doc) => doc.querySelector('input[type="password"]') ||
-    (doc.querySelector("input") && /账号密码|密码登录|统一认证/.test(text(doc.body ? doc.body.innerText : ""))));
+  const loginDocument = documents.find((doc) => {
+    const documentText = text(doc.body ? doc.body.innerText : "");
+    const visiblePassword = [...doc.querySelectorAll('input[type="password"]')].some(visible);
+    const visibleInput = [...doc.querySelectorAll("input")].some(visible);
+    const authLocation = host !== "jwxt.nwpu.edu.cn" || /login|auth|cas/i.test(location.pathname);
+    const authContent = /账号密码|密码登录|统一身份认证|统一认证|请输入.{0,12}(?:账号|用户名|学号|密码)/.test(documentText);
+    return visiblePassword && (authLocation || authContent) || visibleInput && authContent;
+  });
+  const protectedStudentPage = host === "jwxt.nwpu.edu.cn" &&
+    /^\/student(?:\/|$)/.test(location.pathname) &&
+    !/\/(?:sso-?login|login|logout|error|unauthorized|forbidden)(?:\/|$)/i.test(location.pathname) &&
+    !loginDocument && body.length > 0 &&
+    !/(?:请先登录|登录信息已失效|会话.{0,8}(?:失效|过期)|身份认证已过期)/.test(body);
+
+  if ((mode === "validate" || mode === "bootstrap") && protectedStudentPage) {
+    return JSON.stringify({ phase: "credentials_valid", rows: [] });
+  }
+
   if (loginDocument && !(mode === "electricity" && host === "yktapp.nwpu.edu.cn")) {
     if (mode === "bootstrap") {
       return JSON.stringify({ phase: "interactive_login", rows: [] });
@@ -142,14 +163,20 @@
       if (submit) clickElement(submit);
       return JSON.stringify({ phase: "credentials_submitting", rows: [] });
     }
+    if (!canAutofill && usernameInput && passwordInput) {
+      return JSON.stringify({ phase: "credentials_pending", rows: [] });
+    }
     return JSON.stringify({ phase: "credentials_required", rows: [] });
   }
 
   if ((mode === "validate" || mode === "bootstrap") && host === "jwxt.nwpu.edu.cn") {
-    if (/^\/student\/home\/?$/.test(location.pathname)) {
-      return JSON.stringify({ phase: "credentials_valid", rows: [] });
+    if (location.pathname.includes("sso-login")) {
+      window.__aoxiangAssistantSsoArrivedAt = window.__aoxiangAssistantSsoArrivedAt || Date.now();
+      if (Date.now() - window.__aoxiangAssistantSsoArrivedAt < 4000 || !allowNavigation) {
+        return JSON.stringify({ phase: "page", rows: [] });
+      }
     }
-    if (!location.pathname.includes("sso-login") && allowNavigation) {
+    if (allowNavigation) {
       location.replace(location.origin + "/student/home");
       return JSON.stringify({ phase: "clicked", clicked: "education_home" });
     }
@@ -159,17 +186,16 @@
     const directPath = mode === "schedule"
       ? "/student/for-std/course-table"
       : "/student/for-std/grade/sheet/";
-    const directKey = "campus_direct_" + mode;
-    if (location.pathname === "/student/home" && !sessionStorage.getItem(directKey)) {
-      sessionStorage.setItem(directKey, "1");
+    const directAttemptsKey = "campus_direct_attempts_" + mode;
+    if (location.pathname === "/student/home") {
+      const attempts = Number.parseInt(sessionStorage.getItem(directAttemptsKey) || "0", 10);
+      if (attempts >= 3) {
+        return JSON.stringify({ phase: "target_error", target: mode, rows: [] });
+      }
+      if (!allowNavigation) return JSON.stringify({ phase: "page", rows: [] });
+      sessionStorage.setItem(directAttemptsKey, String(attempts + 1));
       location.replace(location.origin + directPath);
       return JSON.stringify({ phase: "clicked", clicked: "direct_" + mode });
-    }
-    const failedDirect = location.pathname !== "/student/home" &&
-      /无权限|没有权限|页面不存在|访问受限|404|not found/i.test(body);
-    if (failedDirect) {
-      location.replace(location.origin + "/student/home");
-      return JSON.stringify({ phase: "clicked", clicked: "education_home" });
     }
   }
 
@@ -564,9 +590,225 @@
     return records;
   };
 
+  const scheduleDateFromPage = () => {
+    for (const doc of documents) {
+      const pageText = text(doc.body ? doc.body.innerText : "");
+      const match = pageText.match(/学期起始日期\s*[：:]?\s*(\d{4}-\d{2}-\d{2})/);
+      if (match) return match[1];
+    }
+    return "";
+  };
+
+  const compactWeeks = (values) => {
+    const weeks = [...new Set((Array.isArray(values) ? values : [])
+      .map((value) => Number.parseInt(value, 10))
+      .filter((value) => Number.isFinite(value) && value > 0))].sort((left, right) => left - right);
+    const ranges = [];
+    for (let index = 0; index < weeks.length;) {
+      const start = weeks[index];
+      let end = start;
+      while (index + 1 < weeks.length && weeks[index + 1] === end + 1) {
+        index++;
+        end = weeks[index];
+      }
+      ranges.push(start === end ? String(start) : `${start}~${end}`);
+      index++;
+    }
+    return ranges.length ? `${ranges.join(",")}周` : "1~17周";
+  };
+
+  const scheduleLastCourseDate = (activities, startDate) => {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(startDate) || !Array.isArray(activities)) return "";
+    const parts = startDate.split("-").map((value) => Number.parseInt(value, 10));
+    const start = new Date(Date.UTC(parts[0], parts[1] - 1, parts[2]));
+    // An empty or very short timetable still represents a two-week semester window.
+    let lastOffset = 13;
+    activities.forEach((activity) => {
+      const day = Number.parseInt(activity && activity.weekday, 10);
+      if (day < 1 || day > 7) return;
+      (Array.isArray(activity.weekIndexes) ? activity.weekIndexes : []).forEach((value) => {
+        const week = Number.parseInt(value, 10);
+        if (Number.isFinite(week) && week > 0) {
+          lastOffset = Math.max(lastOffset, (week - 1) * 7 + day - 1);
+        }
+      });
+    });
+    start.setUTCDate(start.getUTCDate() + lastOffset);
+    return start.toISOString().slice(0, 10);
+  };
+
+  const schedulePayloadFromPrintData = (data) => {
+    const table = data && data.studentTableVm;
+    const activities = table && Array.isArray(table.activities) ? table.activities : [];
+    const arranged = table && Array.isArray(table.arrangedLessonSearchVms)
+      ? table.arrangedLessonSearchVms : [];
+    const lessonWithSemester = arranged.find((lesson) => lesson && lesson.semester);
+    const semester = lessonWithSemester ? lessonWithSemester.semester : null;
+    const semesterControl = scheduleSemesterControl();
+    const selectedOption = semesterControl && semesterControl.options.find(
+      (option) => option.value === semesterControl.currentValue);
+    const dataSemester = text(semester && (semester.id || semester.code)) ||
+      text(semesterControl && semesterControl.currentValue) || "current";
+    const semesterName = text(semester && (semester.nameZh || semester.name || semester.code)) ||
+      text(selectedOption && selectedOption.name) || "当前学期";
+    const startDate = text(semester && semester.startDate) || scheduleDateFromPage();
+    const endDate = scheduleLastCourseDate(activities, startDate) || text(semester && semester.endDate);
+    const semesters = [{
+      name: semesterName,
+      dataSemester,
+      startDate: startDate || undefined,
+      endDate: endDate || undefined
+    }];
+    const courses = [];
+    const seenCourses = new Set();
+
+    activities.forEach((activity) => {
+      if (!activity || !activity.courseName) return;
+      const day = Number.parseInt(activity.weekday, 10);
+      const startUnit = Number.parseInt(activity.startUnit, 10);
+      const endUnit = Number.parseInt(activity.endUnit, 10);
+      if (!dayLabels[day] || !Number.isFinite(startUnit) || !Number.isFinite(endUnit)) return;
+      const teachers = (Array.isArray(activity.teachers) ? activity.teachers : [])
+        .map((teacher) => text(typeof teacher === "string" ? teacher
+          : teacher && (teacher.nameZh || teacher.name || teacher.teacherName)))
+        .filter(Boolean);
+      const locationParts = [activity.campus, activity.building, activity.room]
+        .map(text).filter((value, index, values) => value && values.indexOf(value) === index);
+      const course = {
+        name: text(activity.courseName),
+        code: text(activity.courseCode) || undefined,
+        credits: toMaybeNumber(activity.credits),
+        teacher: teachers.length ? [...new Set(teachers)].join("、") : undefined,
+        scheduleText: `${compactWeeks(activity.weekIndexes)} ${dayLabels[day]} ${startUnit}-${endUnit}节`,
+        location: locationParts.length ? locationParts.join(" ") : undefined,
+        dataSemester
+      };
+      if (onlinePattern.test([course.name, course.location || ""].join(" "))) return;
+      uniquePush(courses, seenCourses, course);
+    });
+    return { semesters, courses };
+  };
+
+  const schedulePrintDataUrls = () => {
+    try {
+      return performance.getEntriesByType("resource")
+        .map((entry) => entry.name || "")
+        .filter((url) => /\/for-std\/course-table\/semester\/[^/]+\/print-data\/[^/?#]+/.test(url));
+    } catch (ignored) {
+      return [];
+    }
+  };
+
+  const schedulePrintDataUrl = (dataSemester) => {
+    const encodedSemester = encodeURIComponent(String(dataSemester || ""));
+    return [...schedulePrintDataUrls()].reverse().find((url) =>
+      !encodedSemester || new RegExp("/semester/" + encodedSemester + "/print-data/").test(url)) || "";
+  };
+
+  const schedulePrintDataKey = (url) => {
+    try {
+      return new URL(url, location.origin).pathname;
+    } catch (ignored) {
+      return url || "";
+    }
+  };
+
+  const scheduleSemesterSortKey = (name) => {
+    const match = text(name).match(/(\d{4})\s*[-—]\s*\d{4}.*?(秋|冬|春|夏)/);
+    if (!match) return Number.NaN;
+    const seasonOrder = { "秋": 0, "冬": 1, "春": 2, "夏": 3 };
+    return Number.parseInt(match[1], 10) * 10 + seasonOrder[match[2]];
+  };
+
+  const scheduleSemesterControl = () => {
+    const element = document.querySelector("#allSemesters");
+    const selectize = element && element.selectize;
+    if (!selectize) return null;
+    const options = Object.values(selectize.options || {})
+      .map((option) => ({
+        name: text(option && (option.text || option.name || option.label)),
+        value: text(option && (option.value || option.id || option.code))
+      }))
+      .filter((option) => option.name && option.value && Number.isFinite(scheduleSemesterSortKey(option.name)))
+      .sort((left, right) => scheduleSemesterSortKey(left.name) - scheduleSemesterSortKey(right.name));
+    const currentValue = text((selectize.items || [])[0] || element.value);
+    return { selectize, options, currentValue };
+  };
+
+  const todayString = () => {
+    const now = new Date();
+    const pad = (value) => String(value).padStart(2, "0");
+    return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+  };
+
+  const scheduleSemesterStateKey = "__aoxiangAssistantScheduleSemester";
+
+  const prepareCurrentScheduleSemester = () => {
+    const control = scheduleSemesterControl();
+    if (!control || !control.options.length) {
+      return { ready: true, printDataUrl: schedulePrintDataUrl("") };
+    }
+
+    const state = window[scheduleSemesterStateKey] || { dates: {} };
+    window[scheduleSemesterStateKey] = state;
+    const printDataUrls = schedulePrintDataUrls();
+
+    if (state.pendingValue) {
+      if (control.currentValue !== state.pendingValue ||
+          printDataUrls.length <= state.pendingResourceCount) {
+        return { ready: false };
+      }
+      state.pendingValue = "";
+    }
+
+    const currentIndex = control.options.findIndex((option) => option.value === control.currentValue);
+    if (currentIndex < 0) return { ready: true, printDataUrl: schedulePrintDataUrl("") };
+    const currentStartDate = scheduleDateFromPage();
+    const currentPrintDataUrl = schedulePrintDataUrl(control.currentValue);
+    if (!currentStartDate || !currentPrintDataUrl) return { ready: false };
+    state.dates[control.currentValue] = currentStartDate;
+
+    if (state.forcedTargetValue === control.currentValue) {
+      state.targetValue = control.currentValue;
+      return { ready: true, printDataUrl: currentPrintDataUrl };
+    }
+
+    const switchTo = (option) => {
+      if (!option || option.value === control.currentValue) return { ready: false };
+      state.pendingValue = option.value;
+      state.pendingResourceCount = printDataUrls.length;
+      control.selectize.setValue(option.value);
+      return { ready: false };
+    };
+
+    const today = todayString();
+    if (today < currentStartDate && currentIndex > 0) {
+      return switchTo(control.options[currentIndex - 1]);
+    }
+
+    state.targetValue = control.currentValue;
+    return { ready: true, printDataUrl: currentPrintDataUrl };
+  };
+
+  const selectNextScheduleSemester = () => {
+    const control = scheduleSemesterControl();
+    if (!control) return false;
+    const currentIndex = control.options.findIndex((option) => option.value === control.currentValue);
+    const nextOption = control.options[currentIndex + 1];
+    if (currentIndex < 0 || !nextOption) return false;
+    const state = window[scheduleSemesterStateKey] || { dates: {} };
+    state.forcedTargetValue = nextOption.value;
+    state.pendingValue = nextOption.value;
+    state.pendingResourceCount = schedulePrintDataUrls().length;
+    window[scheduleSemesterStateKey] = state;
+    control.selectize.setValue(nextOption.value);
+    return true;
+  };
+
   const extractSchedulePayload = () => {
     const semesters = [];
     const seenSemesters = new Set();
+    const pageStartDate = scheduleDateFromPage();
 
     documents.forEach((doc) => {
       [...doc.querySelectorAll("select option")].forEach((option) => {
@@ -578,7 +820,11 @@
         const key = dataSemester + "|" + name;
         if (seenSemesters.has(key)) return;
         seenSemesters.add(key);
-        semesters.push({ name, dataSemester });
+        semesters.push({
+          name,
+          dataSemester,
+          startDate: option.selected && pageStartDate ? pageStartDate : undefined
+        });
       });
     });
 
@@ -697,7 +943,7 @@
           const key = dataSemester + "|" + name;
           if (seenSemesters.has(key)) return;
           seenSemesters.add(key);
-          semesters.push({ name, dataSemester });
+          semesters.push({ name, dataSemester, startDate: pageStartDate || undefined });
         });
 
         const rowMatches = [...html.matchAll(/<tr[^>]*>([\s\S]*?)<\/tr>/g)];
@@ -737,12 +983,53 @@
       const firstCourseSemester = courses.find((course) => course.dataSemester && semesterValuePattern.test(course.dataSemester));
       semesters.push({
         name: firstCourseSemester ? firstCourseSemester.dataSemester : "当前学期",
-        dataSemester: firstCourseSemester ? firstCourseSemester.dataSemester : "current"
+        dataSemester: firstCourseSemester ? firstCourseSemester.dataSemester : "current",
+        startDate: pageStartDate || undefined
       });
     }
 
     return { semesters, courses };
   };
+
+  if (mode === "schedule") {
+    const semesterSelection = prepareCurrentScheduleSemester();
+    if (!semesterSelection.ready) return JSON.stringify({ phase: "page", rows: [] });
+    const printDataUrl = semesterSelection.printDataUrl;
+    const printDataKey = schedulePrintDataKey(printDataUrl);
+    const stateKey = "__aoxiangAssistantSchedulePrintData";
+    let state = window[stateKey];
+    if (printDataUrl && (!state || state.key !== printDataKey)) {
+      state = { key: printDataKey, loading: true };
+      window[stateKey] = state;
+      fetch(printDataUrl, { credentials: "same-origin" })
+        .then((response) => {
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          return response.json();
+        })
+        .then((data) => {
+          state.data = data;
+          state.loading = false;
+        })
+        .catch(() => {
+          state.failed = true;
+          state.loading = false;
+        });
+      return JSON.stringify({ phase: "page", rows: [] });
+    }
+    if (state && state.loading) return JSON.stringify({ phase: "page", rows: [] });
+    if (state && state.data) {
+      const table = state.data.studentTableVm;
+      if (table && Array.isArray(table.activities)) {
+        const structuredPayload = schedulePayloadFromPrintData(state.data);
+        const semester = structuredPayload.semesters[0];
+        if (semester && semester.endDate && todayString() > semester.endDate &&
+            selectNextScheduleSemester()) {
+          return JSON.stringify({ phase: "page", rows: [] });
+        }
+        return JSON.stringify({ phase: "schedule_data", payload: structuredPayload });
+      }
+    }
+  }
 
   const schedulePayload = extractSchedulePayload();
   if (mode === "schedule" && schedulePayload.courses.length) {

@@ -3,6 +3,8 @@ package cn.nwpu.campus;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
+import android.app.AlarmManager;
+import android.os.Build;
 
 public class BootReceiver extends BroadcastReceiver {
     @Override public void onReceive(Context context, Intent received) {
@@ -10,7 +12,9 @@ public class BootReceiver extends BroadcastReceiver {
         if (!Intent.ACTION_BOOT_COMPLETED.equals(action)
                 && !Intent.ACTION_MY_PACKAGE_REPLACED.equals(action)
                 && !Intent.ACTION_TIME_CHANGED.equals(action)
-                && !Intent.ACTION_TIMEZONE_CHANGED.equals(action)) return;
+                && !Intent.ACTION_TIMEZONE_CHANGED.equals(action)
+                && !(Build.VERSION.SDK_INT >= 31
+                    && AlarmManager.ACTION_SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED.equals(action))) return;
         if (Intent.ACTION_BOOT_COMPLETED.equals(action)) {
             boolean enabled = context.getSharedPreferences("campus_private", Context.MODE_PRIVATE)
                     .getBoolean("boot_auto_start", true);
