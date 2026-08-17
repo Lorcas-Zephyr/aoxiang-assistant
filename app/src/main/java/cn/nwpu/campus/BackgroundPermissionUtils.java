@@ -62,6 +62,24 @@ final class BackgroundPermissionUtils {
         return false;
     }
 
+    static Intent backgroundPowerSettingsIntent(Context context) {
+        PackageManager packages = context.getPackageManager();
+        for (ComponentName component : backgroundPowerComponents()) {
+            Intent intent = new Intent().setComponent(component);
+            if (packages.resolveActivity(intent, PackageManager.MATCH_DEFAULT_ONLY) != null) return intent;
+        }
+        return applicationDetailsIntent(context);
+    }
+
+    static boolean hasDedicatedBackgroundPowerSettings(Context context) {
+        PackageManager packages = context.getPackageManager();
+        for (ComponentName component : backgroundPowerComponents()) {
+            if (packages.resolveActivity(new Intent().setComponent(component),
+                    PackageManager.MATCH_DEFAULT_ONLY) != null) return true;
+        }
+        return false;
+    }
+
     private static List<ComponentName> autostartComponents() {
         String manufacturer = Build.MANUFACTURER == null ? ""
                 : Build.MANUFACTURER.toLowerCase(Locale.ROOT);
@@ -90,6 +108,17 @@ final class BackgroundPermissionUtils {
         } else if (manufacturer.contains("samsung")) {
             components.add(new ComponentName("com.samsung.android.lool",
                     "com.samsung.android.sm.ui.battery.BatteryActivity"));
+        }
+        return components;
+    }
+
+    private static List<ComponentName> backgroundPowerComponents() {
+        String manufacturer = Build.MANUFACTURER == null ? ""
+                : Build.MANUFACTURER.toLowerCase(Locale.ROOT);
+        List<ComponentName> components = new ArrayList<>();
+        if (manufacturer.contains("vivo") || manufacturer.contains("iqoo")) {
+            components.add(new ComponentName("com.iqoo.powersaving",
+                    "com.iqoo.powersaving.BackgroundHighUsageActivity"));
         }
         return components;
     }

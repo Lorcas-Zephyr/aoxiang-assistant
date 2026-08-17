@@ -5,10 +5,16 @@ import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
+import android.app.Presentation;
 import android.app.Service;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.graphics.Bitmap;
+import android.graphics.PixelFormat;
+import android.hardware.display.DisplayManager;
+import android.hardware.display.VirtualDisplay;
+import android.media.Image;
+import android.media.ImageReader;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Handler;
@@ -18,10 +24,13 @@ import android.os.PowerManager;
 import android.security.keystore.KeyGenParameterSpec;
 import android.security.keystore.KeyProperties;
 import android.util.Base64;
+import android.view.View;
+import android.view.ViewGroup;
 import android.webkit.CookieManager;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+import android.widget.FrameLayout;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -62,8 +71,13 @@ public class BackgroundSyncService extends Service {
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final UnifiedAuthTracker unifiedAuthTracker = new UnifiedAuthTracker();
     private SharedPreferences store;
+    private FrameLayout webHost;
     private WebView web;
+    private Presentation webPresentation;
+    private VirtualDisplay webVirtualDisplay;
+    private ImageReader webImageReader;
     private String script;
+    private String apiScript;
     private String target;
     private Runnable collectTask;
     private boolean running;
@@ -82,7 +96,7 @@ public class BackgroundSyncService extends Service {
     }
 
     @Override public int onStartCommand(Intent intent, int flags, int startId) {
-        if (running) return START_REDELIVER_INTENT;
+        if (running) return START_STICKY;
         if (MainActivity.isActivityVisible()) {
             BackgroundSyncScheduler.schedule(this, 60_000L);
             finishService();
@@ -111,7 +125,14 @@ public class BackgroundSyncService extends Service {
         BackgroundSyncScheduler.schedule(this, RETRY_DELAY_MS);
         startForeground(SERVICE_NOTIFICATION_ID, serviceNotification("正在更新" + label(target)));
         beginCollection();
-        return START_REDELIVER_INTENT;
+        return START_STICKY;
+    }
+
+    @Override public void onTaskRemoved(Intent rootIntent) {
+        // Some vendor ROMs stop an app's process when its task is swiped away.
+        // Keep an alarm armed so the receiver can recreate this service later.
+        BackgroundSyncScheduler.schedule(this, RETRY_DELAY_MS);
+        super.onTaskRemoved(rootIntent);
     }
 
     @Override public void onDestroy() {
@@ -129,11 +150,13 @@ public class BackgroundSyncService extends Service {
         unifiedAuthTracker.reset();
         String[] credentials = readCredentials();
         if (credentials[0].isEmpty() || credentials[1].isEmpty()) {
-            finishAttempt();
+            finishAttempt(false);
             return;
         }
         script = loadAsset("auto_collect.js");
-        web = new WebView(this);
+        apiScript = loadAsset("api_collect.js");
+        prepareHeadlessDisplay();
+        web = new WebView(webPresentation == null ? this : webPresentation.getContext());
         WebSettings settings = web.getSettings();
         settings.setJavaScriptEnabled(true);
         settings.setDomStorageEnabled(true);
@@ -149,6 +172,7 @@ public class BackgroundSyncService extends Service {
 
             @Override public void onPageFinished(WebView view, String url) {
                 unifiedAuthTracker.record(url);
+                layoutHeadlessWebView();
                 super.onPageFinished(view, url);
             }
 
@@ -167,6 +191,9 @@ public class BackgroundSyncService extends Service {
                 }
             }
         });
+        attachHeadlessWebView();
+        web.onResume();
+        web.resumeTimers();
         startCollector(credentials);
         web.loadUrl("electricity".equals(target) ? ELECTRICITY_SSO : EDUCATION_SSO);
     }
@@ -189,13 +216,14 @@ public class BackgroundSyncService extends Service {
                     return;
                 }
                 if (++attempts[0] > 180) {
-                    finishAttempt();
+                    finishAttempt(false);
                     return;
                 }
                 if (web.getProgress() < 60) {
                     handler.postDelayed(this, 1000L);
                     return;
                 }
+                layoutHeadlessWebView();
                 String source = script.replace("__MODE__", target)
                         .replace("__ALLOW_NAV__", Boolean.toString(System.currentTimeMillis() >= navigationCooldownUntil[0]))
                         .replace("__AUTH_EXITED__", Boolean.toString(unifiedAuthTracker.hasExited()))
@@ -203,8 +231,10 @@ public class BackgroundSyncService extends Service {
                         .replace("__PASSWORD__", JSONObject.quote(credentials[1]))
                         .replace("__SMS_CODE__", JSONObject.quote(""))
                         .replace("__CAN_AUTOFILL__", Boolean.toString(!credentialsSubmitted[0]))
-                        .replace("__CAN_FILL_SMS__", "false");
-                web.evaluateJavascript(source, result -> {
+                        .replace("__CAN_FILL_SMS__", "false")
+                        .replace("__HEADLESS__", "true");
+                final String legacySource = source;
+                android.webkit.ValueCallback<String> resultHandler = result -> {
                     if (!running) return;
                     try {
                         String raw = new JSONArray("[" + result + "]").getString(0);
@@ -230,8 +260,35 @@ public class BackgroundSyncService extends Service {
                         } else if ("page".equals(phase)) {
                             navigationCooldownUntil[0] = System.currentTimeMillis() + 1500L;
                         } else if ("target_error".equals(phase)) {
-                            finishAttempt();
+                            finishAttempt(false);
                             return;
+                        } else if ("grade_api_raw".equals(phase) && "grades".equals(target)) {
+                            JSONArray rows = PortalApiParsers.gradeRows(payload.optJSONArray("gradeResponses"));
+                            double gpa = PortalApiParsers.gpa(payload.optJSONObject("gpaResponse"));
+                            if (rows.length() > 0) {
+                                if (!Double.isNaN(gpa)) {
+                                    saveGrades(rows, gpa);
+                                } else {
+                                    // Keep the API grade rows and use the portrait page as the
+                                    // fallback source when getMyGpa is empty for this account.
+                                    collectedGradeRows[0] = rows;
+                                    portraitStartedAt[0] = System.currentTimeMillis();
+                                    navigationCooldownUntil[0] = System.currentTimeMillis() + 2000L;
+                                    web.loadUrl(STUDENT_PORTRAIT);
+                                    if (running) handler.postDelayed(this, 1000L);
+                                }
+                                return;
+                            }
+                        } else if ("schedule_api_raw".equals(phase) && "schedule".equals(target)) {
+                            saveSchedule(PortalApiParsers.schedulePayload(
+                                    payload.optJSONObject("semester"), payload.optJSONObject("printData")));
+                            return;
+                        } else if ("electricity_api_raw".equals(phase) && "electricity".equals(target)) {
+                            double balance = PortalApiParsers.electricityBalance(payload.optJSONObject("response"));
+                            if (!Double.isNaN(balance) && balance >= 0.0) {
+                                saveElectricity(balance);
+                                return;
+                            }
                         } else if ("data".equals(phase) && "grades".equals(target)) {
                             if (gradeReadyAt[0] == 0L) gradeReadyAt[0] = System.currentTimeMillis() + 5000L;
                             if (System.currentTimeMillis() >= gradeReadyAt[0]
@@ -260,7 +317,28 @@ public class BackgroundSyncService extends Service {
                         }
                     } catch (Exception ignored) {}
                     if (running) handler.postDelayed(this, 1000L);
-                });
+                };
+                if (!apiScript.isEmpty()) {
+                    String apiSource = apiScript.replace("__MODE__", target)
+                            .replace("__ALLOW_NAV__", Boolean.toString(
+                                    System.currentTimeMillis() >= navigationCooldownUntil[0]));
+                    web.evaluateJavascript(apiSource, apiResult -> {
+                        if (!running) return;
+                        try {
+                            String apiRaw = new JSONArray("[" + apiResult + "]").getString(0);
+                            JSONObject apiPayload = new JSONObject(apiRaw);
+                            String apiPhase = apiPayload.optString("phase");
+                            if (!"target_error".equals(apiPhase)
+                                    && !"api_unavailable".equals(apiPhase)) {
+                                resultHandler.onReceiveValue(apiResult);
+                                return;
+                            }
+                        } catch (Exception ignored) {}
+                        if (running) web.evaluateJavascript(legacySource, resultHandler);
+                    });
+                } else {
+                    web.evaluateJavascript(legacySource, resultHandler);
+                }
             }
         };
         handler.postDelayed(collectTask, 700L);
@@ -268,7 +346,7 @@ public class BackgroundSyncService extends Service {
 
     private void saveGrades(JSONArray rows, double gpa) {
         if (rows == null) {
-            finishAttempt();
+            finishAttempt(false);
             return;
         }
         List<GradeRecord> records = new ArrayList<>();
@@ -281,7 +359,7 @@ public class BackgroundSyncService extends Service {
         JSONArray updated = new JSONArray();
         for (GradeRecord record : records) updated.put(record.json());
         if (updated.length() == 0) {
-            finishAttempt();
+            finishAttempt(false);
             return;
         }
         String previous = store.getString("grades", "");
@@ -296,12 +374,12 @@ public class BackgroundSyncService extends Service {
         if (!changedCourses.isEmpty() && store.getBoolean("grade_update_notification_enabled", true)) {
             sendChangeNotification(true, changedCourses);
         }
-        finishAttempt();
+        finishAttempt(true);
     }
 
     private void saveSchedule(JSONObject payload) {
         if (payload == null) {
-            finishAttempt();
+            finishAttempt(false);
             return;
         }
         ScheduleImport.ParsedData parsed = ScheduleImport.parsePayload(payload);
@@ -310,6 +388,7 @@ public class BackgroundSyncService extends Service {
         List<UpdateDiff.Item> previousItems = UpdateDiff.scheduleItems(courses);
         int importedCount = 0;
         String firstImportedId = "";
+        boolean importedEmptySchedule = false;
 
         for (ScheduleImport.RawSemester rawSemester : parsed.semesters) {
             List<ScheduleModels.Course> imported = ScheduleImport.convertToCourses(
@@ -344,7 +423,29 @@ public class BackgroundSyncService extends Service {
                 importedCount = imported.size();
             }
         }
-        if (importedCount > 0) {
+        if (parsed.courses.isEmpty() && !parsed.semesters.isEmpty()) {
+            ScheduleImport.RawSemester rawSemester = parsed.semesters.get(0);
+            int index = findSemesterIndex(semesters, rawSemester.name);
+            ScheduleModels.Semester semester;
+            if (index >= 0) {
+                semester = semesters.get(index);
+                ScheduleModels.Semester replacement = ScheduleImport.createImportedSemester(
+                        rawSemester, new ArrayList<>());
+                semester.name = replacement.name;
+                semester.weekCount = replacement.weekCount;
+                semester.sectionCount = replacement.sectionCount;
+                semester.sectionTimes = replacement.sectionTimes;
+                semester.startDate = replacement.startDate;
+                semester.endDate = replacement.endDate;
+            } else {
+                semester = ScheduleImport.createImportedSemester(rawSemester, new ArrayList<>());
+                semesters.add(semester);
+            }
+            replaceCourses(courses, semester.id, new ArrayList<>());
+            firstImportedId = semester.id;
+            importedEmptySchedule = true;
+        }
+        if (importedCount > 0 || importedEmptySchedule) {
             List<String> changedCourses = UpdateDiff.changedNames(
                     previousItems, UpdateDiff.scheduleItems(courses));
             ScheduleStorage.saveSemesters(store, semesters);
@@ -357,7 +458,7 @@ public class BackgroundSyncService extends Service {
             }
             markCredentialsVerified();
         }
-        finishAttempt();
+        finishAttempt(importedCount > 0 || importedEmptySchedule);
     }
 
     private void normalizeSemesterDates(ScheduleModels.Semester semester) {
@@ -376,7 +477,8 @@ public class BackgroundSyncService extends Service {
     }
 
     private void saveElectricity(double balance) {
-        if (!Double.isNaN(balance) && balance >= 0.0) {
+        boolean valid = !Double.isNaN(balance) && balance >= 0.0;
+        if (valid) {
             store.edit().putString("electricity_balance", Double.toString(balance))
                     .putString("electricity_balance_source", ELECTRICITY_HOME).apply();
             ScheduleWidgetUpdater.updateAll(this);
@@ -384,13 +486,17 @@ public class BackgroundSyncService extends Service {
             updateElectricityAlert(balance);
             markCredentialsVerified();
         }
-        finishAttempt();
+        finishAttempt(valid);
     }
 
-    private void finishAttempt() {
+    private void finishAttempt(boolean success) {
         if (!running) return;
-        store.edit().putLong("auto_last_" + target, System.currentTimeMillis()).apply();
-        BackgroundSyncScheduler.schedule(this);
+        if (success) {
+            store.edit().putLong("auto_last_" + target, System.currentTimeMillis()).apply();
+            BackgroundSyncScheduler.schedule(this);
+        } else {
+            BackgroundSyncScheduler.schedule(this, RETRY_DELAY_MS);
+        }
         finishService();
     }
 
@@ -407,14 +513,103 @@ public class BackgroundSyncService extends Service {
         wakeLock = null;
     }
 
+    private void prepareHeadlessDisplay() {
+        int width = Math.max(360, getResources().getDisplayMetrics().widthPixels);
+        int height = Math.max(640, getResources().getDisplayMetrics().heightPixels);
+        int density = Math.max(160, getResources().getDisplayMetrics().densityDpi);
+        try {
+            webImageReader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2);
+            webImageReader.setOnImageAvailableListener(reader -> {
+                Image image = null;
+                try {
+                    image = reader.acquireLatestImage();
+                } catch (Exception ignored) {
+                } finally {
+                    if (image != null) image.close();
+                }
+            }, handler);
+            DisplayManager displays = (DisplayManager) getSystemService(DISPLAY_SERVICE);
+            if (displays == null) throw new IllegalStateException("Display service unavailable");
+            int flags = DisplayManager.VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY
+                    | DisplayManager.VIRTUAL_DISPLAY_FLAG_PRESENTATION;
+            webVirtualDisplay = displays.createVirtualDisplay("AoxiangBackgroundWeb", width, height,
+                    density, webImageReader.getSurface(), flags);
+            if (webVirtualDisplay == null || webVirtualDisplay.getDisplay() == null) {
+                throw new IllegalStateException("Virtual display unavailable");
+            }
+            webPresentation = new Presentation(this, webVirtualDisplay.getDisplay());
+            webPresentation.setCancelable(false);
+        } catch (Exception ignored) {
+            releaseHeadlessDisplay();
+        }
+    }
+
+    private void attachHeadlessWebView() {
+        if (webPresentation != null) {
+            try {
+                webHost = new FrameLayout(webPresentation.getContext());
+                webHost.addView(web, new FrameLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+                webPresentation.setContentView(webHost);
+                webPresentation.show();
+                layoutHeadlessWebView();
+                return;
+            } catch (Exception ignored) {
+                if (web != null && web.getParent() instanceof ViewGroup) {
+                    ((ViewGroup) web.getParent()).removeView(web);
+                }
+                releaseHeadlessDisplay();
+            }
+        }
+        webHost = new FrameLayout(this);
+        webHost.addView(web, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        layoutHeadlessWebView();
+    }
+
+    private void releaseHeadlessDisplay() {
+        if (webPresentation != null) {
+            try {
+                webPresentation.dismiss();
+            } catch (Exception ignored) {}
+            webPresentation = null;
+        }
+        if (webVirtualDisplay != null) {
+            webVirtualDisplay.release();
+            webVirtualDisplay = null;
+        }
+        if (webImageReader != null) {
+            webImageReader.close();
+            webImageReader = null;
+        }
+    }
+
+    private void layoutHeadlessWebView() {
+        if (web == null || webHost == null) return;
+        int width = Math.max(360, getResources().getDisplayMetrics().widthPixels);
+        int height = Math.max(640, getResources().getDisplayMetrics().heightPixels);
+        int widthSpec = View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY);
+        int heightSpec = View.MeasureSpec.makeMeasureSpec(height, View.MeasureSpec.EXACTLY);
+        webHost.measure(widthSpec, heightSpec);
+        webHost.layout(0, 0, width, height);
+        web.measure(widthSpec, heightSpec);
+        web.layout(0, 0, width, height);
+    }
+
     private void destroyWebView() {
         if (collectTask != null) handler.removeCallbacks(collectTask);
         collectTask = null;
         if (web != null) {
+            web.onPause();
             web.stopLoading();
+            if (web.getParent() instanceof ViewGroup) {
+                ((ViewGroup) web.getParent()).removeView(web);
+            }
             web.destroy();
             web = null;
         }
+        webHost = null;
+        releaseHeadlessDisplay();
         unifiedAuthTracker.reset();
     }
 
@@ -492,7 +687,7 @@ public class BackgroundSyncService extends Service {
                 .putString(INTERACTIVE_AUTH_TARGET, target == null ? "validate" : target)
                 .apply();
         sendAuthenticationNotification("自动更新需要统一认证，请打开翱翔助手完成登录");
-        finishAttempt();
+        finishAttempt(false);
     }
 
     private void markCredentialsVerified() {

@@ -16,6 +16,7 @@
         <package android:name="com.oplus.safecenter" />
         <package android:name="com.coloros.safecenter" />
         <package android:name="com.vivo.permissionmanager" />
+        <package android:name="com.iqoo.powersaving" />
         <package android:name="com.meizu.safe" />
         <package android:name="com.samsung.android.lool" />
     </queries>

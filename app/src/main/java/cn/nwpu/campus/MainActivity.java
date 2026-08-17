@@ -92,6 +92,7 @@ public class MainActivity extends Activity {
     private static final String ELECTRICITY_HOME = "https://yktapp.nwpu.edu.cn/plat/shouyeUser";
     private static final String ELECTRICITY_SSO = "https://yktapp.nwpu.edu.cn/berserker-auth/cas/login/supwisdom?targetUrl=https%3A%2F%2Fyktapp.nwpu.edu.cn%2Fplat";
     private static final String EXTRA_START_TAB = "start_tab";
+    private static final String SERVICE_CHANNEL = "background_sync";
     private static final String GRADE_CHANNEL = "grade_updates";
     private static final String SCHEDULE_CHANNEL = "schedule_updates";
     private static final String ELECTRICITY_CHANNEL = "electricity_alerts";
@@ -110,9 +111,13 @@ public class MainActivity extends Activity {
     private static final int REQUEST_EXACT_ALARM = 21;
     private static final int REQUEST_BATTERY_OPTIMIZATION = 22;
     private static final int REQUEST_AUTOSTART_SETTINGS = 23;
+    private static final int REQUEST_BACKGROUND_POWER_SETTINGS = 24;
+    private static final int AUTO_UPDATE_NOTIFICATION_ID = 1004;
     private static final String BACKGROUND_PERMISSION_PROMPT_SHOWN = "background_permission_prompt_shown";
     private static final String BACKGROUND_PERMISSION_FLOW_STEP = "background_permission_flow_step";
     private static final String AUTOSTART_SETTINGS_REQUESTED = "autostart_settings_requested";
+    private static final String BACKGROUND_POWER_SETTINGS_REQUESTED =
+            "background_power_settings_requested";
     private static final int TAB_HOME = 0;
     private static final int TAB_SCHEDULE = 1;
     private static final int TAB_GRADES = 2;
@@ -168,6 +173,7 @@ public class MainActivity extends Activity {
     private boolean showGradeCollectionWeb;
     private boolean showScheduleCollectionWeb;
     private boolean automaticRun;
+    private boolean automaticUpdateNotificationShown;
     private boolean silentBoot;
     private boolean darkMode;
     private boolean scheduleShowMonth;
@@ -192,6 +198,7 @@ public class MainActivity extends Activity {
     private String automationTarget = "";
     private String pendingSmsCode = "";
     private String autoCollectScript = "";
+    private String apiCollectScript = "";
     private String themeColor = ScheduleModels.DEFAULT_THEME_COLOR;
     private String selectedSemesterId = "";
     private String pendingExportJson = "";
@@ -234,6 +241,7 @@ public class MainActivity extends Activity {
         themeColor = ScheduleStorage.loadThemeColor(store);
         darkMode = ScheduleStorage.loadDarkMode(store);
         autoCollectScript = loadAsset("auto_collect.js");
+        apiCollectScript = loadAsset("api_collect.js");
         grades = loadGrades();
         portraitGpa = parseStoredDouble(PORTRAIT_GPA, Double.NaN);
         semesters = ScheduleStorage.loadSemesters(store);
@@ -320,6 +328,9 @@ public class MainActivity extends Activity {
         unregisterDataUpdateReceiver();
         activityVisible = false;
         cancelScheduledUpdates();
+        // Let the alarm/service take over when the app leaves the foreground.
+        // This also prevents a foreground collection notification becoming stale.
+        if (automaticRun) cancelAutomation();
         syncBackgroundService();
         super.onStop();
     }
@@ -1017,9 +1028,16 @@ public class MainActivity extends Activity {
         addBackgroundPermissionRow(permissionCard, "后台运行",
                 BackgroundPermissionUtils.isIgnoringBatteryOptimizations(this) ? "已允许" : "受电池优化限制",
                 this::requestBatteryOptimizationPermission, true);
+        boolean hasBackgroundPowerSettings =
+                BackgroundPermissionUtils.hasDedicatedBackgroundPowerSettings(this);
         addBackgroundPermissionRow(permissionCard, "自启动与后台启动",
                 "无法检测，请自行确认",
-                this::requestAutostartSettings, false);
+                this::requestAutostartSettings, hasBackgroundPowerSettings);
+        if (hasBackgroundPowerSettings) {
+            addBackgroundPermissionRow(permissionCard, "后台耗电",
+                    "无法检测，请选择“允许后台耗电”",
+                    this::requestBackgroundPowerSettings, false);
+        }
         parent.addView(permissionCard);
     }
 
@@ -2170,6 +2188,7 @@ public class MainActivity extends Activity {
         cancelAutomation();
         automationTarget = target;
         automaticRun = automatic;
+        if (automatic) showAutomaticUpdateNotification("正在更新" + automationLabel(target));
         unifiedAuthTracker.reset();
         boolean hideBrowser = !"bootstrap".equals(target);
         boolean showBrowser = !hideBrowser || !automatic && showCollectionWeb(target);
@@ -2325,8 +2344,10 @@ public class MainActivity extends Activity {
                         .replace("__SMS_CODE__", JSONObject.quote(pendingSmsCode))
                         .replace("__CAN_AUTOFILL__", Boolean.toString(!"bootstrap".equals(target)
                                 && !credentialsSubmitted[0] && !credentials[0].isEmpty() && !credentials[1].isEmpty()))
-                        .replace("__CAN_FILL_SMS__", Boolean.toString(!smsSubmitted[0] && !pendingSmsCode.isEmpty()));
-                web.evaluateJavascript(script, result -> {
+                        .replace("__CAN_FILL_SMS__", Boolean.toString(!smsSubmitted[0] && !pendingSmsCode.isEmpty()))
+                        .replace("__HEADLESS__", "false");
+                final String legacyScript = script;
+                android.webkit.ValueCallback<String> resultHandler = result -> {
                     if (generation != automationGeneration) return;
                     try {
                         String raw = new JSONArray("[" + result + "]").getString(0);
@@ -2414,9 +2435,9 @@ public class MainActivity extends Activity {
                         } else if ("page".equals(phase)) {
                             navigationCooldownUntil[0] = System.currentTimeMillis() + 1500L;
                             status.setText("正在读取数据…");
-                        } else if ("waiting".equals(phase)) {
+                        } else if ("waiting".equals(phase) || "api_waiting".equals(phase)) {
                             status.setText("正在读取数据…");
-                        } else if ("target_error".equals(phase) && "schedule".equals(target)) {
+                        } else if ("target_error".equals(phase)) {
                             if (initialSyncInProgress) {
                                 cancelAutomation();
                                 finishInitialSyncStep(target, false);
@@ -2426,10 +2447,46 @@ public class MainActivity extends Activity {
                                 cancelAutomaticAttempt(target);
                                 return;
                             }
-                            status.setText("教务系统将课表页退回首页，请稍后重试");
+                            String message = payload.optString("message", "接口读取失败，请稍后重试");
+                            status.setText(message);
+                            cancelAutomation();
+                            showTab(currentTab);
+                            Toast.makeText(MainActivity.this, message, Toast.LENGTH_LONG).show();
                         } else if ("credentials_valid".equals(phase) && "validate".equals(target)) {
                             handleCredentialsValidated();
                             return;
+                        } else if ("grade_api_raw".equals(phase) && "grades".equals(target)) {
+                            JSONArray rows = PortalApiParsers.gradeRows(payload.optJSONArray("gradeResponses"));
+                            double apiGpa = PortalApiParsers.gpa(payload.optJSONObject("gpaResponse"));
+                            if (rows.length() > 0) {
+                                if (!Double.isNaN(apiGpa)) {
+                                    handleCollectedGrades(rows, apiGpa, true);
+                                } else {
+                                    // Some accounts return the grade rows but leave getMyGpa empty.
+                                    // Continue through the student portrait DOM/API fallback instead
+                                    // of completing the update with a missing GPA.
+                                    collectedGradeRows[0] = rows;
+                                    portraitStartedAt[0] = System.currentTimeMillis();
+                                    navigationCooldownUntil[0] = System.currentTimeMillis() + 2000L;
+                                    status.setText("正在读取学生画像 GPA…");
+                                    web.loadUrl(STUDENT_PORTRAIT);
+                                    if (generation == automationGeneration) {
+                                        automationHandler.postDelayed(this, 1000L);
+                                    }
+                                }
+                                return;
+                            }
+                        } else if ("schedule_api_raw".equals(phase) && "schedule".equals(target)) {
+                            JSONObject schedulePayload = PortalApiParsers.schedulePayload(
+                                    payload.optJSONObject("semester"), payload.optJSONObject("printData"));
+                            handleCollectedSchedule(schedulePayload);
+                            return;
+                        } else if ("electricity_api_raw".equals(phase) && "electricity".equals(target)) {
+                            double balance = PortalApiParsers.electricityBalance(payload.optJSONObject("response"));
+                            if (!Double.isNaN(balance) && balance >= 0) {
+                                handleCollectedElectricity(balance);
+                                return;
+                            }
                         } else if ("data".equals(phase) && "grades".equals(target)) {
                             JSONArray rows = payload.optJSONArray("rows");
                             if (rows != null && collectedGradeRows[0] == null) {
@@ -2470,7 +2527,31 @@ public class MainActivity extends Activity {
                         status.setText("正在读取数据…");
                     }
                     if (generation == automationGeneration) automationHandler.postDelayed(this, 1000);
-                });
+                };
+                if (isCollectionTarget(target) && !apiCollectScript.isEmpty()) {
+                    String apiSource = apiCollectScript
+                            .replace("__MODE__", target)
+                            .replace("__ALLOW_NAV__", Boolean.toString(
+                                    System.currentTimeMillis() >= navigationCooldownUntil[0]));
+                    web.evaluateJavascript(apiSource, apiResult -> {
+                        if (generation != automationGeneration) return;
+                        try {
+                            String apiRaw = new JSONArray("[" + apiResult + "]").getString(0);
+                            JSONObject apiPayload = new JSONObject(apiRaw);
+                            String apiPhase = apiPayload.optString("phase");
+                            if (!"api_unavailable".equals(apiPhase)
+                                    && !"target_error".equals(apiPhase)) {
+                                resultHandler.onReceiveValue(apiResult);
+                                return;
+                            }
+                        } catch (Exception ignored) {}
+                        if (generation == automationGeneration) {
+                            web.evaluateJavascript(legacyScript, resultHandler);
+                        }
+                    });
+                } else {
+                    web.evaluateJavascript(legacyScript, resultHandler);
+                }
             }
         };
         automationHandler.postDelayed(automationTask, 700);
@@ -2749,6 +2830,7 @@ public class MainActivity extends Activity {
         automationGeneration++;
         if (automationTask != null) automationHandler.removeCallbacks(automationTask);
         automationTask = null;
+        cancelAutomaticUpdateNotification();
         if (automationWeb != null) {
             WebView web = automationWeb;
             automationWeb = null;
@@ -3044,6 +3126,7 @@ public class MainActivity extends Activity {
                 .apply();
         NotificationManager notifications = getSystemService(NotificationManager.class);
         if (notifications != null) {
+            notifications.cancel(AUTO_UPDATE_NOTIFICATION_ID);
             notifications.cancel(1001);
             notifications.cancel(1002);
             notifications.cancel(1003);
@@ -3114,6 +3197,10 @@ public class MainActivity extends Activity {
 
     private void createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= 26) {
+            NotificationChannel service = new NotificationChannel(SERVICE_CHANNEL, "后台同步", NotificationManager.IMPORTANCE_LOW);
+            service.setDescription("数据更新期间显示同步状态");
+            service.setShowBadge(false);
+            getSystemService(NotificationManager.class).createNotificationChannel(service);
             NotificationChannel channel = new NotificationChannel(GRADE_CHANNEL, "成绩更新", NotificationManager.IMPORTANCE_HIGH);
             channel.setDescription("检测到成绩变化时通知");
             getSystemService(NotificationManager.class).createNotificationChannel(channel);
@@ -3162,11 +3249,16 @@ public class MainActivity extends Activity {
     }
 
     private void promptBackgroundPermissionsIfNeeded() {
+        boolean backgroundPowerPending =
+                BackgroundPermissionUtils.hasDedicatedBackgroundPowerSettings(this)
+                        && !store.getBoolean(BACKGROUND_POWER_SETTINGS_REQUESTED, false);
         if (silentBoot || isFinishing() || isDestroyed() || !hasCredentials()
                 || !hasEnabledAutomaticUpdates()
-                || store.getBoolean(BACKGROUND_PERMISSION_PROMPT_SHOWN, false)) return;
+                || (store.getBoolean(BACKGROUND_PERMISSION_PROMPT_SHOWN, false)
+                        && !backgroundPowerPending)) return;
         if (hasCoreBackgroundPermissions()
-                && store.getBoolean(AUTOSTART_SETTINGS_REQUESTED, false)) {
+                && store.getBoolean(AUTOSTART_SETTINGS_REQUESTED, false)
+                && !backgroundPowerPending) {
             store.edit().putBoolean(BACKGROUND_PERMISSION_PROMPT_SHOWN, true).apply();
             return;
         }
@@ -3176,8 +3268,11 @@ public class MainActivity extends Activity {
             return;
         }
         showDecisionDialog("后台更新", "允许后台自动更新", "需要完成系统授权",
-                "翱翔助手会申请通知、定时唤醒和忽略电池优化，并打开系统的自启动与后台启动设置。完成后，关闭应用界面也能继续按设定时间检查数据。",
-                "稍后", () -> store.edit().putBoolean(BACKGROUND_PERMISSION_PROMPT_SHOWN, true).apply(),
+                "翱翔助手会申请通知、定时唤醒和忽略电池优化，并打开系统的自启动、后台启动及后台耗电设置。完成后，关闭应用界面也能继续按设定时间检查数据。",
+                "稍后", () -> store.edit()
+                        .putBoolean(BACKGROUND_PERMISSION_PROMPT_SHOWN, true)
+                        .putBoolean(BACKGROUND_POWER_SETTINGS_REQUESTED, true)
+                        .apply(),
                 "开始授权", this::startBackgroundPermissionFlow, dp(420));
     }
 
@@ -3227,11 +3322,21 @@ public class MainActivity extends Activity {
                 }
                 continue;
             }
+            if (step == 4) {
+                store.edit().putInt(BACKGROUND_PERMISSION_FLOW_STEP, 5).apply();
+                if (!store.getBoolean(AUTOSTART_SETTINGS_REQUESTED, false)) {
+                    requestAutostartSettings();
+                    return;
+                }
+                continue;
+            }
             store.edit().putInt(BACKGROUND_PERMISSION_FLOW_STEP, 0).apply();
-            if (!store.getBoolean(AUTOSTART_SETTINGS_REQUESTED, false)) {
-                requestAutostartSettings();
+            if (BackgroundPermissionUtils.hasDedicatedBackgroundPowerSettings(this)
+                    && !store.getBoolean(BACKGROUND_POWER_SETTINGS_REQUESTED, false)) {
+                requestBackgroundPowerSettings();
                 return;
             }
+            continue;
         }
     }
 
@@ -3259,6 +3364,17 @@ public class MainActivity extends Activity {
             store.edit().putBoolean(AUTOSTART_SETTINGS_REQUESTED, true).apply();
             Toast.makeText(this, BackgroundPermissionUtils.hasDedicatedAutostartSettings(this)
                     ? "请允许翱翔助手自启动和后台启动" : "请允许后台运行并取消电池限制",
+                    Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private void requestBackgroundPowerSettings() {
+        Intent intent = BackgroundPermissionUtils.backgroundPowerSettingsIntent(this);
+        if (startBackgroundPermissionActivity(intent, REQUEST_BACKGROUND_POWER_SETTINGS)) {
+            store.edit().putBoolean(BACKGROUND_POWER_SETTINGS_REQUESTED, true).apply();
+            Toast.makeText(this, BackgroundPermissionUtils.hasDedicatedBackgroundPowerSettings(this)
+                    ? "请选择翱翔助手，并设为允许后台耗电"
+                    : "请允许后台运行并取消电池限制",
                     Toast.LENGTH_LONG).show();
         }
     }
@@ -3303,6 +3419,36 @@ public class MainActivity extends Activity {
         if (autostartPermissionStatusView != null) {
             autostartPermissionStatusView.setText("无法检测，请自行确认");
         }
+    }
+
+    private void showAutomaticUpdateNotification(String status) {
+        if (!automaticRun || !isCollectionTarget(automationTarget)) return;
+        Intent intent = new Intent(this, MainActivity.class);
+        PendingIntent pending = PendingIntent.getActivity(this, 4, intent,
+                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+        android.app.Notification.Builder builder = Build.VERSION.SDK_INT >= 26
+                ? new android.app.Notification.Builder(this, SERVICE_CHANNEL)
+                : new android.app.Notification.Builder(this);
+        builder.setSmallIcon(R.drawable.ic_launcher)
+                .setContentTitle("翱翔助手")
+                .setContentText(status)
+                .setCategory(android.app.Notification.CATEGORY_SERVICE)
+                .setOngoing(true)
+                .setOnlyAlertOnce(true)
+                .setShowWhen(false)
+                .setContentIntent(pending);
+        NotificationManager manager = getSystemService(NotificationManager.class);
+        if (manager != null) {
+            manager.notify(AUTO_UPDATE_NOTIFICATION_ID, builder.build());
+            automaticUpdateNotificationShown = true;
+        }
+    }
+
+    private void cancelAutomaticUpdateNotification() {
+        if (!automaticUpdateNotificationShown) return;
+        NotificationManager manager = getSystemService(NotificationManager.class);
+        if (manager != null) manager.cancel(AUTO_UPDATE_NOTIFICATION_ID);
+        automaticUpdateNotificationShown = false;
     }
 
     private void sendGradeNotification(List<String> changedCourses) {

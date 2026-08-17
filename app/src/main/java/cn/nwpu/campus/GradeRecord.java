@@ -54,7 +54,7 @@ final class GradeRecord {
                 object.isNull("point") ? null : object.optDouble("point"),
                 object.isNull("score") ? null : object.optDouble("score"),
                 object.optString("category", "课程"),
-                object.optString("detail", "")
+                cleanDetail(object.optString("detail", ""))
         );
     }
 
@@ -65,7 +65,7 @@ final class GradeRecord {
         double score = parse(cells.optString(3));
         return new GradeRecord(course, Double.isNaN(credits) ? 0 : credits,
                 Double.isNaN(point) ? null : point, Double.isNaN(score) ? null : score,
-                "课程", cells.optString(4));
+                "课程", cleanDetail(cells.optString(4)));
     }
 
     static List<GradeRecord> keepHighest(List<GradeRecord> records) {
@@ -82,6 +82,24 @@ final class GradeRecord {
 
     static String normalizeCourseName(String value) {
         return value == null ? "" : value.trim().replaceAll("\\s+", " ").toLowerCase(Locale.ROOT);
+    }
+
+    private static String cleanDetail(String raw) {
+        String value = raw == null ? "" : raw;
+        // The grade endpoint returns escaped HTML spans for the component scores.
+        for (int pass = 0; pass < 2; pass++) {
+            value = value.replace("&nbsp;", " ")
+                    .replace("&quot;", "\"")
+                    .replace("&#39;", "'")
+                    .replace("&#x27;", "'")
+                    .replace("&lt;", "<")
+                    .replace("&gt;", ">")
+                    .replace("&amp;", "&");
+            value = value.replaceAll("(?i)<br\\s*/?>", " ")
+                    .replaceAll("(?s)<[^>]*>", " ");
+        }
+        return value.replace("\\n", " ").replace("\\r", " ")
+                .replaceAll("\\s+", " ").trim();
     }
 
     private static boolean isHigher(GradeRecord candidate, GradeRecord current) {

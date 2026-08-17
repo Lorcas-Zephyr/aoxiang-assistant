@@ -28,6 +28,8 @@
 
 版本变化请查看 [CHANGELOG.md](CHANGELOG.md)。
 
+当前使用的教务及一卡通数据路径、字段映射和采集状态协议见 [接口文档](docs/API.md)。
+
 ## 安装
 
 国内用户可从 [GitCode Releases](https://gitcode.com/lorcas/aoxiang-assistant/releases) 下载最新 APK，也可以使用 [GitHub Releases](https://github.com/Lorcas-Zephyr/aoxiang-assistant/releases)。Android 可能要求允许浏览器或文件管理器“安装未知应用”。
@@ -77,8 +79,10 @@ Release 构建需要在项目根目录提供未纳入版本控制的 `keystore.p
 
 ```text
 app/src/main/java/cn/nwpu/campus/  Android 原生代码
-app/src/main/assets/auto_collect.js 校方页面采集脚本
+app/src/main/assets/api_collect.js  校方结构化数据采集脚本
+app/src/main/assets/auto_collect.js 页面兼容采集脚本
 app/src/test/                       单元测试
+docs/API.md                         数据接口与采集协议
 scripts/build.sh                    构建入口
 ```
 

@@ -6,11 +6,19 @@
   const canAutofill = __CAN_AUTOFILL__;
   const canFillSms = __CAN_FILL_SMS__;
   const unifiedAuthExited = __AUTH_EXITED__;
+  const headless = __HEADLESS__;
   const collectionMode = mode === "grades" || mode === "schedule" || mode === "electricity";
 
   const text = (value) => String(value == null ? "" : value).replace(/\s+/g, " ").trim();
   const visible = (element) => {
     try {
+      if (headless) {
+        for (let current = element; current; current = current.parentElement) {
+          const currentStyle = getComputedStyle(current);
+          if (currentStyle.display === "none" || currentStyle.visibility === "hidden") return false;
+        }
+        return true;
+      }
       const style = getComputedStyle(element);
       return style.display !== "none" && style.visibility !== "hidden" && element.getClientRects().length > 0;
     } catch (ignored) {
