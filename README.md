@@ -28,7 +28,7 @@
 
 版本变化请查看 [CHANGELOG.md](CHANGELOG.md)。
 
-当前使用的教务及一卡通数据路径、字段映射和采集状态协议见 [接口文档](docs/API.md)。
+当前使用的教务及一卡通数据路径、字段映射和采集状态协议见 [接口文档](docs/API.md)；教务学生端已发现的完整接口清单见 [JWXT API 清单](docs/JWXT_API.md)。
 
 ## 安装
 
@@ -83,6 +83,7 @@ app/src/main/assets/api_collect.js  校方结构化数据采集脚本
 app/src/main/assets/auto_collect.js 页面兼容采集脚本
 app/src/test/                       单元测试
 docs/API.md                         数据接口与采集协议
+docs/JWXT_API.md                   教务学生端接口盘点
 scripts/build.sh                    构建入口
 ```
 

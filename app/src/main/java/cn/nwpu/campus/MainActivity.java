@@ -675,7 +675,7 @@ public class MainActivity extends Activity {
         summary.addView(divider, new LinearLayout.LayoutParams(-1, dp(1)));
         LinearLayout secondMetrics = new LinearLayout(this);
         secondMetrics.addView(metric("课程", String.valueOf(grades.size()), "门"), new LinearLayout.LayoutParams(0, dp(70), 1));
-        secondMetrics.addView(metric("剩余电费", Double.isNaN(electricityBalance) ? "--" : scoreDf.format(electricityBalance), "元"), new LinearLayout.LayoutParams(0, dp(70), 1));
+        secondMetrics.addView(metric("剩余电费", Double.isNaN(electricityBalance) ? "--" : scoreDf.format(electricityBalance), "度"), new LinearLayout.LayoutParams(0, dp(70), 1));
         summary.addView(secondMetrics);
         l.addView(summary);
 
@@ -958,7 +958,7 @@ public class MainActivity extends Activity {
         LinearLayout preferences = card(panelColor());
         preferences.setPadding(dp(14), 0, dp(8), 0);
         addSettingNavigation(preferences, "电费提醒",
-                electricityAlertEnabled ? "低于 " + scoreDf.format(electricityAlertThreshold) + " 元时提醒" : "已关闭",
+                electricityAlertEnabled ? "低于 " + scoreDf.format(electricityAlertThreshold) + " 度时提醒" : "已关闭",
                 "electricity", true);
         addSettingNavigation(preferences, "外观", darkMode ? "深色模式" : "浅色模式", "appearance", false);
         parent.addView(preferences);
@@ -1131,9 +1131,9 @@ public class MainActivity extends Activity {
         thresholdInput.setText(scoreDf.format(electricityAlertThreshold));
         thresholdInput.setBackground(border(surfaceColor(), lineColor(), 5));
         alertRow.addView(thresholdInput, new LinearLayout.LayoutParams(dp(84), dp(42)));
-        TextView yuan = label("元", 13, mutedColor());
-        yuan.setGravity(Gravity.CENTER);
-        alertRow.addView(yuan, new LinearLayout.LayoutParams(dp(28), dp(38)));
+        TextView unit = label("度", 13, mutedColor());
+        unit.setGravity(Gravity.CENTER);
+        alertRow.addView(unit, new LinearLayout.LayoutParams(dp(28), dp(38)));
         electricityCard.addView(alertRow);
         alertSwitch.setOnCheckedChangeListener((button, checked) -> {
             electricityAlertEnabled = checked;
@@ -2718,7 +2718,7 @@ public class MainActivity extends Activity {
             finishInitialSyncStep("electricity", true);
             return;
         }
-        if (!wasAutomatic) Toast.makeText(this, "剩余电费 " + scoreDf.format(balance) + " 元", Toast.LENGTH_LONG).show();
+        if (!wasAutomatic) Toast.makeText(this, "剩余电费 " + scoreDf.format(balance) + " 度", Toast.LENGTH_LONG).show();
         recordAutomaticAttempt("electricity", wasAutomatic);
     }
 
@@ -4855,7 +4855,7 @@ public class MainActivity extends Activity {
                     : new android.app.Notification.Builder(this);
             builder.setSmallIcon(R.drawable.ic_launcher)
                     .setContentTitle("电费余额不足")
-                    .setContentText("剩余 " + scoreDf.format(balance) + " 元，低于 " + scoreDf.format(electricityAlertThreshold) + " 元")
+                    .setContentText("剩余 " + scoreDf.format(balance) + " 度，低于 " + scoreDf.format(electricityAlertThreshold) + " 度")
                     .setAutoCancel(true)
                     .setContentIntent(pending);
             getSystemService(NotificationManager.class).notify(1002, builder.build());

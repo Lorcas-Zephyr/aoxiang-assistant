@@ -88,7 +88,7 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginStart="2dp"
-            android:text="元"
+            android:text="度"
             android:textColor="#5E7185"
             android:textSize="8sp" />
     </LinearLayout>

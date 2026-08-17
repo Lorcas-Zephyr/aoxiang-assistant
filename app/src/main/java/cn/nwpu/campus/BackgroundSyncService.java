@@ -712,7 +712,7 @@ public class BackgroundSyncService extends Service {
                     ? new Notification.Builder(this, ELECTRICITY_CHANNEL) : new Notification.Builder(this);
             builder.setSmallIcon(R.drawable.ic_launcher).setContentTitle("电费余额不足")
                     .setContentText("剩余 " + new DecimalFormat("0.00").format(balance)
-                            + " 元，低于 " + new DecimalFormat("0.00").format(threshold) + " 元")
+                            + " 度，低于 " + new DecimalFormat("0.00").format(threshold) + " 度")
                     .setAutoCancel(true).setContentIntent(pending);
             NotificationManager manager = getSystemService(NotificationManager.class);
             if (manager != null) manager.notify(1002, builder.build());
