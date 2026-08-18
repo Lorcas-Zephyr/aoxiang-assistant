@@ -15,9 +15,15 @@
 
 import { AbilityConstant, ConfigurationConstant, UIAbility, Want } from '@kit.AbilityKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
-import { window } from '@kit.ArkUI';
+import { window, display } from '@kit.ArkUI';
+import { BusinessError } from '@kit.BasicServicesKit';
 
 const DOMAIN = 0x0000;
+
+const pxToVp = (px: number): number => {
+  const density: number = display.getDefaultDisplaySync().densityPixels;
+  return density > 0 ? Math.round(px / density) : px;
+};
 
 export default class EntryAbility extends UIAbility {
   onCreate(want: Want, launchParam: AbilityConstant.LaunchParam): void {
@@ -47,6 +53,43 @@ export default class EntryAbility extends UIAbility {
       }
       hilog.info(DOMAIN, 'testTag', 'Succeeded in loading the content.');
     });
+
+    try {
+      const win: window.Window = windowStage.getMainWindowSync();
+      win.setWindowLayoutFullScreen(true).then(() => {
+        hilog.info(DOMAIN, 'testTag', '%{public}s', 'Succeeded in setting the window layout to full-screen mode.');
+      }).catch((err: BusinessError) => {
+        hilog.error(DOMAIN, 'testTag', 'Failed to set full screen. Cause: %{public}s', JSON.stringify(err));
+      });
+
+      const systemArea: window.AvoidArea = win.getWindowAvoidArea(window.AvoidAreaType.TYPE_SYSTEM);
+      AppStorage.setOrCreate('topRectHeight', pxToVp(systemArea.topRect.height));
+      const navArea: window.AvoidArea = win.getWindowAvoidArea(window.AvoidAreaType.TYPE_NAVIGATION_INDICATOR);
+      AppStorage.setOrCreate('bottomRectHeight', pxToVp(navArea.bottomRect.height));
+
+      win.on('avoidAreaChange', (data) => {
+        const info: Record<string, Object> = (data as object) as Record<string, Object>;
+        const typeVal: Object | undefined = info['type'];
+        const areaVal: Object | undefined = info['area'];
+        if (typeVal !== undefined && areaVal !== undefined && Number(typeVal) === window.AvoidAreaType.TYPE_SYSTEM) {
+          const area: Record<string, Object> = areaVal as Record<string, Object>;
+          const top: Record<string, Object> = area['topRect'] as Record<string, Object>;
+          const h: Object | undefined = top['height'];
+          if (h !== undefined) {
+            AppStorage.setOrCreate('topRectHeight', pxToVp(Number(h)));
+          }
+        } else if (typeVal !== undefined && areaVal !== undefined && Number(typeVal) === window.AvoidAreaType.TYPE_NAVIGATION_INDICATOR) {
+          const area: Record<string, Object> = areaVal as Record<string, Object>;
+          const bottom: Record<string, Object> = area['bottomRect'] as Record<string, Object>;
+          const h: Object | undefined = bottom['height'];
+          if (h !== undefined) {
+            AppStorage.setOrCreate('bottomRectHeight', pxToVp(Number(h)));
+          }
+        }
+      });
+    } catch (e) {
+      hilog.error(DOMAIN, 'testTag', 'Failed to configure window. Cause: %{public}s', JSON.stringify(e));
+    }
   }
 
   onWindowStageDestroy(): void {

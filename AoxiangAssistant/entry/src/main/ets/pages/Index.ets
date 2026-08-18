@@ -4,7 +4,8 @@ import { preferences } from '@kit.ArkData';
 import { util } from '@kit.ArkTS';
 import { CredentialStore } from '../model/CredentialStore';
 import { Grade, GradeMath } from '../model/GradeModel';
-import { Course, CoursePresetColors, Semester } from '../model/CourseModel';
+import { Course, CoursePresetColors, Semester, TimeSlot } from '../model/CourseModel';
+import { WeekUtils } from '../model/WeekUtils';
 import { ScheduleGrid } from '../components/ScheduleGrid';
 import { Constants, LoginPhase, LoginTarget } from '../common/Constants';
 import { BusinessError } from '@kit.BasicServicesKit';
@@ -31,6 +32,27 @@ struct Index {
   @State courses: Course[] = [];
   @State semesters: Semester[] = [];
   @State selectedSemesterIndex: number = 0;
+  @State selectedWeekOffset: number = 0;
+  @State showSemesterDialog: boolean = false;
+  @State editingSemester: Semester | undefined = undefined;
+  @State semNameInput: string = '';
+  @State semStartDateInput: string = '';
+  @State semWeekCountInput: string = '';
+  @State showCourseDialog: boolean = false;
+  @State editingCourse: Course | undefined = undefined;
+  @State courseNameInput: string = '';
+  @State courseCodeInput: string = '';
+  @State courseTeacherInput: string = '';
+  @State courseLocationInput: string = '';
+  @State courseSlotsInput: string = '';
+  @State courseColorIndex: number = 0;
+  @State pendingSemDate: Date = new Date();
+  @State showCourseDetail: boolean = false;
+  @State detailCourse: Course | undefined = undefined;
+  @State showConfirmDialog: boolean = false;
+  @State confirmTitle: string = '';
+  @State confirmMessage: string = '';
+  @StorageProp('topRectHeight') topRectHeight: number = 0;
 
   private webController: webview.WebviewController = new webview.WebviewController();
   private tabsController: TabsController = new TabsController();
@@ -45,7 +67,6 @@ struct Index {
   private gradeReadyAt: number = 0;
   private electricityReadyAt: number = 0;
   private smsSubmittedAt: number = 0;
-
   private gradePref: preferences.Preferences | undefined = undefined;
 
   async aboutToAppear(): Promise<void> {
@@ -187,7 +208,6 @@ struct Index {
       }
       this.semesters = semOut;
       this.courses = couOut;
-      this.assignCourseColors();
       if (this.selectedSemesterIndex >= this.semesters.length) {
         this.selectedSemesterIndex = 0;
       }
@@ -234,14 +254,109 @@ struct Index {
     }
     const dayOrder: number[] = [1, 2, 3, 4, 5, 6, 7, 0];
     out.sort((a: Course, b: Course) => {
-      const dayA: number = dayOrder.indexOf(a.dayOfWeek);
-      const dayB: number = dayOrder.indexOf(b.dayOfWeek);
+      const aSlot: TimeSlot | undefined = a.timeSlots.length > 0 ? a.timeSlots[0] : undefined;
+      const bSlot: TimeSlot | undefined = b.timeSlots.length > 0 ? b.timeSlots[0] : undefined;
+      const dayA: number = aSlot !== undefined ? dayOrder.indexOf(aSlot.dayOfWeek) : 7;
+      const dayB: number = bSlot !== undefined ? dayOrder.indexOf(bSlot.dayOfWeek) : 7;
       if (dayA !== dayB) {
         return dayA - dayB;
       }
-      return a.sectionStart - b.sectionStart;
+      const secA: number = aSlot !== undefined ? aSlot.sectionStart : 99;
+      const secB: number = bSlot !== undefined ? bSlot.sectionStart : 99;
+      return secA - secB;
     });
     return out;
+  }
+
+  private selectedSemester(): Semester | undefined {
+    if (this.semesters.length === 0) {
+      return undefined;
+    }
+    if (this.selectedSemesterIndex >= this.semesters.length) {
+      this.selectedSemesterIndex = 0;
+    }
+    return this.semesters[this.selectedSemesterIndex];
+  }
+
+  private selectedWeek(): number {
+    const sem: Semester | undefined = this.selectedSemester();
+    if (sem === undefined) {
+      return 1;
+    }
+    const result: number = WeekUtils.currentWeek(sem.startDate, sem.weekCount, this.selectedWeekOffset);
+    console.info(`selectedWeek: startDate=${sem.startDate} weekCount=${sem.weekCount} offset=${this.selectedWeekOffset} week=${result}`);
+    return result;
+  }
+
+  private selectedWeekStartDate(): string {
+    const sem: Semester | undefined = this.selectedSemester();
+    if (sem === undefined || sem.startDate.length === 0) {
+      return '';
+    }
+    const result: string = WeekUtils.formatDate(WeekUtils.weekStart(sem.startDate, this.selectedWeek()));
+    console.info(`selectedWeekStartDate: week=${this.selectedWeek()} weekStart=${result}`);
+    return result;
+  }
+
+  private canMoveWeek(direction: number): boolean {
+    const sem: Semester | undefined = this.selectedSemester();
+    if (sem === undefined || sem.startDate.length === 0) {
+      return false;
+    }
+    const current: number = this.selectedWeek();
+    const weekCount: number = Math.max(1, sem.weekCount);
+    if (direction > 0) {
+      return current < weekCount;
+    }
+    return current > 1;
+  }
+
+  private moveWeek(direction: number): void {
+    if (!this.canMoveWeek(direction)) {
+      return;
+    }
+    this.selectedWeekOffset += direction;
+    console.info(`moveWeek: direction=${direction} offset=${this.selectedWeekOffset} week=${this.selectedWeek()}`);
+  }
+
+  private resetWeek(): void {
+    this.selectedWeekOffset = 0;
+  }
+
+  private openStartDatePicker(): void {
+    const sem: Semester | undefined = this.selectedSemester();
+    if (sem === undefined) {
+      return;
+    }
+    let initial: Date = new Date();
+    if (sem.startDate.length > 0) {
+      initial = WeekUtils.parseStartDate(sem.startDate);
+    }
+    this.getUIContext().showDatePickerDialog({
+      start: new Date(2020, 0, 1),
+      end: new Date(2030, 11, 31),
+      selected: initial,
+      showTime: false,
+      onDateAccept: (value: Date) => {
+        this.confirmStartDate(value);
+      },
+    });
+  }
+
+  private confirmStartDate(date: Date): void {
+    const sem: Semester | undefined = this.selectedSemester();
+    if (sem === undefined) {
+      return;
+    }
+    sem.startDate = WeekUtils.formatDate(WeekUtils.mondayOnOrBefore(date));
+    this.selectedWeekOffset = 0;
+    const refreshed: Semester[] = [];
+    for (let i = 0; i < this.semesters.length; i++) {
+      refreshed.push(this.semesters[i]);
+    }
+    this.semesters = refreshed;
+    this.saveCoursesToPref();
+    console.info(`confirmStartDate: startDate=${sem.startDate} week=${this.selectedWeek()} weekStart=${this.selectedWeekStartDate()}`);
   }
 
   private weightedPoint(): string {
@@ -342,6 +457,7 @@ struct Index {
     this.courses = [];
     this.semesters = [];
     this.selectedSemesterIndex = 0;
+    this.selectedWeekOffset = 0;
     this.statusText = '已退出登录';
   }
 
@@ -574,17 +690,70 @@ struct Index {
     for (let i = 0; i < couRaw.length; i++) {
       couOut.push(Course.fromRecord(couRaw[i] as Record<string, Object>));
     }
+    if (semOut.length === 0) {
+      const s: Semester = new Semester();
+      s.name = '当前学期';
+      s.dataSemester = 'current';
+      s.weekCount = Semester.computeWeekCount(couOut);
+      semOut.push(s);
+    } else {
+      for (let i = 0; i < semOut.length; i++) {
+        const semCourses: Course[] = [];
+        for (let j = 0; j < couOut.length; j++) {
+          if (couOut[j].dataSemester === semOut[i].dataSemester) {
+            semCourses.push(couOut[j]);
+          }
+        }
+        semOut[i].weekCount = Semester.computeWeekCount(semCourses);
+      }
+    }
+    const defaultSemester: string = semOut.length > 0 ? semOut[0].dataSemester : 'current';
+    const mergedSemCourses: Course[] = this.mergeCoursesBySemester(couOut, defaultSemester);
+    const mergedAll: Course[] = this.mergeCoursesAcrossSemesters(couOut);
     this.semesters = semOut;
-    this.courses = couOut;
-    this.assignCourseColors();
+    this.courses = mergedAll;
     this.saveCoursesToPref();
     this.selectedSemesterIndex = 0;
+    this.selectedWeekOffset = 0;
     this.stopPolling();
     this.showWebView = false;
-    this.statusText = `已导入 ${couOut.length} 门课程`;
+    this.statusText = `已导入 ${mergedSemCourses.length} 门课程`;
     this.currentTab = 1;
     this.tabsController.changeIndex(1);
     console.info(`handleCollectedSchedule: DONE, courses=${this.courses.length} semesters=${this.semesters.length}`);
+  }
+
+  private mergeCoursesBySemester(courses: Course[], semester: string): Course[] {
+    const inSem: Course[] = [];
+    for (let i = 0; i < courses.length; i++) {
+      if (courses[i].dataSemester === semester) {
+        inSem.push(courses[i]);
+      }
+    }
+    return Course.mergeByName(inSem);
+  }
+
+  private mergeCoursesAcrossSemesters(courses: Course[]): Course[] {
+    const grouped: Record<string, Course[]> = {};
+    const order: string[] = [];
+    for (let i = 0; i < courses.length; i++) {
+      const ds: string = courses[i].dataSemester;
+      const existing: Course[] | undefined = grouped[ds];
+      if (existing === undefined) {
+        grouped[ds] = [courses[i]];
+        order.push(ds);
+      } else {
+        existing.push(courses[i]);
+      }
+    }
+    const out: Course[] = [];
+    for (let i = 0; i < order.length; i++) {
+      const merged: Course[] = Course.mergeByName(grouped[order[i]]);
+      for (let j = 0; j < merged.length; j++) {
+        out.push(merged[j]);
+      }
+    }
+    return out;
   }
 
   build() {
@@ -606,6 +775,11 @@ struct Index {
         .tabBar('')
 
         TabContent() {
+          this.ManageContent()
+        }
+        .tabBar('')
+
+        TabContent() {
           this.SettingsContent()
         }
         .tabBar('')
@@ -613,6 +787,7 @@ struct Index {
       .onChange((index: number) => {
         this.currentTab = index;
       })
+      .scrollable(false)
       .width('100%')
       .height('100%')
       .backgroundColor($r('app.color.page_background'))
@@ -632,6 +807,18 @@ struct Index {
       if (this.showSmsForm) {
         this.SmsDialog()
       }
+
+      if (this.showSemesterDialog) {
+        this.SemesterDialogBuilder()
+      }
+
+      if (this.showCourseDialog) {
+        this.CourseDialogBuilder()
+      }
+
+      if (this.showConfirmDialog) {
+        this.ConfirmDialogBuilder()
+      }
     }
     .width('100%')
     .height('100%')
@@ -645,7 +832,8 @@ struct Index {
         { 'label': '首页', 'index': 0 },
         { 'label': '课表', 'index': 1 },
         { 'label': '成绩', 'index': 2 },
-        { 'label': '设置', 'index': 3 },
+        { 'label': '管理', 'index': 3 },
+        { 'label': '设置', 'index': 4 },
       ], (tab: Record<string, Object>) => {
         Column() {
           Text(tab['label'] as string)
@@ -670,7 +858,7 @@ struct Index {
     .backgroundColor($r('app.color.tab_bar_bg'))
     .shadow({ radius: 20, color: '#1A000000', offsetX: 0, offsetY: -2 })
     .position({ x: '4%', y: '100%' })
-    .translate({ y: -24 })
+    .translate({ y: -80 })
     .zIndex(10)
   }
 
@@ -682,7 +870,7 @@ struct Index {
           .fontSize(28)
           .fontWeight(FontWeight.Bold)
           .fontColor($r('app.color.text_primary'))
-          .margin({ top: 40, bottom: 8 })
+          .margin({ top: this.topRectHeight + 20, bottom: 8 })
 
         Text('西北工业大学教务助手')
           .fontSize(14)
@@ -940,7 +1128,7 @@ struct Index {
           })
       }
       .width('92%')
-      .margin({ top: 20, bottom: 12 })
+      .margin({ top: this.topRectHeight + 8, bottom: 12 })
 
       if (this.courses.length === 0) {
         Column() {
@@ -972,18 +1160,19 @@ struct Index {
           Row() {
             Button('‹')
               .fontSize(18)
-              .width(36)
-              .height(36)
+              .width(32)
+              .height(32)
               .backgroundColor(Color.Transparent)
               .fontColor($r('app.color.accent'))
               .border({ width: 1, color: $r('app.color.border_light'), radius: 6 })
               .onClick(() => {
                 if (this.selectedSemesterIndex > 0) {
                   this.selectedSemesterIndex--;
+                  this.selectedWeekOffset = 0;
                 }
               })
             Text(this.semesters[this.selectedSemesterIndex].name)
-              .fontSize(14)
+              .fontSize(13)
               .fontColor($r('app.color.text_secondary'))
               .fontWeight(FontWeight.Medium)
               .layoutWeight(1)
@@ -992,34 +1181,116 @@ struct Index {
               .textOverflow({ overflow: TextOverflow.Ellipsis })
             Button('›')
               .fontSize(18)
-              .width(36)
-              .height(36)
+              .width(32)
+              .height(32)
               .backgroundColor(Color.Transparent)
               .fontColor($r('app.color.accent'))
               .border({ width: 1, color: $r('app.color.border_light'), radius: 6 })
               .onClick(() => {
                 if (this.selectedSemesterIndex < this.semesters.length - 1) {
                   this.selectedSemesterIndex++;
+                  this.selectedWeekOffset = 0;
                 }
               })
           }
           .width('92%')
-          .margin({ bottom: 12 })
+          .margin({ bottom: 8 })
         }
 
+        Row() {
+          Button('‹')
+            .fontSize(20)
+            .width(40)
+            .height(38)
+            .backgroundColor(Color.Transparent)
+            .fontColor(this.canMoveWeek(-1) ? $r('app.color.accent') : $r('app.color.text_hint'))
+            .border({ width: 1, color: $r('app.color.border_light'), radius: 6 })
+            .onClick(() => {
+              this.moveWeek(-1);
+            })
+
+          Column() {
+            Text(this.weekTitleText())
+              .fontSize(14)
+              .fontColor($r('app.color.text_secondary'))
+              .fontWeight(FontWeight.Bold)
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+            Row() {
+              Text('本周')
+                .fontSize(11)
+                .fontColor(this.selectedWeekOffset === 0 ? $r('app.color.text_hint') : $r('app.color.accent'))
+                .onClick(() => {
+                  this.resetWeek();
+                })
+              Text('  |  设置第一周')
+                .fontSize(11)
+                .fontColor($r('app.color.text_hint'))
+                .onClick(() => {
+                  this.openStartDatePicker();
+                })
+            }
+            .margin({ top: 2 })
+            .justifyContent(FlexAlign.Center)
+          }
+          .layoutWeight(1)
+          .justifyContent(FlexAlign.Center)
+          .alignItems(HorizontalAlign.Center)
+
+          Button('›')
+            .fontSize(20)
+            .width(40)
+            .height(38)
+            .backgroundColor(Color.Transparent)
+            .fontColor(this.canMoveWeek(1) ? $r('app.color.accent') : $r('app.color.text_hint'))
+            .border({ width: 1, color: $r('app.color.border_light'), radius: 6 })
+            .onClick(() => {
+              this.moveWeek(1);
+            })
+        }
+        .width('92%')
+        .margin({ bottom: 8 })
+
         Column() {
-          ScheduleGrid({ courses: this.currentSemesterCourses() })
+          ScheduleGrid({
+            courses: this.currentSemesterCourses(),
+            week: this.selectedWeek(),
+            weekStartDate: this.selectedWeekStartDate(),
+          })
         }
         .width('92%')
         .backgroundColor($r('app.color.schedule_bg'))
         .borderRadius(12)
         .padding(8)
         .layoutWeight(1)
+        .parallelGesture(
+          PanGesture({ direction: PanDirection.Horizontal, distance: 80 })
+            .onActionEnd((event: GestureEvent) => {
+              const dx: number = event.offsetX;
+              console.info(`schedule pan dx=${dx}`);
+              if (dx < -80) {
+                this.moveWeek(1);
+              } else if (dx > 80) {
+                this.moveWeek(-1);
+              }
+            })
+        )
       }
     }
     .width('100%')
     .height('100%')
     .alignItems(HorizontalAlign.Center)
+  }
+
+  private weekTitleText(): string {
+    const sem: Semester | undefined = this.selectedSemester();
+    if (sem === undefined) {
+      return '课表';
+    }
+    if (sem.startDate.length === 0) {
+      return `${sem.name} · 未设置第一周`;
+    }
+    return `${sem.name} · 第${this.selectedWeek()}周`;
   }
 
   @Builder
@@ -1050,7 +1321,7 @@ struct Index {
             })
         }
         .width('92%')
-        .margin({ top: 20, bottom: 16 })
+        .margin({ top: this.topRectHeight + 8, bottom: 16 })
 
         this.GradesMetrics()
 
@@ -1149,7 +1420,7 @@ struct Index {
           .fontSize(24)
           .fontWeight(FontWeight.Bold)
           .fontColor($r('app.color.text_secondary'))
-          .margin({ top: 20, bottom: 16 })
+          .margin({ top: this.topRectHeight + 8, bottom: 16 })
 
         Column() {
           Row() {
@@ -1211,6 +1482,780 @@ struct Index {
   }
 
   @Builder
+  ManageContent() {
+    Scroll() {
+      Column() {
+        Row() {
+          Text('管理')
+            .fontSize(24)
+            .fontWeight(FontWeight.Bold)
+            .fontColor($r('app.color.text_secondary'))
+          Blank()
+          Button('导入课表')
+            .height(32)
+            .backgroundColor(Color.Transparent)
+            .fontColor($r('app.color.accent'))
+            .fontSize(13)
+            .border({ width: 1, color: $r('app.color.accent'), radius: 6 })
+            .onClick(() => {
+              if (!this.hasCredentials) {
+                this.showLoginForm = true;
+                this.currentTarget = LoginTarget.SCHEDULE;
+                return;
+              }
+              this.startPortal(LoginTarget.SCHEDULE, false);
+            })
+        }
+        .width('92%')
+        .margin({ top: this.topRectHeight + 8, bottom: 12 })
+
+        Column() {
+          Row() {
+            Text('学期')
+              .fontSize(14)
+              .fontWeight(FontWeight.Bold)
+              .fontColor($r('app.color.text_secondary'))
+            Blank()
+            Button('新增学期')
+              .height(28)
+              .backgroundColor(Color.Transparent)
+              .fontColor($r('app.color.accent'))
+              .fontSize(12)
+              .border({ width: 1, color: $r('app.color.accent'), radius: 6 })
+              .onClick(() => {
+                this.openSemesterDialog(undefined);
+              })
+          }
+          .width('100%')
+          .padding({ left: 16, right: 16, top: 12, bottom: 8 })
+
+          if (this.semesters.length === 0) {
+            Text('暂无学期，请先新增或导入')
+              .fontSize(12)
+              .fontColor($r('app.color.text_hint'))
+              .margin({ top: 8, bottom: 16 })
+              .width('100%')
+              .textAlign(TextAlign.Center)
+          } else {
+            ForEach(this.semesters, (sem: Semester, idx: number) => {
+              this.SemesterCard(sem, idx)
+            }, (sem: Semester, idx: number) => `sem_${idx}_${sem.dataSemester}`)
+          }
+        }
+        .width('92%')
+        .backgroundColor($r('app.color.card_background'))
+        .borderRadius(12)
+        .margin({ bottom: 12 })
+
+        Column() {
+          Row() {
+            Text('课程')
+              .fontSize(14)
+              .fontWeight(FontWeight.Bold)
+              .fontColor($r('app.color.text_secondary'))
+            Blank()
+            Button('新增课程')
+              .height(28)
+              .backgroundColor(Color.Transparent)
+              .fontColor($r('app.color.accent'))
+              .fontSize(12)
+              .border({ width: 1, color: $r('app.color.accent'), radius: 6 })
+              .onClick(() => {
+                if (this.semesters.length === 0) {
+                  this.statusText = '请先新增或导入学期';
+                  return;
+                }
+                this.openCourseDialog(undefined);
+              })
+          }
+          .width('100%')
+          .padding({ left: 16, right: 16, top: 12, bottom: 8 })
+
+          Row() {
+            Text('当前学期：')
+              .fontSize(12)
+              .fontColor($r('app.color.text_hint'))
+            Text(this.selectedSemesterName())
+              .fontSize(12)
+              .fontColor($r('app.color.accent'))
+              .margin({ left: 4 })
+          }
+          .width('100%')
+          .padding({ left: 16, bottom: 8 })
+
+          if (this.currentManageCourses().length === 0) {
+            Text('当前学期暂无课程')
+              .fontSize(12)
+              .fontColor($r('app.color.text_hint'))
+              .margin({ top: 8, bottom: 16 })
+              .width('100%')
+              .textAlign(TextAlign.Center)
+          } else {
+            ForEach(this.currentManageCourses(), (course: Course, idx: number) => {
+              this.ManageCourseCard(course)
+            }, (course: Course, idx: number) => `mc_${idx}_${course.id}`)
+          }
+        }
+        .width('92%')
+        .backgroundColor($r('app.color.card_background'))
+        .borderRadius(12)
+      }
+      .width('100%')
+      .alignItems(HorizontalAlign.Center)
+    }
+    .width('100%')
+    .height('100%')
+    .scrollBar(BarState.Off)
+    .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM])
+  }
+
+  private selectedSemesterName(): string {
+    const sem: Semester | undefined = this.selectedSemester();
+    if (sem === undefined) {
+      return '无';
+    }
+    return sem.name;
+  }
+
+  private currentManageCourses(): Course[] {
+    const sem: Semester | undefined = this.selectedSemester();
+    if (sem === undefined) {
+      return [];
+    }
+    const out: Course[] = [];
+    for (let i = 0; i < this.courses.length; i++) {
+      if (this.courses[i].dataSemester === sem.dataSemester) {
+        out.push(this.courses[i]);
+      }
+    }
+    return out;
+  }
+
+  @Builder
+  SemesterCard(sem: Semester, idx: number) {
+    Column() {
+      Row() {
+        Column() {
+          Text(sem.name)
+            .fontSize(14)
+            .fontWeight(FontWeight.Bold)
+            .fontColor($r('app.color.text_secondary'))
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+          Text(this.semesterDetailText(sem))
+            .fontSize(11)
+            .fontColor($r('app.color.text_hint'))
+            .margin({ top: 2 })
+        }
+        .layoutWeight(1)
+        .alignItems(HorizontalAlign.Start)
+
+        if (this.selectedSemesterIndex === idx) {
+          Text('当前')
+            .fontSize(10)
+            .fontColor($r('app.color.accent'))
+            .border({ width: 1, color: $r('app.color.accent'), radius: 4 })
+            .padding({ left: 6, right: 6, top: 2, bottom: 2 })
+        } else {
+          Button('设为当前')
+            .height(28)
+            .backgroundColor(Color.Transparent)
+            .fontColor($r('app.color.accent'))
+            .fontSize(12)
+            .border({ width: 1, color: $r('app.color.accent'), radius: 6 })
+            .onClick(() => {
+              this.selectedSemesterIndex = idx;
+              this.selectedWeekOffset = 0;
+            })
+        }
+
+        Button('编辑')
+          .height(28)
+          .backgroundColor(Color.Transparent)
+          .fontColor($r('app.color.text_tertiary'))
+          .fontSize(12)
+          .border({ width: 1, color: $r('app.color.border_light'), radius: 6 })
+          .margin({ left: 6 })
+          .onClick(() => {
+            this.openSemesterDialog(sem);
+          })
+
+        Button('删除')
+          .height(28)
+          .backgroundColor(Color.Transparent)
+          .fontColor($r('app.color.danger'))
+          .fontSize(12)
+          .border({ width: 1, color: $r('app.color.danger'), radius: 6 })
+          .margin({ left: 6 })
+          .onClick(() => {
+            this.requestDeleteSemester(idx);
+          })
+      }
+      .width('100%')
+      .padding({ left: 16, right: 16, top: 10, bottom: 10 })
+
+      Row()
+        .width('100%')
+        .height(0.5)
+        .backgroundColor($r('app.color.divider'))
+    }
+  }
+
+  private semesterDetailText(sem: Semester): string {
+    const weeks: string = sem.weekCount > 0 ? `${sem.weekCount}周` : '未设置';
+    const date: string = sem.startDate.length > 0 ? sem.startDate : '未设置第一周';
+    return `${date} · ${weeks}`;
+  }
+
+  @Builder
+  ManageCourseCard(course: Course) {
+    Column() {
+      Row() {
+        Column() {
+          Text(course.name)
+            .fontSize(14)
+            .fontWeight(FontWeight.Bold)
+            .fontColor($r('app.color.text_secondary'))
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+          Text(this.courseTimeSummary(course))
+            .fontSize(11)
+            .fontColor($r('app.color.text_hint'))
+            .margin({ top: 2 })
+          if (course.location.length > 0 || course.teacher.length > 0) {
+            Text(this.courseMetaText(course))
+              .fontSize(11)
+              .fontColor($r('app.color.text_hint'))
+              .margin({ top: 1 })
+          }
+        }
+        .layoutWeight(1)
+        .alignItems(HorizontalAlign.Start)
+
+        Column() {
+          Row()
+            .width(16)
+            .height(16)
+            .borderRadius(8)
+            .backgroundColor(course.getColor())
+            .margin({ bottom: 6 })
+          Button('编辑')
+            .height(28)
+            .backgroundColor(Color.Transparent)
+            .fontColor($r('app.color.accent'))
+            .fontSize(12)
+            .border({ width: 1, color: $r('app.color.accent'), radius: 6 })
+            .onClick(() => {
+              this.openCourseDialog(course);
+            })
+          Button('删除')
+            .height(28)
+            .backgroundColor(Color.Transparent)
+            .fontColor($r('app.color.danger'))
+            .fontSize(12)
+            .border({ width: 1, color: $r('app.color.danger'), radius: 6 })
+            .margin({ top: 6 })
+            .onClick(() => {
+              this.requestDeleteCourse(course.id);
+            })
+        }
+        .alignItems(HorizontalAlign.End)
+        .margin({ left: 8 })
+      }
+      .width('100%')
+      .padding({ left: 16, right: 16, top: 10, bottom: 10 })
+
+      Row()
+        .width('100%')
+        .height(0.5)
+        .backgroundColor($r('app.color.divider'))
+    }
+  }
+
+  private courseTimeSummary(course: Course): string {
+    const parts: string[] = [];
+    for (let i = 0; i < course.timeSlots.length; i++) {
+      const slot: TimeSlot = course.timeSlots[i];
+      parts.push(`${this.dayLabel(slot.dayOfWeek)} ${slot.sectionStart}-${slot.sectionEnd}节`);
+    }
+    return parts.length > 0 ? parts.join('；') : course.scheduleText;
+  }
+
+  private dayLabel(day: number): string {
+    const labels: string[] = ['', '周一', '周二', '周三', '周四', '周五', '周六', '周日'];
+    return day >= 1 && day <= 7 ? labels[day] : '';
+  }
+
+  private courseMetaText(course: Course): string {
+    const arr: string[] = [];
+    if (course.teacher.length > 0) {
+      arr.push(`教师：${course.teacher}`);
+    }
+    if (course.location.length > 0) {
+      arr.push(`地点：${course.location}`);
+    }
+    return arr.join('　');
+  }
+
+  private openSemesterDialog(sem: Semester | undefined): void {
+    this.editingSemester = sem;
+    if (sem === undefined) {
+      this.semNameInput = '';
+      this.semStartDateInput = '';
+      this.semWeekCountInput = '20';
+      this.pendingSemDate = new Date();
+    } else {
+      this.semNameInput = sem.name;
+      this.semStartDateInput = sem.startDate;
+      this.semWeekCountInput = `${sem.weekCount}`;
+      if (sem.startDate.length > 0) {
+        this.pendingSemDate = WeekUtils.parseStartDate(sem.startDate);
+      } else {
+        this.pendingSemDate = new Date();
+      }
+    }
+    this.showSemesterDialog = true;
+  }
+
+  private openSemDatePicker(): void {
+    this.getUIContext().showDatePickerDialog({
+      start: new Date(2020, 0, 1),
+      end: new Date(2030, 11, 31),
+      selected: this.pendingSemDate,
+      showTime: false,
+      onDateAccept: (value: Date) => {
+        this.pendingSemDate = value;
+        this.semStartDateInput = WeekUtils.formatDate(WeekUtils.mondayOnOrBefore(value));
+      },
+    });
+  }
+
+  private confirmSemesterDialog(): void {
+    const name: string = this.semNameInput.trim();
+    if (name.length === 0) {
+      this.statusText = '请输入学期名称';
+      return;
+    }
+    const weeks: number = parseInt(this.semWeekCountInput, 10);
+    const weekCount: number = isFinite(weeks) && weeks >= 4 ? weeks : 20;
+    if (this.editingSemester === undefined) {
+      const sem: Semester = new Semester();
+      sem.name = name;
+      sem.dataSemester = `semester-${Date.now()}`;
+      sem.startDate = this.semStartDateInput;
+      sem.weekCount = weekCount;
+      this.semesters = [...this.semesters, sem];
+    } else {
+      this.editingSemester.name = name;
+      this.editingSemester.startDate = this.semStartDateInput;
+      this.editingSemester.weekCount = weekCount;
+      const refreshed: Semester[] = [];
+      for (let i = 0; i < this.semesters.length; i++) {
+        refreshed.push(this.semesters[i]);
+      }
+      this.semesters = refreshed;
+    }
+    this.showSemesterDialog = false;
+    this.saveCoursesToPref();
+  }
+
+  private requestDeleteSemester(idx: number): void {
+    this.confirmMessage = `确定删除学期「${this.semesters[idx].name}」及其全部课程吗？`;
+    this.confirmTitle = '删除学期';
+    this.showConfirmDialog = true;
+    const targetIdx: number = idx;
+    this.confirmCallback = () => {
+      this.deleteSemesterConfirmed(targetIdx);
+    };
+  }
+
+  private confirmCallback: (() => void) | undefined = undefined;
+
+  private deleteSemesterConfirmed(idx: number): void {
+    if (idx < 0 || idx >= this.semesters.length) {
+      return;
+    }
+    const ds: string = this.semesters[idx].dataSemester;
+    const remainSems: Semester[] = [];
+    for (let i = 0; i < this.semesters.length; i++) {
+      if (i !== idx) {
+        remainSems.push(this.semesters[i]);
+      }
+    }
+    const remainCourses: Course[] = [];
+    for (let i = 0; i < this.courses.length; i++) {
+      if (this.courses[i].dataSemester !== ds) {
+        remainCourses.push(this.courses[i]);
+      }
+    }
+    this.semesters = remainSems;
+    this.courses = remainCourses;
+    if (this.selectedSemesterIndex >= this.semesters.length) {
+      this.selectedSemesterIndex = this.semesters.length > 0 ? this.semesters.length - 1 : 0;
+    }
+    this.saveCoursesToPref();
+  }
+
+  private openCourseDialog(course: Course | undefined): void {
+    this.editingCourse = course;
+    if (course === undefined) {
+      this.courseNameInput = '';
+      this.courseCodeInput = '';
+      this.courseTeacherInput = '';
+      this.courseLocationInput = '';
+      this.courseSlotsInput = '1-16周 周一 1-2节';
+      this.courseColorIndex = 0;
+    } else {
+      this.courseNameInput = course.name;
+      this.courseCodeInput = course.code;
+      this.courseTeacherInput = course.teacher;
+      this.courseLocationInput = course.location;
+      this.courseSlotsInput = this.slotsToText(course);
+      this.courseColorIndex = course.colorIndex % CoursePresetColors.COLORS.length;
+    }
+    this.showCourseDialog = true;
+  }
+
+  private slotsToText(course: Course): string {
+    const parts: string[] = [];
+    for (let i = 0; i < course.timeSlots.length; i++) {
+      const slot: TimeSlot = course.timeSlots[i];
+      const week: string = slot.weekRange.length > 0 ? slot.weekRange : '1-16';
+      parts.push(`${week}周 ${this.dayLabel(slot.dayOfWeek)} ${slot.sectionStart}-${slot.sectionEnd}节`);
+    }
+    return parts.join('\n');
+  }
+
+  private confirmCourseDialog(): void {
+    const sem: Semester | undefined = this.selectedSemester();
+    if (sem === undefined) {
+      this.statusText = '请先选择学期';
+      return;
+    }
+    const name: string = this.courseNameInput.trim();
+    if (name.length === 0) {
+      this.statusText = '请输入课程名称';
+      return;
+    }
+    const slots: TimeSlot[] = Course.parseSlotText(this.courseSlotsInput, this.courseLocationInput.trim());
+    if (slots.length === 0) {
+      this.statusText = '请至少输入一条上课时间';
+      return;
+    }
+    if (this.editingCourse === undefined) {
+      const c: Course = new Course();
+      c.id = `course-${Date.now()}`;
+      c.name = name;
+      c.code = this.courseCodeInput.trim();
+      c.teacher = this.courseTeacherInput.trim();
+      c.location = this.courseLocationInput.trim();
+      c.dataSemester = sem.dataSemester;
+      c.scheduleText = this.courseSlotsInput;
+      c.colorIndex = this.courseColorIndex;
+      c.timeSlots = slots;
+      this.courses = [...this.courses, c];
+    } else {
+      this.editingCourse.name = name;
+      this.editingCourse.code = this.courseCodeInput.trim();
+      this.editingCourse.teacher = this.courseTeacherInput.trim();
+      this.editingCourse.location = this.courseLocationInput.trim();
+      this.editingCourse.scheduleText = this.courseSlotsInput;
+      this.editingCourse.colorIndex = this.courseColorIndex;
+      this.editingCourse.timeSlots = slots;
+      const refreshed: Course[] = [];
+      for (let i = 0; i < this.courses.length; i++) {
+        refreshed.push(this.courses[i]);
+      }
+      this.courses = refreshed;
+    }
+    this.showCourseDialog = false;
+    this.saveCoursesToPref();
+  }
+
+  private requestDeleteCourse(id: string): void {
+    this.confirmMessage = '确定删除该课程吗？';
+    this.confirmTitle = '删除课程';
+    this.showConfirmDialog = true;
+    const targetId: string = id;
+    this.confirmCallback = () => {
+      this.deleteCourseConfirmed(targetId);
+    };
+  }
+
+  private deleteCourseConfirmed(id: string): void {
+    const remain: Course[] = [];
+    for (let i = 0; i < this.courses.length; i++) {
+      if (this.courses[i].id !== id) {
+        remain.push(this.courses[i]);
+      }
+    }
+    this.courses = remain;
+    this.saveCoursesToPref();
+  }
+
+  @Builder
+  SemesterDialogBuilder() {
+    Column() {
+      Column() {
+        Text(this.editingSemester === undefined ? '新增学期' : '编辑学期')
+          .fontSize(18)
+          .fontColor($r('app.color.text_secondary'))
+          .fontWeight(FontWeight.Bold)
+          .margin({ bottom: 12 })
+
+        TextInput({ placeholder: '学期名称（如 2026-2027秋）', text: this.semNameInput })
+          .height(44)
+          .fontSize(14)
+          .onChange((value: string) => {
+            this.semNameInput = value;
+          })
+
+        Row() {
+          Text(this.semStartDateInput.length > 0 ? `第一周：${this.semStartDateInput}` : '选择第一周日期')
+            .fontSize(13)
+            .fontColor(this.semStartDateInput.length > 0 ? $r('app.color.text_secondary') : $r('app.color.text_hint'))
+            .layoutWeight(1)
+            .onClick(() => {
+              this.openSemDatePicker();
+            })
+
+          Button('选择')
+            .height(32)
+            .backgroundColor(Color.Transparent)
+            .fontColor($r('app.color.accent'))
+            .fontSize(13)
+            .border({ width: 1, color: $r('app.color.accent'), radius: 6 })
+            .onClick(() => {
+              this.openSemDatePicker();
+            })
+        }
+        .width('100%')
+        .margin({ top: 10 })
+
+        TextInput({ placeholder: '周数（默认20）', text: this.semWeekCountInput })
+          .type(InputType.Number)
+          .height(44)
+          .fontSize(14)
+          .margin({ top: 10 })
+          .onChange((value: string) => {
+            this.semWeekCountInput = value;
+          })
+
+        Row() {
+          Button('取消')
+            .layoutWeight(1)
+            .height(44)
+            .backgroundColor(Color.Transparent)
+            .fontColor($r('app.color.text_hint'))
+            .fontSize(14)
+            .border({ width: 1, color: $r('app.color.border_light'), radius: 8 })
+            .onClick(() => {
+              this.showSemesterDialog = false;
+            })
+
+          Button('保存')
+            .layoutWeight(1)
+            .height(44)
+            .backgroundColor($r('app.color.accent'))
+            .fontColor(Color.White)
+            .fontSize(14)
+            .borderRadius(8)
+            .margin({ left: 10 })
+            .onClick(() => {
+              this.confirmSemesterDialog();
+            })
+        }
+        .width('100%')
+        .margin({ top: 14 })
+      }
+      .width('90%')
+      .backgroundColor($r('app.color.card_background'))
+      .borderRadius(16)
+      .padding(22)
+    }
+    .width('100%')
+    .height('100%')
+    .justifyContent(FlexAlign.Center)
+    .backgroundColor($r('app.color.overlay_dim'))
+  }
+
+  @Builder
+  CourseDialogBuilder() {
+    Column() {
+      Column() {
+        Text(this.editingCourse === undefined ? '新增课程' : '编辑课程')
+          .fontSize(18)
+          .fontColor($r('app.color.text_secondary'))
+          .fontWeight(FontWeight.Bold)
+          .margin({ bottom: 10 })
+
+        TextInput({ placeholder: '课程名称', text: this.courseNameInput })
+          .height(42)
+          .fontSize(14)
+          .onChange((value: string) => {
+            this.courseNameInput = value;
+          })
+
+        TextInput({ placeholder: '课程代码（可选）', text: this.courseCodeInput })
+          .height(42)
+          .fontSize(14)
+          .margin({ top: 8 })
+          .onChange((value: string) => {
+            this.courseCodeInput = value;
+          })
+
+        TextInput({ placeholder: '教师（可选）', text: this.courseTeacherInput })
+          .height(42)
+          .fontSize(14)
+          .margin({ top: 8 })
+          .onChange((value: string) => {
+            this.courseTeacherInput = value;
+          })
+
+        TextInput({ placeholder: '上课地点（可选）', text: this.courseLocationInput })
+          .height(42)
+          .fontSize(14)
+          .margin({ top: 8 })
+          .onChange((value: string) => {
+            this.courseLocationInput = value;
+          })
+
+        TextArea({ placeholder: '上课时间（每行一条）\n例如：1-16周 周一 1-2节', text: this.courseSlotsInput })
+          .height(92)
+          .fontSize(13)
+          .margin({ top: 8 })
+          .onChange((value: string) => {
+            this.courseSlotsInput = value;
+          })
+
+        Text('课程颜色')
+          .fontSize(13)
+          .fontColor($r('app.color.text_secondary'))
+          .margin({ top: 10, bottom: 6 })
+          .width('100%')
+
+        Row() {
+          ForEach(CoursePresetColors.COLORS, (color: string, idx: number) => {
+            Column() {
+              Row()
+                .width(22)
+                .height(22)
+                .borderRadius(11)
+                .backgroundColor(color)
+                .border({ width: this.courseColorIndex === idx ? 3 : 0, color: Color.White, radius: 11 })
+            }
+            .width(32)
+            .height(32)
+            .justifyContent(FlexAlign.Center)
+            .alignItems(HorizontalAlign.Center)
+            .border({ width: this.courseColorIndex === idx ? 1 : 0, color: $r('app.color.accent'), radius: 16 })
+            .onClick(() => {
+              this.courseColorIndex = idx;
+            })
+          }, (color: string, idx: number) => `c_${idx}`)
+        }
+        .width('100%')
+        .margin({ top: 4 })
+
+        Row() {
+          Button('取消')
+            .layoutWeight(1)
+            .height(44)
+            .backgroundColor(Color.Transparent)
+            .fontColor($r('app.color.text_hint'))
+            .fontSize(14)
+            .border({ width: 1, color: $r('app.color.border_light'), radius: 8 })
+            .onClick(() => {
+              this.showCourseDialog = false;
+            })
+
+          Button('保存')
+            .layoutWeight(1)
+            .height(44)
+            .backgroundColor($r('app.color.accent'))
+            .fontColor(Color.White)
+            .fontSize(14)
+            .borderRadius(8)
+            .margin({ left: 10 })
+            .onClick(() => {
+              this.confirmCourseDialog();
+            })
+        }
+        .width('100%')
+        .margin({ top: 14 })
+      }
+      .width('92%')
+      .backgroundColor($r('app.color.card_background'))
+      .borderRadius(16)
+      .padding(20)
+    }
+    .width('100%')
+    .height('100%')
+    .justifyContent(FlexAlign.Center)
+    .backgroundColor($r('app.color.overlay_dim'))
+  }
+
+  @Builder
+  ConfirmDialogBuilder() {
+    Column() {
+      Column() {
+        Text(this.confirmTitle)
+          .fontSize(18)
+          .fontColor($r('app.color.text_secondary'))
+          .fontWeight(FontWeight.Bold)
+
+        Text(this.confirmMessage)
+          .fontSize(13)
+          .fontColor($r('app.color.text_tertiary'))
+          .margin({ top: 10 })
+          .textAlign(TextAlign.Center)
+          .width('100%')
+
+        Row() {
+          Button('取消')
+            .layoutWeight(1)
+            .height(44)
+            .backgroundColor(Color.Transparent)
+            .fontColor($r('app.color.text_hint'))
+            .fontSize(14)
+            .border({ width: 1, color: $r('app.color.border_light'), radius: 8 })
+            .onClick(() => {
+              this.showConfirmDialog = false;
+              this.confirmCallback = undefined;
+            })
+
+          Button('确定')
+            .layoutWeight(1)
+            .height(44)
+            .backgroundColor($r('app.color.danger'))
+            .fontColor(Color.White)
+            .fontSize(14)
+            .borderRadius(8)
+            .margin({ left: 10 })
+            .onClick(() => {
+              const cb: (() => void) | undefined = this.confirmCallback;
+              this.showConfirmDialog = false;
+              this.confirmCallback = undefined;
+              if (cb !== undefined) {
+                cb();
+              }
+            })
+        }
+        .width('100%')
+        .margin({ top: 14 })
+      }
+      .width('86%')
+      .backgroundColor($r('app.color.card_background'))
+      .borderRadius(16)
+      .padding(22)
+    }
+    .width('100%')
+    .height('100%')
+    .justifyContent(FlexAlign.Center)
+    .backgroundColor($r('app.color.overlay_dim'))
+  }
+
+  @Builder
   WebViewOverlay() {
     Column() {
       Row() {
@@ -1238,7 +2283,8 @@ struct Index {
         .layoutWeight(1)
       }
       .width('100%')
-      .height(56)
+      .height(this.topRectHeight + 56)
+      .padding({ top: this.topRectHeight })
       .alignItems(VerticalAlign.Center)
       .backgroundColor($r('app.color.card_background'))
 

@@ -11,3 +11,5 @@ oh_modules/
 local.properties
 
 screenshots/
+
+.deveco/

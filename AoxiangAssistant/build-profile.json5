@@ -7,11 +7,11 @@
         "material": {
           "certpath": "C:\\Users\\gaodu\\.ohos\\config\\default_AoxiangAssistant_HXa0Ls7oKx9O5AgH9j_4ggri3Ox1-8GLKvUjlXVYhaY=.cer",
           "keyAlias": "debugKey",
-          "keyPassword": "0000001B792E7D0907DD0BBCB86731AFDDB0F53C8D0F62F20605980068011C41F61DDBDBDC3603E52E404D",
+          "keyPassword": "0000001B512088AB410AA65D3E37FE913CDC1313C9E3904219D4E1CEE6870395F8B99FD5F32D38009F75C6",
           "profile": "C:\\Users\\gaodu\\.ohos\\config\\default_AoxiangAssistant_HXa0Ls7oKx9O5AgH9j_4ggri3Ox1-8GLKvUjlXVYhaY=.p7b",
           "signAlg": "SHA256withECDSA",
           "storeFile": "C:\\Users\\gaodu\\.ohos\\config\\default_AoxiangAssistant_HXa0Ls7oKx9O5AgH9j_4ggri3Ox1-8GLKvUjlXVYhaY=.p12",
-          "storePassword": "0000001B3EE43316EAEF90D16E5ACD6396AFDCD9824EB9CA241DF12360C05B7CFC1993D713AD06F639AA59"
+          "storePassword": "0000001B7445F31D3A681A312C08FD32CDAB48DF3A15C83A2B16E0484FAB10252D13850E50074F52604C83"
         }
       }
     ],
