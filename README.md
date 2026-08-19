@@ -89,7 +89,7 @@ scripts/build.sh                    构建入口
 
 ## 致谢
 
-课表管理相关功能参考并集成了 [Whippap/soaring-schedule-remake](https://github.com/Whippap/soaring-schedule-remake)，已获得原作者许可。
+课表管理相关功能参考了 [Whippap/soaring-schedule-remake](https://github.com/Whippap/soaring-schedule-remake)，感谢原作者。
 
 ## 反馈
 

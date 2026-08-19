@@ -1260,7 +1260,7 @@ public class MainActivity extends Activity {
         LinearLayout notice = card(panelColor());
         notice.addView(label("本应用不是西北工业大学官方应用。", 13, textColor()));
         addGap(notice, 8);
-        notice.addView(label("课表功能经许可参考 Whippap/soaring-schedule-remake。", 12, mutedColor()));
+        notice.addView(label("课表功能参考 Whippap/soaring-schedule-remake。", 12, mutedColor()));
         parent.addView(notice);
     }
 
