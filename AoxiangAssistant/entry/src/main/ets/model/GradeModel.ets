@@ -5,12 +5,19 @@ export class Grade {
   credits: number = 0;
   point: number = NaN;
   score: number = NaN;
+  passFailText: string = '';
 
   pointText(): string {
+    if (this.passFailText.length > 0) {
+      return this.passFailText;
+    }
     return isNaN(this.point) ? '--' : this.point.toFixed(1);
   }
 
   scoreText(): string {
+    if (this.passFailText.length > 0) {
+      return this.passFailText;
+    }
     return isNaN(this.score) ? '--' : this.score.toFixed(0);
   }
 
@@ -19,8 +26,15 @@ export class Grade {
     g.course = cells[0] ?? '';
     g.credits = parseNum(cells[1] ?? '');
     g.point = parseNum(cells[2] ?? '');
-    g.score = parseNum(cells[3] ?? '');
-    g.detail = cells[4] ?? '';
+    const scoreRaw: string = cells[3] ?? '';
+    const passFailMatch: RegExpMatchArray | null = scoreRaw.match(
+      /^(P|NP|通过|不通过|优秀|良好|中等|及格|不及格)$/i);
+    if (passFailMatch !== null) {
+      g.passFailText = passFailMatch[0];
+    } else {
+      g.score = parseNum(scoreRaw);
+    }
+    g.detail = Grade.cleanDetail(cells[4] ?? '');
     g.category = '课程';
     return g;
   }
@@ -34,7 +48,9 @@ export class Grade {
     const rawScore: Object | undefined = obj['score'];
     g.score = rawScore === null || rawScore === undefined ? NaN : rawScore as number;
     g.category = (obj['category'] ?? '课程') as string;
-    g.detail = (obj['detail'] ?? '') as string;
+    g.detail = Grade.cleanDetail((obj['detail'] ?? '') as string);
+    const rawPf: Object | undefined = obj['passFailText'];
+    g.passFailText = rawPf !== undefined && rawPf !== null ? (rawPf as string) : '';
     return g;
   }
 
@@ -51,7 +67,29 @@ export class Grade {
     if (!isNaN(this.score)) {
       obj['score'] = this.score;
     }
+    if (this.passFailText.length > 0) {
+      obj['passFailText'] = this.passFailText;
+    }
     return obj;
+  }
+
+  static cleanDetail(raw: string): string {
+    let value: string = raw;
+    for (let pass = 0; pass < 2; pass++) {
+      value = value.replace(/&nbsp;/g, ' ')
+        .replace(/&quot;/g, '"')
+        .replace(/&#39;/g, "'")
+        .replace(/&#x27;/g, "'")
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .replace(/&amp;/g, '&');
+      value = value.replace(/<br\s*\/?>/gi, ' ')
+        .replace(/<[^>]*>/g, ' ');
+    }
+    return value.replace(/\\n/g, ' ')
+      .replace(/\\r/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
   }
 }
 
