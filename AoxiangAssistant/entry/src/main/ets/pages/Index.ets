@@ -231,6 +231,7 @@ struct Index {
       if (this.selectedSemesterIndex >= this.semesters.length) {
         this.selectedSemesterIndex = 0;
       }
+      this.tryJumpToFirstCourseWeek();
     } catch (e) {
       console.error('loadCourses failed');
     }
@@ -341,6 +342,54 @@ struct Index {
 
   private resetWeek(): void {
     this.selectedWeekOffset = 0;
+  }
+
+  private autoFirstCourseWeek(): number {
+    const courses: Course[] = this.currentSemesterCourses();
+    const sem: Semester | undefined = this.selectedSemester();
+    if (sem === undefined || courses.length === 0) {
+      return 0;
+    }
+    const maxWeek: number = Math.max(1, sem.weekCount);
+    for (let w = 1; w <= maxWeek; w++) {
+      for (let i = 0; i < courses.length; i++) {
+        for (let j = 0; j < courses[i].timeSlots.length; j++) {
+          const slot: TimeSlot = courses[i].timeSlots[j];
+          if (WeekUtils.isWeekInRange(w, slot.weekRange) &&
+            WeekUtils.matchesRepeatRule(w, slot.repeatRule)) {
+            return w;
+          }
+        }
+      }
+    }
+    return 0;
+  }
+
+  private tryJumpToFirstCourseWeek(): void {
+    if (this.selectedWeekOffset !== 0) {
+      return;
+    }
+    const firstWeek: number = this.autoFirstCourseWeek();
+    if (firstWeek <= 0) {
+      return;
+    }
+    const current: number = this.selectedWeek();
+    const sem: Semester | undefined = this.selectedSemester();
+    if (sem === undefined || sem.startDate.length === 0) {
+      return;
+    }
+    const inRange: boolean = this.currentSemesterCourses().some((c: Course) =>
+      c.timeSlots.some((s: TimeSlot) =>
+        s.dayOfWeek >= 1 && s.dayOfWeek <= 7 &&
+        s.sectionStart >= 1 && s.sectionEnd >= s.sectionStart &&
+        WeekUtils.isWeekInRange(current, s.weekRange) &&
+        WeekUtils.matchesRepeatRule(current, s.repeatRule)
+      )
+    );
+    if (!inRange) {
+      this.selectedWeekOffset = firstWeek - current;
+      console.info(`tryJumpToFirstCourseWeek: jump to week=${firstWeek} offset=${this.selectedWeekOffset}`);
+    }
   }
 
   private openStartDatePicker(): void {
@@ -881,6 +930,7 @@ struct Index {
     }
     this.currentTab = 1;
     this.tabsController.changeIndex(1);
+    this.tryJumpToFirstCourseWeek();
     console.info(`handleCollectedSchedule: DONE, courses=${this.courses.length} semesters=${this.semesters.length}`);
   }
 
