@@ -150,4 +150,17 @@ export class WeekUtils {
     const day: number = d.getDate();
     return `${year}-${month < 10 ? '0' : ''}${month}-${day < 10 ? '0' : ''}${day}`;
   }
+
+  static weekCountForRange(startDate: string, endDate: string): number {
+    if (startDate.length === 0 || endDate.length === 0) {
+      return 1;
+    }
+    const start: Date = WeekUtils.mondayOnOrBefore(WeekUtils.parseStartDate(startDate));
+    const end: Date = WeekUtils.parseStartDate(endDate);
+    const diffDays: number = Math.floor((end.getTime() - start.getTime()) / WeekUtils.DAY_MS);
+    if (diffDays < 0) {
+      return 1;
+    }
+    return Math.floor(diffDays / 7) + 1;
+  }
 }
