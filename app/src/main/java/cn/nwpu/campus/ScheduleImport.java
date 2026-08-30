@@ -202,10 +202,9 @@ public final class ScheduleImport {
             String restPart = dayPosition >= 0 ? segment.substring(dayPosition) : segment;
             List<Integer> sections = parseSections(restPart);
             if (sections.isEmpty()) continue;
-            ScheduleModels.RepeatRule rule = parseRepeatRule(segment);
-            List<String> weekRanges = extractWeekRanges(weekPart);
-            for (String weekRange : weekRanges) {
-                slots.add(new ScheduleModels.TimeSlot(weekRange, rule, day, sections));
+            List<WeekRangeRule> weekRanges = extractWeekRangesWithRules(weekPart);
+            for (WeekRangeRule weekRange : weekRanges) {
+                slots.add(new ScheduleModels.TimeSlot(weekRange.range, weekRange.rule, day, sections));
             }
         }
         return mergeSlots(slots);
@@ -272,35 +271,62 @@ public final class ScheduleImport {
     }
 
     private static ScheduleModels.RepeatRule parseRepeatRule(String text) {
-        if (text.contains("单周") || text.contains("(单)") || text.contains("（单）")) return ScheduleModels.RepeatRule.ODD;
-        if (text.contains("双周") || text.contains("(双)") || text.contains("（双）")) return ScheduleModels.RepeatRule.EVEN;
+        String normalized = text == null ? "" : text.replace('（', '(').replace('）', ')')
+                .replaceAll("\\s+", "");
+        if (normalized.contains("单周") || normalized.contains("(单)")) return ScheduleModels.RepeatRule.ODD;
+        if (normalized.contains("双周") || normalized.contains("(双)")) return ScheduleModels.RepeatRule.EVEN;
         return ScheduleModels.RepeatRule.ALL;
     }
 
-    private static List<String> extractWeekRanges(String text) {
+    private static List<WeekRangeRule> extractWeekRangesWithRules(String text) {
         String converted = text;
         for (Map.Entry<String, Integer> entry : CHINESE_NUMBERS.entrySet()) {
             converted = converted.replace("第" + entry.getKey() + "周", String.valueOf(entry.getValue()));
         }
-        converted = converted.replace("周", "").trim();
-        if (converted.isEmpty()) return Arrays.asList("1-17");
-        List<String> ranges = new ArrayList<>();
+        ScheduleModels.RepeatRule wholeRule = parseRepeatRule(converted);
+        boolean hasOdd = wholeRule == ScheduleModels.RepeatRule.ODD;
+        boolean hasEven = wholeRule == ScheduleModels.RepeatRule.EVEN;
+        // When both markers occur in one expression, each comma-separated part owns its rule.
+        String compact = converted.replace('（', '(').replace('）', ')').replaceAll("\\s+", "");
+        hasOdd = compact.contains("单周") || compact.contains("(单)");
+        hasEven = compact.contains("双周") || compact.contains("(双)");
+        ScheduleModels.RepeatRule inheritedRule = hasOdd == hasEven ? ScheduleModels.RepeatRule.ALL : wholeRule;
+        if (converted.isEmpty()) return Arrays.asList(new WeekRangeRule("1-17", ScheduleModels.RepeatRule.ALL));
+        List<WeekRangeRule> ranges = new ArrayList<>();
         for (String raw : converted.split("[,，、]")) {
             String part = raw.trim();
+            ScheduleModels.RepeatRule localRule = parseRepeatRule(part);
+            if (localRule == ScheduleModels.RepeatRule.ALL) localRule = inheritedRule;
+            part = part.replaceAll("[（(]\\s*[单双]\\s*[）)]", "")
+                    .replace("单周", "").replace("双周", "").replace("周", "").trim();
             Matcher rangeMatcher = WEEK_RANGE.matcher(part);
             if (rangeMatcher.find()) {
                 int start = parseInt(rangeMatcher.group(1));
                 int end = parseInt(rangeMatcher.group(2));
-                if (start > 0 && end >= start) ranges.add(start == end ? String.valueOf(start) : start + "-" + end);
+                if (start > 0 && end >= start) {
+                    ranges.add(new WeekRangeRule(start == end ? String.valueOf(start) : start + "-" + end, localRule));
+                }
                 continue;
             }
             Matcher singleMatcher = WEEK_SINGLE.matcher(part);
             if (singleMatcher.find()) {
                 int week = parseInt(singleMatcher.group(1));
-                if (week > 0) ranges.add(String.valueOf(week));
+                if (week > 0) ranges.add(new WeekRangeRule(String.valueOf(week), localRule));
             }
         }
-        return ranges.isEmpty() ? Arrays.asList("1-17") : ranges;
+        return ranges.isEmpty()
+                ? Arrays.asList(new WeekRangeRule("1-17", ScheduleModels.RepeatRule.ALL))
+                : ranges;
+    }
+
+    private static final class WeekRangeRule {
+        final String range;
+        final ScheduleModels.RepeatRule rule;
+
+        WeekRangeRule(String range, ScheduleModels.RepeatRule rule) {
+            this.range = range;
+            this.rule = rule;
+        }
     }
 
     private static Integer parseDayOfWeek(String text) {

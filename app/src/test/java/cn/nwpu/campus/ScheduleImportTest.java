@@ -146,6 +146,32 @@ public class ScheduleImportTest {
         assertEquals("李彩香", course.timeSlots.get(1).teacher);
     }
 
+    @Test public void parsesDifferentRepeatRulesInOneWeekExpression() {
+        List<ScheduleModels.TimeSlot> slots = ScheduleImport.parseScheduleText(
+                "4~6(双),7~9(单)周 星期六 1-4节");
+
+        assertEquals(2, slots.size());
+        assertEquals("4-6", slots.get(0).weekRange);
+        assertEquals(ScheduleModels.RepeatRule.EVEN, slots.get(0).repeatRule);
+        assertEquals(6, slots.get(0).dayOfWeek);
+        assertEquals(Arrays.asList(1, 2, 3, 4), slots.get(0).classSections);
+        assertEquals("7-9", slots.get(1).weekRange);
+        assertEquals(ScheduleModels.RepeatRule.ODD, slots.get(1).repeatRule);
+    }
+
+    @Test public void parsesChineseRepeatMarkersPerWeekPart() {
+        List<ScheduleModels.TimeSlot> slots = ScheduleImport.parseScheduleText(
+                "4~6（双）,7~9（单）周 周六 1-4节");
+        assertEquals(2, slots.size());
+        assertEquals(ScheduleModels.RepeatRule.EVEN, slots.get(0).repeatRule);
+        assertEquals(ScheduleModels.RepeatRule.ODD, slots.get(1).repeatRule);
+
+        slots = ScheduleImport.parseScheduleText("4~6双周,7~9单周 周六 1-4节");
+        assertEquals(2, slots.size());
+        assertEquals(ScheduleModels.RepeatRule.EVEN, slots.get(0).repeatRule);
+        assertEquals(ScheduleModels.RepeatRule.ODD, slots.get(1).repeatRule);
+    }
+
     private static ScheduleImport.RawCourse rawCourse(String name, String code, String schedule, String semester) {
         ScheduleImport.RawCourse course = new ScheduleImport.RawCourse();
         course.name = name;

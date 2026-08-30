@@ -53,8 +53,10 @@ public class ScheduleWidgetService extends RemoteViewsService {
                 ScheduleWidgetData.DayData tomorrow = ScheduleWidgetData.forDate(LocalDate.now().plusDays(1), false);
                 int count = Math.max(today.items.size(), tomorrow.items.size());
                 if (count == 0) count = 1;
-                for (int i = 0; i < count; i++) rows.add(new Row(i < today.items.size() ? today.items.get(i) : null,
-                        i < tomorrow.items.size() ? tomorrow.items.get(i) : null));
+                for (int i = 0; i < count; i++) rows.add(new Row(
+                        i < today.items.size() ? today.items.get(i) : null,
+                        i < tomorrow.items.size() ? tomorrow.items.get(i) : null,
+                        i == 0));
                 rows.add(Row.spacer());
             }
         }
@@ -108,10 +110,12 @@ public class ScheduleWidgetService extends RemoteViewsService {
             applyBackground(view, R.id.widget_today_column);
             applyBackground(view, R.id.widget_tomorrow_column);
             if (row.today == null) clearColumn(view, R.id.widget_today_column, R.id.widget_today_dot,
-                    R.id.widget_today_name, R.id.widget_today_time, R.id.widget_today_location, "今天没有课了");
+                    R.id.widget_today_name, R.id.widget_today_time, R.id.widget_today_location,
+                    row.firstContentRow ? "今天没有课了" : "");
             else fill(view, row.today, R.id.widget_today_dot, R.id.widget_today_name, R.id.widget_today_time, R.id.widget_today_location);
             if (row.tomorrow == null) clearColumn(view, R.id.widget_tomorrow_column, R.id.widget_tomorrow_dot,
-                    R.id.widget_tomorrow_name, R.id.widget_tomorrow_time, R.id.widget_tomorrow_location, "明天没有课了");
+                    R.id.widget_tomorrow_name, R.id.widget_tomorrow_time, R.id.widget_tomorrow_location,
+                    row.firstContentRow ? "明天没有课了" : "");
             else fill(view, row.tomorrow, R.id.widget_tomorrow_dot, R.id.widget_tomorrow_name, R.id.widget_tomorrow_time, R.id.widget_tomorrow_location);
             applyColors(view, R.id.widget_today_name, R.id.widget_today_time, R.id.widget_today_location);
             applyColors(view, R.id.widget_tomorrow_name, R.id.widget_tomorrow_time, R.id.widget_tomorrow_location);
@@ -130,6 +134,12 @@ public class ScheduleWidgetService extends RemoteViewsService {
 
         private void clearColumn(RemoteViews view, int column, int dot, int name, int time, int location, String message) {
             view.setViewVisibility(column, android.view.View.VISIBLE);
+            // A day without courses can share rows with the other day. Keep
+            // the first row for the empty-state message, but make subsequent
+            // empty cells transparent so they do not look like extra courses.
+            view.setInt(column, "setBackgroundColor", message.isEmpty()
+                    ? android.graphics.Color.TRANSPARENT
+                    : (dark ? 0xFF1C222B : 0xFFF6FAFF));
             view.setViewVisibility(dot, android.view.View.GONE);
             view.setTextViewText(name, message);
             view.setTextViewText(time, "");
@@ -157,9 +167,25 @@ public class ScheduleWidgetService extends RemoteViewsService {
             final ScheduleWidgetData.Item tomorrow;
             final String message;
             final boolean spacer;
-            Row(ScheduleWidgetData.Item today, ScheduleWidgetData.Item tomorrow) { this.today = today; this.tomorrow = tomorrow; this.message = null; this.spacer = false; }
-            Row(ScheduleWidgetData.Item item, String message) { this.today = item; this.tomorrow = null; this.message = message; this.spacer = false; }
-            private Row() { this.today = null; this.tomorrow = null; this.message = null; this.spacer = true; }
+            final boolean firstContentRow;
+            Row(ScheduleWidgetData.Item today, ScheduleWidgetData.Item tomorrow) {
+                this(today, tomorrow, true);
+            }
+            Row(ScheduleWidgetData.Item today, ScheduleWidgetData.Item tomorrow, boolean firstContentRow) {
+                this.today = today;
+                this.tomorrow = tomorrow;
+                this.message = null;
+                this.spacer = false;
+                this.firstContentRow = firstContentRow;
+            }
+            Row(ScheduleWidgetData.Item item, String message) {
+                this.today = item;
+                this.tomorrow = null;
+                this.message = message;
+                this.spacer = false;
+                this.firstContentRow = true;
+            }
+            private Row() { this.today = null; this.tomorrow = null; this.message = null; this.spacer = true; this.firstContentRow = false; }
             static Row spacer() { return new Row(); }
         }
     }

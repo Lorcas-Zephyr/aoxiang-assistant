@@ -25,7 +25,7 @@
             android:layout_width="match_parent"
             android:layout_height="match_parent"
             android:divider="@android:color/transparent"
-            android:dividerHeight="3dp"
+            android:dividerHeight="1dp"
             android:scrollbars="vertical"
             android:fadeScrollbars="false"
             android:scrollbarSize="2dp"

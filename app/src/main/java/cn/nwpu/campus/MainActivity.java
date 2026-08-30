@@ -29,6 +29,7 @@ import android.security.keystore.KeyGenParameterSpec;
 import android.security.keystore.KeyProperties;
 import android.text.InputType;
 import android.util.Base64;
+import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.View;
@@ -177,6 +178,7 @@ public class MainActivity extends Activity {
     private boolean silentBoot;
     private boolean darkMode;
     private boolean scheduleShowMonth;
+    private boolean scheduleShowAllCourses;
     private int gradeIntervalValue;
     private int scheduleIntervalValue;
     private int electricityIntervalValue;
@@ -186,6 +188,7 @@ public class MainActivity extends Activity {
     private int scheduleWeekOffset;
     private View scheduleContentView;
     private FrameLayout scheduleViewport;
+    private View scheduleNavigationRow;
     private View scheduleSwipeIncoming;
     private int scheduleSwipeDirection;
     private int scheduleSwipeWidth;
@@ -733,18 +736,36 @@ public class MainActivity extends Activity {
         topRow.addView(semesterButton, new LinearLayout.LayoutParams(0, dp(42), 1));
         addHorizontalGap(topRow, 10);
         Button monthButton = action(scheduleShowMonth ? "周视图" : "月历视图", false);
+        Button courseModeButton = action(scheduleShowAllCourses ? "本周课程" : "全部课程", false);
         monthButton.setOnClickListener(v -> {
             ScheduleModels.Semester active = selectedSemester();
             scheduleShowMonth = !scheduleShowMonth;
             scheduleMonthAnchor = weekStartForCurrentSelection(active);
             monthButton.setText(scheduleShowMonth ? "周视图" : "月历视图");
+            courseModeButton.setVisibility(scheduleShowMonth ? View.GONE : View.VISIBLE);
+            if (scheduleNavigationRow != null) {
+                scheduleNavigationRow.setVisibility(scheduleShowAllCourses && !scheduleShowMonth
+                        ? View.GONE : View.VISIBLE);
+            }
             replaceScheduleContent(active);
         });
         topRow.addView(monthButton, new LinearLayout.LayoutParams(dp(96), dp(40)));
+        addHorizontalGap(topRow, 8);
+        courseModeButton.setVisibility(scheduleShowMonth ? View.GONE : View.VISIBLE);
+        courseModeButton.setOnClickListener(v -> {
+            scheduleShowAllCourses = !scheduleShowAllCourses;
+            courseModeButton.setText(scheduleShowAllCourses ? "本周课程" : "全部课程");
+            if (scheduleNavigationRow != null) {
+                scheduleNavigationRow.setVisibility(scheduleShowAllCourses ? View.GONE : View.VISIBLE);
+            }
+            replaceScheduleContent(selectedSemester());
+        });
+        topRow.addView(courseModeButton, new LinearLayout.LayoutParams(dp(96), dp(40)));
         tools.addView(topRow);
 
         addGap(tools, 8);
         LinearLayout switchRow = new LinearLayout(this);
+        scheduleNavigationRow = switchRow;
         switchRow.setGravity(Gravity.CENTER_VERTICAL);
         Button prev = stepButton("‹");
         Button next = stepButton("›");
@@ -761,6 +782,7 @@ public class MainActivity extends Activity {
         next.setOnClickListener(v -> {
             animateSchedulePosition(semester, 1);
         });
+        switchRow.setVisibility(scheduleShowAllCourses && !scheduleShowMonth ? View.GONE : View.VISIBLE);
         switchRow.addView(prev, new LinearLayout.LayoutParams(dp(40), dp(38)));
         addHorizontalGap(switchRow, 8);
         switchRow.addView(today, new LinearLayout.LayoutParams(0, dp(38), 1));
@@ -1273,7 +1295,7 @@ public class MainActivity extends Activity {
         int week = currentScheduleWeek(semester);
         LocalDate weekStart = weekStartForSelection(semester, week);
         int sectionHeight = scheduleSectionHeightPx(semester);
-        TextView caption = label(semester.name + " · 第" + week + "周", 14, textColor());
+        TextView caption = label(semester.name + (scheduleShowAllCourses ? " · 全部课程" : " · 第" + week + "周"), 14, textColor());
         caption.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
         wrap.addView(caption);
         addGap(wrap, 8);
@@ -1286,14 +1308,21 @@ public class MainActivity extends Activity {
         head.addView(dayHeader("", ""), new LinearLayout.LayoutParams(dp(44), dp(48)));
         for (int day = 1; day <= 7; day++) {
             LocalDate date = weekStart.plusDays(day - 1);
-            head.addView(dayHeader(dayLabel(day).substring(1), monthDayFormatter.format(date)),
+            head.addView(dayHeader(dayLabel(day).substring(1),
+                            scheduleShowAllCourses ? "" : monthDayFormatter.format(date)),
                     new LinearLayout.LayoutParams(0, dp(48), 1));
         }
         board.addView(head);
 
+        List<ScheduleModels.Course> weekCourses = coursesForWeek(semester, week);
+        if (scheduleShowAllCourses) {
+            board.addView(buildAllCoursesWeekBody(semester, sectionHeight));
+            wrap.addView(board, new LinearLayout.LayoutParams(-1, -2));
+            return wrap;
+        }
+
         LinearLayout body = new LinearLayout(this);
         body.setGravity(Gravity.TOP);
-        List<ScheduleModels.Course> weekCourses = coursesForWeek(semester, week);
         boolean friendshipOnly = ScheduleUtils.allMeetingsUseFriendshipCampus(weekCourses, week);
         LocalDate axisDate = friendshipOnly
                 ? firstMeetingDateForWeek(weekCourses, semester, week)
@@ -1329,6 +1358,258 @@ public class MainActivity extends Activity {
         board.addView(body);
         wrap.addView(board, new LinearLayout.LayoutParams(-1, -2));
         return wrap;
+    }
+
+    private View buildAllCoursesWeekBody(ScheduleModels.Semester semester, int sectionHeight) {
+        LinearLayout body = new LinearLayout(this);
+        body.setGravity(Gravity.TOP);
+        List<ScheduleModels.Course> allCourses = sortedCourses(coursesForSemester(semester.id));
+        boolean friendshipOnly = allCoursesUseFriendshipCampus(allCourses);
+        LocalDate axisDate = friendshipOnly ? firstMeetingDateForAllCourses(allCourses, semester) : null;
+        LinearLayout timeColumn = new LinearLayout(this);
+        timeColumn.setOrientation(LinearLayout.VERTICAL);
+        for (int section = 1; section <= semester.sectionCount; section++) {
+            timeColumn.addView(sectionLabel(semester, section, friendshipOnly ? "友谊" : null, axisDate),
+                    new LinearLayout.LayoutParams(-1, sectionHeight));
+        }
+        body.addView(timeColumn, new LinearLayout.LayoutParams(dp(44), -2));
+
+        for (int day = 1; day <= 7; day++) {
+            LinearLayout dayColumn = new LinearLayout(this);
+            dayColumn.setOrientation(LinearLayout.VERTICAL);
+            int section = 1;
+            while (section <= semester.sectionCount) {
+                List<CourseMeeting> meetings = allMeetingsStartingAt(allCourses, day, section);
+                if (meetings.isEmpty()) {
+                    dayColumn.addView(emptyCell(), new LinearLayout.LayoutParams(-1, sectionHeight));
+                    section++;
+                    continue;
+                }
+                int span = 1;
+                for (CourseMeeting meeting : meetings) {
+                    span = Math.max(span, Collections.max(meeting.slot.classSections) - section + 1);
+                }
+                View block = allCourseBlock(meetings, sectionHeight, span, semester, day);
+                dayColumn.addView(block, new LinearLayout.LayoutParams(-1, block.getTag() instanceof Integer
+                        ? (Integer) block.getTag() : sectionHeight * span));
+                section += span;
+            }
+            body.addView(dayColumn, new LinearLayout.LayoutParams(0, -2, 1));
+        }
+        return body;
+    }
+
+    private View allCourseBlock(List<CourseMeeting> meetings, int sectionHeight, int span,
+                                ScheduleModels.Semester semester, int day) {
+        int blockHeight = sectionHeight * span;
+        int perCourseHeight = Math.max(1, blockHeight / meetings.size());
+        int dayWidth = allCoursesDayWidth();
+        LinearLayout block = new LinearLayout(this);
+        block.setOrientation(LinearLayout.VERTICAL);
+        block.setBackgroundColor(Color.TRANSPARENT);
+        for (CourseMeeting meeting : meetings) {
+            View full = courseMeetingBlock(meeting, semester, day, 2);
+            full.measure(View.MeasureSpec.makeMeasureSpec(dayWidth, View.MeasureSpec.EXACTLY),
+                    View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED));
+            View child;
+            if (full.getMeasuredHeight() <= perCourseHeight) {
+                child = full;
+            } else {
+                View normal = courseMeetingBlock(meeting, semester, day, 1);
+                normal.measure(View.MeasureSpec.makeMeasureSpec(dayWidth, View.MeasureSpec.EXACTLY),
+                        View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED));
+                child = normal.getMeasuredHeight() <= perCourseHeight
+                        ? normal : courseMeetingBlock(meeting, semester, day, 0);
+            }
+            fitCourseMeetingTitle(child, dayWidth, perCourseHeight);
+            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, perCourseHeight);
+            block.addView(child, params);
+        }
+        block.setTag(blockHeight);
+        return block;
+    }
+
+    private View courseMeetingBlock(CourseMeeting meeting, ScheduleModels.Semester semester,
+                                    int day, int detailLevel) {
+        ScheduleModels.Course course = meeting.course;
+        ScheduleModels.TimeSlot slot = meeting.slot;
+        int fill = parseColorSafe(course.color, primaryColorWithAlpha(240));
+        LinearLayout block = new LinearLayout(this);
+        block.setOrientation(LinearLayout.VERTICAL);
+        block.setBackground(border(fill, lineColor(), 5));
+        block.setPadding(dp(3), dp(3), dp(3), dp(3));
+
+        TextView title = label(course.name, 8, contrastText(fill));
+        title.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        // Long course names must wrap instead of being silently clipped in the
+        // narrow all-courses columns. The surrounding block still keeps its
+        // fixed height; secondary details are reduced first when space is tight.
+        title.setMaxLines(Integer.MAX_VALUE);
+        title.setEllipsize(null);
+        title.setHorizontallyScrolling(false);
+        block.addView(title);
+        if (detailLevel >= 1) {
+            String location = slot.location != null ? slot.location : course.location;
+            String time = allCourseMeetingTime(semester, slot, day);
+            if (detailLevel == 1) {
+                int weekBreak = time.indexOf('\n');
+                if (weekBreak >= 0) {
+                    int end = time.indexOf('\n', weekBreak + 1);
+                    time = end >= 0 ? time.substring(0, end) : time;
+                }
+            }
+            if (!time.isEmpty()) block.addView(label(time, 8, contrastText(fill)));
+            if (location != null && !location.trim().isEmpty()) {
+                block.addView(label(location, 8, contrastText(fill)));
+            }
+            if (detailLevel < 2) return attachCourseClick(block, course, slot);
+            String teacher = slot.teacher != null ? slot.teacher : course.teacher;
+            if (teacher != null && !teacher.trim().isEmpty()) {
+                block.addView(label(teacher, 8, contrastText(fill)));
+            }
+        }
+        return attachCourseClick(block, course, slot);
+    }
+
+    private void fitCourseMeetingTitle(View block, int width, int height) {
+        if (!(block instanceof LinearLayout)) return;
+        LinearLayout layout = (LinearLayout) block;
+        if (layout.getChildCount() == 0 || !(layout.getChildAt(0) instanceof TextView)) return;
+        TextView title = (TextView) layout.getChildAt(0);
+        float size = 8f;
+        while (size >= 5f) {
+            title.setTextSize(TypedValue.COMPLEX_UNIT_SP, size);
+            block.measure(View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
+                    View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED));
+            if (block.getMeasuredHeight() <= height) return;
+            size -= 0.5f;
+        }
+        // Keep the smallest readable size if an unusually long name still
+        // cannot fit alongside its secondary details.
+        title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 5f);
+    }
+
+    private View attachCourseClick(View block, ScheduleModels.Course course, ScheduleModels.TimeSlot slot) {
+        block.setOnClickListener(v -> showCourseMeetingDetailDialog(course, slot));
+        return block;
+    }
+
+    private String allCourseMeetingTime(ScheduleModels.Semester semester,
+                                        ScheduleModels.TimeSlot slot, int day) {
+        if (slot == null || slot.classSections == null || slot.classSections.isEmpty()) return "";
+        int week = 1;
+        List<Integer> weeks = ScheduleUtils.parseWeeks(slot.weekRange);
+        for (Integer candidate : weeks) {
+            if (ScheduleUtils.matchesRepeatRule(candidate, slot.repeatRule)) {
+                week = candidate;
+                break;
+            }
+        }
+        LocalDate date = weekStartForSelection(semester, week).plusDays(day - 1L);
+        String location = slot.location;
+        String range = ScheduleUtils.meetingTimeRange(semester, slot, location, date);
+        String result = ScheduleUtils.formatSections(slot.classSections);
+        if (!range.isEmpty()) result += "\n" + range;
+        String weeksText = slot.weekRange == null || slot.weekRange.trim().isEmpty()
+                ? "" : slot.weekRange + "周";
+        if (slot.repeatRule != ScheduleModels.RepeatRule.ALL) weeksText += slot.repeatRule.label;
+        if (!weeksText.isEmpty()) result += "\n" + weeksText;
+        return result;
+    }
+
+    private int allCoursesDayWidth() {
+        int screenWidth = getResources().getDisplayMetrics().widthPixels;
+        int boardWidth = Math.max(dp(44 + 7 * 32), screenWidth - dp(24));
+        return Math.max(dp(32), (boardWidth - dp(44)) / 7);
+    }
+
+    private List<CourseMeeting> allMeetingsStartingAt(List<ScheduleModels.Course> allCourses, int day, int section) {
+        List<CourseMeeting> out = new ArrayList<>();
+        int clusterEnd = section - 1;
+        List<ScheduleModels.TimeSlot> candidates = new ArrayList<>();
+        for (ScheduleModels.Course course : allCourses) {
+            for (ScheduleModels.TimeSlot slot : course.timeSlots) {
+                if (slot.dayOfWeek != day || slot.classSections == null || slot.classSections.isEmpty()) continue;
+                int start = Collections.min(slot.classSections);
+                int end = Collections.max(slot.classSections);
+                if (start == section) {
+                    candidates.add(slot);
+                    clusterEnd = Math.max(clusterEnd, end);
+                }
+            }
+        }
+        // Include another course whose meeting starts inside an already occupied span.
+        boolean expanded;
+        do {
+            expanded = false;
+            for (ScheduleModels.Course course : allCourses) {
+                for (ScheduleModels.TimeSlot slot : course.timeSlots) {
+                    if (slot.dayOfWeek != day || slot.classSections == null || slot.classSections.isEmpty()
+                            || candidates.contains(slot)) continue;
+                    int start = Collections.min(slot.classSections);
+                    int end = Collections.max(slot.classSections);
+                    if (start > section && start <= clusterEnd && end >= section) {
+                        candidates.add(slot);
+                        if (end > clusterEnd) {
+                            clusterEnd = end;
+                            expanded = true;
+                        }
+                    }
+                }
+            }
+        } while (expanded);
+        for (ScheduleModels.Course course : allCourses) {
+            ScheduleModels.TimeSlot selected = null;
+            for (ScheduleModels.TimeSlot slot : candidates) {
+                if (slot.dayOfWeek == day && course.timeSlots.contains(slot)) {
+                    if (selected == null || slot.classSections.size() > selected.classSections.size()) selected = slot;
+                }
+            }
+            if (selected != null) out.add(new CourseMeeting(course, selected));
+        }
+        return out;
+    }
+
+    private boolean allCoursesUseFriendshipCampus(List<ScheduleModels.Course> allCourses) {
+        boolean found = false;
+        for (ScheduleModels.Course course : allCourses) {
+            for (ScheduleModels.TimeSlot slot : course.timeSlots) {
+                if (slot.classSections == null || slot.classSections.isEmpty()) continue;
+                found = true;
+                String location = slot.location == null ? course.location : slot.location;
+                if (!ScheduleModels.isFriendshipCampus(location)) return false;
+            }
+        }
+        return found;
+    }
+
+    private LocalDate firstMeetingDateForAllCourses(List<ScheduleModels.Course> allCourses,
+                                                     ScheduleModels.Semester semester) {
+        int firstWeek = Integer.MAX_VALUE;
+        int firstDay = 7;
+        for (ScheduleModels.Course course : allCourses) {
+            for (ScheduleModels.TimeSlot slot : course.timeSlots) {
+                if (slot.classSections == null || slot.classSections.isEmpty()) continue;
+                List<Integer> weeks = ScheduleUtils.parseWeeks(slot.weekRange);
+                if (weeks.isEmpty()) continue;
+                int week = Collections.min(weeks);
+                if (week < firstWeek || (week == firstWeek && slot.dayOfWeek < firstDay)) {
+                    firstWeek = week;
+                    firstDay = Math.max(1, Math.min(7, slot.dayOfWeek));
+                }
+            }
+        }
+        return firstWeek == Integer.MAX_VALUE ? null : weekStartForSelection(semester, firstWeek).plusDays(firstDay - 1L);
+    }
+
+    private static final class CourseMeeting {
+        final ScheduleModels.Course course;
+        final ScheduleModels.TimeSlot slot;
+
+        CourseMeeting(ScheduleModels.Course course, ScheduleModels.TimeSlot slot) {
+            this.course = course;
+            this.slot = slot;
+        }
     }
 
     private View buildMonthCalendar(ScheduleModels.Semester semester) {
@@ -1530,6 +1811,7 @@ public class MainActivity extends Activity {
 
     private boolean canMoveSchedule(ScheduleModels.Semester semester, boolean monthView, int direction) {
         if (semester == null || direction == 0) return false;
+        if (!monthView && scheduleShowAllCourses) return false;
         if (!monthView) {
             int week = currentScheduleWeek(semester);
             return direction > 0 ? week < Math.max(1, semester.weekCount) : week > 1;
