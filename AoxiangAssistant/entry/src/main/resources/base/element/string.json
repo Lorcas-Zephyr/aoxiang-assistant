@@ -11,6 +11,46 @@
     {
       "name": "EntryAbility_label",
       "value": "AoxiangAssistant"
+    },
+    {
+      "name": "EntryFormAbility_desc",
+      "value": "Aoxiang widget provider"
+    },
+    {
+      "name": "EntryFormAbility_label",
+      "value": "AoxiangAssistantWidget"
+    },
+    {
+      "name": "widget_daily_name",
+      "value": "今日课表"
+    },
+    {
+      "name": "widget_daily_desc",
+      "value": "显示今天的课程安排"
+    },
+    {
+      "name": "widget_tt_name",
+      "value": "今明课表"
+    },
+    {
+      "name": "widget_tt_desc",
+      "value": "显示今天与明天的课程安排"
+    },
+    {
+      "name": "widget_weekly_name",
+      "value": "每周课表"
+    },
+    {
+      "name": "widget_weekly_desc",
+      "value": "显示一周的课程安排"
+    },
+    {
+      "name": "widget_elec_name",
+      "value": "电费查询"
+    },
+    {
+      "name": "widget_elec_desc",
+      "value": "显示宿舍电费余额"
     }
   ]
 }

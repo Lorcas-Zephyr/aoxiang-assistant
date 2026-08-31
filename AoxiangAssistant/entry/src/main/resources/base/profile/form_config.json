@@ -1,0 +1,96 @@
+{
+  "forms": [
+    {
+      "name": "daily_card",
+      "displayName": "$string:widget_daily_name",
+      "description": "$string:widget_daily_desc",
+      "src": "./ets/widget/pages/DailyCard.ets",
+      "uiSyntax": "arkts",
+      "window": {
+        "designWidth": 720,
+        "autoDesignWidth": true
+      },
+      "isDynamic": true,
+      "isDefault": true,
+      "updateEnabled": true,
+      "scheduledUpdateTime": "07:30",
+      "updateDuration": 2,
+      "defaultDimension": "2*2",
+      "supportDimensions": [
+        "2*2"
+      ],
+      "previewImages": [
+        "$media:icon"
+      ]
+    },
+    {
+      "name": "today_tomorrow_card",
+      "displayName": "$string:widget_tt_name",
+      "description": "$string:widget_tt_desc",
+      "src": "./ets/widget/pages/TodayTomorrowCard.ets",
+      "uiSyntax": "arkts",
+      "window": {
+        "designWidth": 720,
+        "autoDesignWidth": true
+      },
+      "isDynamic": true,
+      "isDefault": false,
+      "updateEnabled": true,
+      "scheduledUpdateTime": "07:30",
+      "updateDuration": 2,
+      "defaultDimension": "2*4",
+      "supportDimensions": [
+        "2*4"
+      ],
+      "previewImages": [
+        "$media:icon"
+      ]
+    },
+    {
+      "name": "weekly_card",
+      "displayName": "$string:widget_weekly_name",
+      "description": "$string:widget_weekly_desc",
+      "src": "./ets/widget/pages/WeeklyCard.ets",
+      "uiSyntax": "arkts",
+      "window": {
+        "designWidth": 720,
+        "autoDesignWidth": true
+      },
+      "isDynamic": true,
+      "isDefault": false,
+      "updateEnabled": true,
+      "scheduledUpdateTime": "07:30",
+      "updateDuration": 2,
+      "defaultDimension": "4*4",
+      "supportDimensions": [
+        "4*4"
+      ],
+      "previewImages": [
+        "$media:icon"
+      ]
+    },
+    {
+      "name": "electricity_card",
+      "displayName": "$string:widget_elec_name",
+      "description": "$string:widget_elec_desc",
+      "src": "./ets/widget/pages/ElectricityCard.ets",
+      "uiSyntax": "arkts",
+      "window": {
+        "designWidth": 720,
+        "autoDesignWidth": true
+      },
+      "isDynamic": true,
+      "isDefault": false,
+      "updateEnabled": true,
+      "scheduledUpdateTime": "07:30",
+      "updateDuration": 2,
+      "defaultDimension": "2*2",
+      "supportDimensions": [
+        "2*2"
+      ],
+      "previewImages": [
+        "$media:icon"
+      ]
+    }
+  ]
+}
