@@ -37,7 +37,7 @@ struct ElectricityCard {
     Column() {
       Text('电费')
         .fontSize(12)
-        .fontColor(Color.White)
+        .fontColor($r('app.color.text_primary'))
         .fontWeight(FontWeight.Bold)
         .width('100%')
         .textAlign(TextAlign.Start)
@@ -46,7 +46,7 @@ struct ElectricityCard {
         Column() {
           Text(this.hint)
             .fontSize(10)
-            .fontColor('#FFFFFFAA')
+            .fontColor($r('app.color.text_hint'))
             .textAlign(TextAlign.Center)
         }
         .width('100%')
@@ -57,11 +57,11 @@ struct ElectricityCard {
         Row() {
           Text(this.value)
             .fontSize(30)
-            .fontColor('#4CAF50')
+            .fontColor($r('app.color.balance_positive'))
             .fontWeight(FontWeight.Bold)
           Text(this.unit)
             .fontSize(12)
-            .fontColor('#FFFFFFAA')
+            .fontColor($r('app.color.text_hint'))
             .margin({ left: 4 })
         }
         .width('100%')
@@ -71,7 +71,7 @@ struct ElectricityCard {
         if (this.updated.length > 0) {
           Text(`更新于 ${this.updated}`)
             .fontSize(9)
-            .fontColor('#FFFFFF88')
+            .fontColor($r('app.color.text_hint'))
             .width('100%')
             .textAlign(TextAlign.End)
         }
@@ -80,7 +80,7 @@ struct ElectricityCard {
     .width('100%')
     .height('100%')
     .padding(10)
-    .backgroundColor('#1F1F1F')
+    .backgroundColor($r('app.color.card_background'))
     .borderRadius(12)
     .onClick(() => {
       postCardAction(this, {

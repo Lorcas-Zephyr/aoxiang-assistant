@@ -14,6 +14,7 @@ import { ScheduleGrid } from '../components/ScheduleGrid';
 import { Constants, LoginPhase, LoginTarget } from '../common/Constants';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { WidgetPusher } from '../model/WidgetPusher';
+import { HdsTabs, HdsTabsController, hdsMaterial } from '@kit.UIDesignKit';
 
 @Entry
 @Component
@@ -64,7 +65,7 @@ struct Index {
   @StorageProp('topRectHeight') topRectHeight: number = 0;
 
   private webController: webview.WebviewController = new webview.WebviewController();
-  private tabsController: TabsController = new TabsController();
+  private tabsController: HdsTabsController = new HdsTabsController();
   private credentialStore: CredentialStore = new CredentialStore();
   private autoCollectScript: string = '';
   private apiCollectScript: string = '';
@@ -1050,45 +1051,50 @@ struct Index {
 
   build() {
     Stack() {
-      Tabs({ barPosition: BarPosition.End, controller: this.tabsController }) {
+      HdsTabs({ controller: this.tabsController }) {
         TabContent() {
           this.HomeContent()
         }
-        .tabBar('')
+        .tabBar(this.TabItem('首页', 0))
 
         TabContent() {
           this.ScheduleContent()
         }
-        .tabBar('')
+        .tabBar(this.TabItem('课表', 1))
 
         TabContent() {
           this.GradesContent()
         }
-        .tabBar('')
+        .tabBar(this.TabItem('成绩', 2))
 
         TabContent() {
           this.ManageContent()
         }
-        .tabBar('')
+        .tabBar(this.TabItem('管理', 3))
 
         TabContent() {
           this.SettingsContent()
         }
-        .tabBar('')
+        .tabBar(this.TabItem('设置', 4))
       }
       .onChange((index: number) => {
         this.currentTab = index;
       })
       .scrollable(false)
+      .vertical(false)
+      .barPosition(BarPosition.End)
+      .barOverlap(true)
+      .animationDuration(300)
+      .barFloatingStyle({
+        barBottomMargin: 28,
+        systemMaterialEffect: {
+          materialType: hdsMaterial.MaterialType.ADAPTIVE,
+          materialLevel: hdsMaterial.MaterialLevel.ADAPTIVE
+        }
+      })
       .width('100%')
       .height('100%')
       .backgroundColor($r('app.color.page_background'))
-      .barBackgroundColor(Color.Transparent)
-      .barHeight(0)
-
-      if (!this.showLoginForm && !this.showSmsForm && !this.showSemesterDialog && !this.showCourseDialog && !this.showConfirmDialog && !this.showCourseColorDialog && !this.showWebView && !this.interactiveMode) {
-        this.FloatingTabBar()
-      }
 
       if (this.showWebView) {
         this.WebViewOverlay()
@@ -1124,40 +1130,17 @@ struct Index {
   }
 
   @Builder
-  FloatingTabBar() {
-    Row() {
-      ForEach([
-        { 'label': '首页', 'index': 0 },
-        { 'label': '课表', 'index': 1 },
-        { 'label': '成绩', 'index': 2 },
-        { 'label': '管理', 'index': 3 },
-        { 'label': '设置', 'index': 4 },
-      ], (tab: Record<string, Object>) => {
-        Column() {
-          Text(tab['label'] as string)
-            .fontSize(12)
-            .fontColor(this.currentTab === (tab['index'] as number) ? $r('app.color.accent') : $r('app.color.text_hint'))
-            .fontWeight(this.currentTab === (tab['index'] as number) ? FontWeight.Bold : FontWeight.Normal)
-        }
-        .layoutWeight(1)
-        .height('100%')
-        .justifyContent(FlexAlign.Center)
-        .alignItems(HorizontalAlign.Center)
-        .onClick(() => {
-          const idx: number = tab['index'] as number;
-          this.currentTab = idx;
-          this.tabsController.changeIndex(idx);
-        })
-      }, (tab: Record<string, Object>) => `tab_${tab['index']}`)
+  TabItem(label: string, index: number) {
+    Column() {
+      Text(label)
+        .fontSize(12)
+        .fontColor(this.currentTab === index ? $r('app.color.accent') : $r('app.color.text_hint'))
+        .fontWeight(this.currentTab === index ? FontWeight.Bold : FontWeight.Normal)
     }
-    .width('92%')
-    .height(56)
-    .borderRadius(28)
-    .backgroundColor($r('app.color.tab_bar_bg'))
-    .shadow({ radius: 20, color: '#1A000000', offsetX: 0, offsetY: -2 })
-    .position({ x: '4%', y: '100%' })
-    .translate({ y: -80 })
-    .zIndex(10)
+    .width('100%')
+    .height('100%')
+    .justifyContent(FlexAlign.Center)
+    .alignItems(HorizontalAlign.Center)
   }
 
   @Builder

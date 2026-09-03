@@ -123,12 +123,12 @@ struct TodayTomorrowCard {
       Row() {
         Text(day.label)
           .fontSize(10)
-          .fontColor(Color.White)
+          .fontColor($r('app.color.text_primary'))
           .fontWeight(FontWeight.Bold)
         if (day.date.length > 0) {
           Text(day.date)
             .fontSize(9)
-            .fontColor('#FFFFFFCC')
+            .fontColor($r('app.color.text_hint'))
             .margin({ left: 4 })
         }
       }
@@ -142,7 +142,7 @@ struct TodayTomorrowCard {
       } else {
         Text('暂无课程')
           .fontSize(10)
-          .fontColor('#FFFFFFAA')
+          .fontColor($r('app.color.text_hint'))
       }
     }
     .layoutWeight(1)
@@ -156,7 +156,7 @@ struct TodayTomorrowCard {
       Row() {
         Text(this.title)
           .fontSize(12)
-          .fontColor(Color.White)
+          .fontColor($r('app.color.text_primary'))
           .fontWeight(FontWeight.Bold)
       }
       .width('100%')
@@ -166,7 +166,7 @@ struct TodayTomorrowCard {
       if (this.hint.length > 0) {
         Text(this.hint)
           .fontSize(10)
-          .fontColor('#FFFFFFAA')
+          .fontColor($r('app.color.text_hint'))
           .textAlign(TextAlign.Center)
           .width('100%')
           .layoutWeight(1)
@@ -186,7 +186,7 @@ struct TodayTomorrowCard {
     .width('100%')
     .height('100%')
     .padding(10)
-    .backgroundColor('#1F1F1F')
+    .backgroundColor($r('app.color.card_background'))
     .borderRadius(12)
     .onClick(() => {
       postCardAction(this, {
