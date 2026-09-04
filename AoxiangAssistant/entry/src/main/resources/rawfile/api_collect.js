@@ -490,18 +490,18 @@
     return result("api_waiting");
   };
 
-  if (mode === "grades" || mode === "schedule") {
+  if (mode === "grades") {
     if (host !== "jwxt.nwpu.edu.cn") return result("api_unavailable");
     if (path === "/student/home" && allowNavigation) {
-      location.replace(location.origin + (mode === "grades"
-        ? "/student/for-std/grade/sheet/" : "/student/for-std/course-table"));
-      return result("clicked", { clicked: "direct_api_" + mode });
+      location.replace(location.origin + "/student/for-std/grade/sheet/");
+      return result("clicked", { clicked: "direct_api_grades" });
     }
-    const onTarget = mode === "grades"
-      ? path.includes("/student/for-std/grade/sheet")
-      : path.includes("/student/for-std/course-table");
-    if (!onTarget) return result("api_unavailable");
-    return launch(mode === "grades" ? collectGrades : collectSchedule);
+    if (!path.includes("/student/for-std/grade/sheet")) return result("api_unavailable");
+    return launch(collectGrades);
+  }
+  // Schedule mode: force DOM path (print-data API returns incomplete weekIndexes)
+  if (mode === "schedule") {
+    return result("api_unavailable");
   }
 
   if (mode === "electricity") {
