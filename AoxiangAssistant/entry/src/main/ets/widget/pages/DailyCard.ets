@@ -131,12 +131,12 @@ struct DailyCard {
       Row() {
         Text(this.title)
           .fontSize(12)
-          .fontColor(Color.White)
+          .fontColor($r('app.color.text_primary'))
           .fontWeight(FontWeight.Bold)
         if (this.date.length > 0) {
           Text(this.date)
             .fontSize(10)
-            .fontColor('#FFFFFFCC')
+            .fontColor($r('app.color.text_hint'))
             .margin({ left: 6 })
         }
       }
@@ -152,7 +152,7 @@ struct DailyCard {
         Column() {
           Text(this.hint.length > 0 ? this.hint : '今日无课')
             .fontSize(11)
-            .fontColor(Color.White)
+            .fontColor($r('app.color.text_hint'))
             .textAlign(TextAlign.Center)
         }
         .width('100%')
@@ -164,7 +164,7 @@ struct DailyCard {
     .width('100%')
     .height('100%')
     .padding(10)
-    .backgroundColor('#1F1F1F')
+    .backgroundColor($r('app.color.card_background'))
     .borderRadius(12)
     .onClick(() => {
       postCardAction(this, {

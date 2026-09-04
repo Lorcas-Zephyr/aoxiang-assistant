@@ -65,6 +65,10 @@
       "value": "#5A6A80"
     },
     {
+      "name": "balance_positive",
+      "value": "#66BB6A"
+    },
+    {
       "name": "border_light",
       "value": "#3A4555"
     }

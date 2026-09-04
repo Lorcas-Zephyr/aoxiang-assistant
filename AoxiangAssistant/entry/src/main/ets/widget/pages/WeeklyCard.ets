@@ -94,7 +94,7 @@ struct WeeklyCard {
       Row() {
         Text(day.label)
           .fontSize(8)
-          .fontColor(day.today ? '#FFD54F' : Color.White)
+          .fontColor(day.today ? '#FFD54F' : $r('app.color.text_primary'))
           .fontWeight(FontWeight.Bold)
       }
       .width('100%')
@@ -140,7 +140,7 @@ struct WeeklyCard {
       Row() {
         Text(this.title)
           .fontSize(12)
-          .fontColor(Color.White)
+          .fontColor($r('app.color.text_primary'))
           .fontWeight(FontWeight.Bold)
       }
       .width('100%')
@@ -150,7 +150,7 @@ struct WeeklyCard {
       if (this.hint.length > 0) {
         Text(this.hint)
           .fontSize(10)
-          .fontColor('#FFFFFFAA')
+          .fontColor($r('app.color.text_hint'))
           .textAlign(TextAlign.Center)
           .width('100%')
           .layoutWeight(1)
@@ -170,7 +170,7 @@ struct WeeklyCard {
     .width('100%')
     .height('100%')
     .padding(8)
-    .backgroundColor('#1F1F1F')
+    .backgroundColor($r('app.color.card_background'))
     .borderRadius(12)
     .onClick(() => {
       postCardAction(this, {
