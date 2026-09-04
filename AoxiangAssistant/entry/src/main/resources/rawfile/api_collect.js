@@ -288,6 +288,8 @@
     if (endDate) semesterItem.endDate = endDate;
     semesters.push(semesterItem);
 
+    const positionMap = {};
+    const positionOrder = [];
     activities.forEach((activity) => {
       if (!activity) return;
       const name = String(activity.courseName || "").trim();
@@ -297,15 +299,40 @@
       if (!name || weekday < 1 || weekday > 7 || startUnit < 1 || endUnit < startUnit) return;
       const location = joinUnique(activity.campus, activity.building, activity.room);
       if (containsOnline(name) || containsOnline(location)) return;
-      const course = { name, dataSemester: semesterId };
       const code = String(activity.courseCode || "");
-      if (code) course.code = code;
-      if (activity.credits != null && isFinite(Number(activity.credits))) course.credits = Number(activity.credits);
-      const teacher = teacherNames(activity.teachers);
-      if (teacher) course.teacher = teacher;
-      course.scheduleText = compactWeeks(activity.weekIndexes) + " " + DAY_LABELS[weekday] + " " +
-        startUnit + "-" + endUnit + "节";
-      if (location) course.location = location;
+      const posKey = code + "|" + name + "|" + weekday + "|" + startUnit + "-" + endUnit;
+      if (!positionMap[posKey]) {
+        positionMap[posKey] = {
+          name: name, code: code, weekday: weekday, startUnit: startUnit, endUnit: endUnit,
+          location: location, teacher: teacherNames(activity.teachers),
+          weekIndexes: [],
+          credits: (activity.credits != null && isFinite(Number(activity.credits))) ? Number(activity.credits) : undefined
+        };
+        positionOrder.push(posKey);
+      }
+      const pos = positionMap[posKey];
+      const weeks = Array.isArray(activity.weekIndexes) ? activity.weekIndexes : [];
+      weeks.forEach((w) => {
+        const n = Number(w);
+        if (isFinite(n) && n > 0 && pos.weekIndexes.indexOf(n) < 0) {
+          pos.weekIndexes.push(n);
+        }
+      });
+      if (!pos.teacher) {
+        const t = teacherNames(activity.teachers);
+        if (t) pos.teacher = t;
+      }
+    });
+
+    positionOrder.forEach((posKey) => {
+      const pos = positionMap[posKey];
+      const course = { name: pos.name, dataSemester: semesterId };
+      if (pos.code) course.code = pos.code;
+      if (pos.credits != null) course.credits = pos.credits;
+      if (pos.teacher) course.teacher = pos.teacher;
+      course.scheduleText = compactWeeks(pos.weekIndexes) + " " + DAY_LABELS[pos.weekday] + " " +
+        pos.startUnit + "-" + pos.endUnit + "节";
+      if (pos.location) course.location = pos.location;
       courses.push(course);
     });
 
@@ -367,6 +394,32 @@
     };
   };
 
+  const buildScheduleDebug = (semester, printData) => {
+    const table = printData && printData.studentTableVm || null;
+    const activities = table && Array.isArray(table.activities) ? table.activities : [];
+    const uniqueCourses = {};
+    const weekCountMap = {};
+    const lines = activities.map((activity, i) => {
+      const weeks = Array.isArray(activity && activity.weekIndexes) ? activity.weekIndexes : [];
+      const count = weeks.length;
+      weekCountMap[count] = (weekCountMap[count] || 0) + 1;
+      const courseName = String(activity && activity.courseName || "");
+      uniqueCourses[courseName] = (uniqueCourses[courseName] || 0) + 1;
+      return i + "|" + courseName + "|day" + (activity && activity.weekday) + "|" +
+        (activity && activity.startUnit) + "-" + (activity && activity.endUnit) +
+        "|weeks[" + weeks.join(",") + "]|" + String(activity && activity.courseCode || "");
+    });
+    return {
+      semesterId: firstNonEmpty(semester && semester.id, semester && semester.code, "current"),
+      semesterName: firstNonEmpty(semester && semester.nameZh, semester && semester.name, "?"),
+      effectiveEnd: lastActivityDate(semester, printData),
+      activitiesCount: activities.length,
+      uniqueCourseCount: Object.keys(uniqueCourses).length,
+      weekCountDistribution: weekCountMap,
+      lines: lines
+    };
+  };
+
   const collectSchedule = async () => {
     const pageHtml = await fetchText("/student/for-std/course-table");
     const studentId = extractStudentId(pageHtml) || await waitForScheduleStudentId() ||
@@ -390,7 +443,8 @@
       if (!effectiveEnd || today <= effectiveEnd || index >= choice.sorted.length - 1) break;
       index++;
     }
-    return { phase: "schedule_api_raw", payload: schedulePayload(semester, printData) };
+    return { phase: "schedule_api_raw", payload: schedulePayload(semester, printData),
+             debug: buildScheduleDebug(semester, printData) };
   };
 
   const electricityApiResponse = (rootVue) => {

@@ -9,7 +9,7 @@ import { Grade, GradeMath } from '../model/GradeModel';
 import { Course, CoursePresetColors, Semester, TimeSlot } from '../model/CourseModel';
 import { WeekUtils } from '../model/WeekUtils';
 import { IcsExport } from '../model/IcsExport';
-// import { AppLogger } from '../model/AppLogger';
+import { AppLogger } from '../model/AppLogger';
 import { ScheduleGrid } from '../components/ScheduleGrid';
 import { Constants, LoginPhase, LoginTarget } from '../common/Constants';
 import { BusinessError } from '@kit.BasicServicesKit';
@@ -77,6 +77,7 @@ struct Index {
   private electricityReadyAt: number = 0;
   private smsSubmittedAt: number = 0;
   private gradePref: preferences.Preferences | undefined = undefined;
+  private collectionRunCounter: number = 0;
 
   async aboutToAppear(): Promise<void> {
     const context = getContext(this) as common.UIAbilityContext;
@@ -501,6 +502,7 @@ struct Index {
 
   private async startPortal(target: string, automatic: boolean): Promise<void> {
     this.stopPolling();
+    this.collectionRunCounter += 1;
     this.currentTarget = target;
     this.showLoginForm = false;
     this.showSmsForm = false;
@@ -517,6 +519,7 @@ struct Index {
     this.webProgress = 0;
 
     const ssoUrl: string = target === LoginTarget.ELECTRICITY ? Constants.ELECTRICITY_SSO : Constants.EDUCATION_SSO;
+    console.info(`[Collect#${this.collectionRunCounter}] startPortal target=${target} sso=${ssoUrl}`);
     this.webViewSrc = ssoUrl;
     this.showWebView = true;
     setTimeout(() => {
@@ -790,6 +793,41 @@ struct Index {
         return;
       }
       if (phase === LoginPhase.SCHEDULE_API_RAW && this.currentTarget === LoginTarget.SCHEDULE) {
+        console.info(`[Collect#${this.collectionRunCounter}] schedule api raw received, phase=${phase}`);
+        const debugVal: Object | undefined = obj['debug'];
+        if (debugVal !== undefined && debugVal !== null) {
+          const linesVal: Object | undefined = (debugVal as Record<string, Object>)['lines'];
+          let debugSummary: string = '';
+          try {
+            const dbg: Record<string, Object> = debugVal as Record<string, Object>;
+            debugSummary = `semId=${dbg['semesterId']} semName=${dbg['semesterName']} effectiveEnd=${dbg['effectiveEnd']} activities=${dbg['activitiesCount']} courses=${dbg['uniqueCourseCount']} weekD=${JSON.stringify(dbg['weekCountDistribution'])}`;
+            console.info(`[Collect#${this.collectionRunCounter}] schedule debug: ${debugSummary}`);
+          } catch (e) {
+            console.error(`[Collect#${this.collectionRunCounter}] schedule debug serialization error: ${e}`);
+          }
+          if (linesVal !== undefined && linesVal !== null) {
+            let first: number = 0;
+            let last: number = 0;
+            try {
+              const linesArr: Object[] = linesVal as Object[];
+              first = linesArr.length > 0 ? 0 : -1;
+              last = linesArr.length > 0 ? linesArr.length - 1 : -1;
+            } catch (e) {
+              console.error(`[Collect#${this.collectionRunCounter}] lines length error: ${e}`);
+            }
+            console.info(`[Collect#${this.collectionRunCounter}] debug lines total=${last >= 0 ? last + 1 : 0} firstIdx=${first} lastIdx=${last}`);
+            try {
+              const linesArr: Object[] = linesVal as Object[];
+              for (let li = 0; li < linesArr.length; li++) {
+                console.info(`[Collect#${this.collectionRunCounter}] debugline[${li}]: ${String(linesArr[li])}`);
+              }
+            } catch (e) {
+              console.error(`[Collect#${this.collectionRunCounter}] debug lines iteration error: ${e}`);
+            }
+          }
+        } else {
+          console.info(`[Collect#${this.collectionRunCounter}] schedule debug: no debug`);
+        }
         console.info('schedule_api_raw received');
         this.handleCollectedSchedule(obj['payload']);
         return;
@@ -883,8 +921,9 @@ struct Index {
     const payload: Record<string, Object> = payloadObj as Record<string, Object>;
     const semRaw: Object[] = payload['semesters'] as Object[];
     const couRaw: Object[] = payload['courses'] as Object[];
+    console.info(`[Collect#${this.collectionRunCounter}] hcs begin sem=${semRaw.length} courses=${couRaw.length}`);
     console.info(`handleCollectedSchedule: semesters=${semRaw.length} courses=${couRaw.length}`);
-    // AppLogger.info('ScheduleImport', `semesters=${semRaw.length} courses=${couRaw.length}`);
+    AppLogger.info('ScheduleImport', `semesters=${semRaw.length} courses=${couRaw.length}`);
     const semOut: Semester[] = [];
     for (let i = 0; i < semRaw.length; i++) {
       semOut.push(Semester.fromJsObject(semRaw[i] as Record<string, Object>));
@@ -935,7 +974,7 @@ struct Index {
     const defaultSemester: string = semOut.length > 0 ? semOut[0].dataSemester : 'current';
     const mergedSemCourses: Course[] = this.mergeCoursesBySemester(couOut, defaultSemester);
     const mergedAll: Course[] = this.mergeCoursesAcrossSemesters(couOut);
-    // AppLogger.info('ScheduleImport', `afterMerge semCourses=${mergedSemCourses.length} allCourses=${mergedAll.length}`);
+    AppLogger.info('ScheduleImport', `afterMerge semCourses=${mergedSemCourses.length} allCourses=${mergedAll.length}`);
     this.semesters = semOut;
     this.courses = mergedAll;
     this.saveCoursesToPref();
@@ -1716,29 +1755,29 @@ struct Index {
         .backgroundColor($r('app.color.card_background'))
         .borderRadius(12)
 
-        // Column() {
-        //   Row() {
-        //     Text('日志')
-        //       .fontSize(15)
-        //       .fontColor($r('app.color.text_secondary'))
-        //     Blank()
-        //     Button('导出日志')
-        //       .height(36)
-        //       .backgroundColor(Color.Transparent)
-        //       .fontColor($r('app.color.accent'))
-        //       .fontSize(13)
-        //       .border({ width: 1, color: $r('app.color.accent'), radius: 6 })
-        //       .onClick(() => {
-        //         this.exportLogs();
-        //       })
-        //   }
-        //   .width('100%')
-        //   .padding({ left: 16, right: 16, top: 8, bottom: 12 })
-        // }
-        // .width('92%')
-        // .backgroundColor($r('app.color.card_background'))
-        // .borderRadius(12)
-        // .margin({ top: 12 })
+        Column() {
+          Row() {
+            Text('日志')
+              .fontSize(15)
+              .fontColor($r('app.color.text_secondary'))
+            Blank()
+            Button('导出日志')
+              .height(36)
+              .backgroundColor(Color.Transparent)
+              .fontColor($r('app.color.accent'))
+              .fontSize(13)
+              .border({ width: 1, color: $r('app.color.accent'), radius: 6 })
+              .onClick(() => {
+                this.exportLogs();
+              })
+          }
+          .width('100%')
+          .padding({ left: 16, right: 16, top: 8, bottom: 12 })
+        }
+        .width('92%')
+        .backgroundColor($r('app.color.card_background'))
+        .borderRadius(12)
+        .margin({ top: 12 })
       }
       .width('100%')
       .alignItems(HorizontalAlign.Center)
@@ -2336,30 +2375,30 @@ struct Index {
     }
   }
 
-  // private async exportLogs(): Promise<void> {
-  //   const text: string = AppLogger.exportText();
-  //   if (text.length === 0) {
-  //     this.statusText = '暂无日志';
-  //     return;
-  //   }
-  //   try {
-  //     const docPicker = new picker.DocumentViewPicker();
-  //     const saveOptions: picker.DocumentSaveOptions = new picker.DocumentSaveOptions();
-  //     const ts: number = Date.now();
-  //     saveOptions.newFileNames = [`aoxiang_log_${ts}.txt`];
-  //     saveOptions.fileSuffixChoices = ['txt'];
-  //     const uris: Array<string> = await docPicker.save(saveOptions);
-  //     if (uris.length > 0) {
-  //       const file = fs.openSync(uris[0], fs.OpenMode.WRITE_ONLY);
-  //       fs.writeSync(file.fd, text);
-  //       fs.closeSync(file);
-  //       this.statusText = '日志已导出';
-  //     }
-  //   } catch (e) {
-  //     console.error(`exportLogs failed: ${e}`);
-  //     this.statusText = '日志导出失败';
-  //   }
-  // }
+  private async exportLogs(): Promise<void> {
+    const text: string = AppLogger.exportText();
+    if (text.length === 0) {
+      this.statusText = '暂无日志';
+      return;
+    }
+    try {
+      const docPicker = new picker.DocumentViewPicker();
+      const saveOptions: picker.DocumentSaveOptions = new picker.DocumentSaveOptions();
+      const ts: number = Date.now();
+      saveOptions.newFileNames = [`aoxiang_log_${ts}.txt`];
+      saveOptions.fileSuffixChoices = ['txt'];
+      const uris: Array<string> = await docPicker.save(saveOptions);
+      if (uris.length > 0) {
+        const file = fs.openSync(uris[0], fs.OpenMode.WRITE_ONLY);
+        fs.writeSync(file.fd, text);
+        fs.closeSync(file);
+        this.statusText = '日志已导出';
+      }
+    } catch (e) {
+      console.error(`exportLogs failed: ${e}`);
+      this.statusText = '日志导出失败';
+    }
+  }
 
   @Builder
   SemesterDialogBuilder() {

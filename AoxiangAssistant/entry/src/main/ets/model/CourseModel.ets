@@ -1,4 +1,4 @@
-// import { AppLogger } from './AppLogger';
+import { AppLogger } from './AppLogger';
 
 class SlotGroup {
   key: string = '';
@@ -199,12 +199,12 @@ export class Course {
     for (let i = 0; i < segments.length; i++) {
       const segment: string = segments[i].trim();
       if (segment.length === 0 || Course.containsOnline(segment)) {
-        // AppLogger.info('ScheduleParse', `seg#${i} SKIP empty/online: '${segment}'`);
+        AppLogger.info('ScheduleParse', `seg#${i} SKIP empty/online: '${segment}'`);
         continue;
       }
       const day: number = Course.parseDayOfWeek(segment);
       if (day === 0) {
-        // AppLogger.info('ScheduleParse', `seg#${i} SKIP no-day: '${segment}'`);
+        AppLogger.info('ScheduleParse', `seg#${i} SKIP no-day: '${segment}'`);
         continue;
       }
       const dayPosition: number = Course.findDayPosition(segment);
@@ -212,13 +212,13 @@ export class Course {
       const restPart: string = dayPosition >= 0 ? segment.substring(dayPosition) : segment;
       const sections: number[] = Course.parseSections(restPart);
       if (sections.length === 0) {
-        // AppLogger.info('ScheduleParse', `seg#${i} SKIP no-sections: '${segment}' rest='${restPart}'`);
+        AppLogger.info('ScheduleParse', `seg#${i} SKIP no-sections: '${segment}' rest='${restPart}'`);
         continue;
       }
       const repeatRule: string = Course.parseRepeatRule(segment);
       const weekRanges: string[] = Course.extractWeekRanges(weekPart);
-      // AppLogger.info('ScheduleParse',
-      //   `seg#${i} day=${day} weekPart='${weekPart}' rest='${restPart}' sections=[${sections.join(',')}] weeks=[${weekRanges.join('|')}] rule='${repeatRule}'`);
+      AppLogger.info('ScheduleParse',
+        `seg#${i} day=${day} weekPart='${weekPart}' rest='${restPart}' sections=[${sections.join(',')}] weeks=[${weekRanges.join('|')}] rule='${repeatRule}'`);
       for (let w = 0; w < weekRanges.length; w++) {
         const slot: TimeSlot = new TimeSlot();
         slot.weekRange = weekRanges[w];
@@ -231,7 +231,7 @@ export class Course {
       }
     }
     const merged: TimeSlot[] = Course.mergeSlots(slots);
-    // AppLogger.info('ScheduleParse', `value='${value}' rawSlots=${slots.length} mergedSlots=${merged.length}`);
+    AppLogger.info('ScheduleParse', `value='${value}' rawSlots=${slots.length} mergedSlots=${merged.length}`);
     return merged;
   }
 
@@ -614,7 +614,7 @@ export class Course {
         c.id = `course-${c.dataSemester}-${c.name}-${c.code}`;
       }
       out.push(c);
-      // AppLogger.info('MergeByName', `key='${order[i]}' slots=${c.timeSlots.length} teacher='${c.teacher}'`);
+      AppLogger.info('MergeByName', `key='${order[i]}' slots=${c.timeSlots.length} teacher='${c.teacher}'`);
     }
     return out;
   }
