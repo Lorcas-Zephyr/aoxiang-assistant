@@ -9,3 +9,5 @@ oh_modules/
 .cxx/
 .gradle/
 local.properties
+
+screenshots/

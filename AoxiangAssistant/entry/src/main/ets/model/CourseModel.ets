@@ -8,6 +8,7 @@ export class Course {
   dayOfWeek: number = 0;
   sectionStart: number = 0;
   sectionEnd: number = 0;
+  colorIndex: number = 0;
 
   displayDay(): string {
     const labels: string[] = ['', '周一', '周二', '周三', '周四', '周五', '周六', '周日'];
@@ -21,6 +22,17 @@ export class Course {
     return this.scheduleText;
   }
 
+  getColor(): string {
+    return CoursePresetColors.COLORS[this.colorIndex % CoursePresetColors.COLORS.length];
+  }
+
+  sectionSpan(): number {
+    if (this.sectionStart > 0 && this.sectionEnd >= this.sectionStart) {
+      return this.sectionEnd - this.sectionStart + 1;
+    }
+    return 1;
+  }
+
   static fromJsObject(obj: Record<string, Object>): Course {
     const c: Course = new Course();
     c.name = (obj['name'] ?? '') as string;
@@ -29,6 +41,8 @@ export class Course {
     c.scheduleText = (obj['scheduleText'] ?? '') as string;
     c.location = (obj['location'] ?? '') as string;
     c.dataSemester = (obj['dataSemester'] ?? '') as string;
+    const ci: Object | undefined = obj['colorIndex'];
+    c.colorIndex = ci !== undefined && ci !== null ? (ci as number) : 0;
     c.parseScheduleText();
     return c;
   }
@@ -64,6 +78,7 @@ export class Course {
       'scheduleText': this.scheduleText,
       'location': this.location,
       'dataSemester': this.dataSemester,
+      'colorIndex': this.colorIndex,
     };
     return obj;
   }
@@ -71,6 +86,13 @@ export class Course {
   static fromRecord(obj: Record<string, Object>): Course {
     return Course.fromJsObject(obj);
   }
+}
+
+export class CoursePresetColors {
+  static readonly COLORS: string[] = [
+    '#E53935', '#1E88E5', '#43A047', '#FB8C00',
+    '#8E24AA', '#00ACC1', '#FFB300', '#3949AB',
+  ];
 }
 
 export class Semester {

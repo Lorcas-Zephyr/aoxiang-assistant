@@ -4,7 +4,8 @@ import { preferences } from '@kit.ArkData';
 import { util } from '@kit.ArkTS';
 import { CredentialStore } from '../model/CredentialStore';
 import { Grade, GradeMath } from '../model/GradeModel';
-import { Course, Semester } from '../model/CourseModel';
+import { Course, CoursePresetColors, Semester } from '../model/CourseModel';
+import { ScheduleGrid } from '../components/ScheduleGrid';
 import { Constants, LoginPhase, LoginTarget } from '../common/Constants';
 import { BusinessError } from '@kit.BasicServicesKit';
 
@@ -32,6 +33,7 @@ struct Index {
   @State selectedSemesterIndex: number = 0;
 
   private webController: webview.WebviewController = new webview.WebviewController();
+  private tabsController: TabsController = new TabsController();
   private credentialStore: CredentialStore = new CredentialStore();
   private autoCollectScript: string = '';
   private pollTimer: number = -1;
@@ -42,6 +44,7 @@ struct Index {
   private navigationCooldownUntil: number = 0;
   private gradeReadyAt: number = 0;
   private electricityReadyAt: number = 0;
+  private smsSubmittedAt: number = 0;
 
   private gradePref: preferences.Preferences | undefined = undefined;
 
@@ -156,6 +159,12 @@ struct Index {
     }
   }
 
+  private assignCourseColors(): void {
+    for (let i = 0; i < this.courses.length; i++) {
+      this.courses[i].colorIndex = i % CoursePresetColors.COLORS.length;
+    }
+  }
+
   private loadCoursesFromPref(): void {
     if (this.gradePref === undefined) {
       return;
@@ -178,6 +187,7 @@ struct Index {
       }
       this.semesters = semOut;
       this.courses = couOut;
+      this.assignCourseColors();
       if (this.selectedSemesterIndex >= this.semesters.length) {
         this.selectedSemesterIndex = 0;
       }
@@ -285,6 +295,8 @@ struct Index {
       return;
     }
     this.pendingSmsCode = this.smsCode;
+    this.smsSubmitted = false;
+    this.smsSubmittedAt = Date.now();
     this.showSmsForm = false;
   }
 
@@ -300,6 +312,7 @@ struct Index {
     this.gradeReadyAt = 0;
     this.electricityReadyAt = 0;
     this.navigationCooldownUntil = 0;
+    this.smsSubmittedAt = 0;
     this.loginPhase = '';
     this.statusText = '正在连接教务系统…';
     this.webProgress = 0;
@@ -418,7 +431,15 @@ struct Index {
         return;
       }
       if (phase === LoginPhase.SMS_REQUIRED) {
-        this.statusText = '需要短信验证码';
+        const smsErrorVal: Object | undefined = obj['smsError'];
+        const smsError: boolean = smsErrorVal !== undefined && smsErrorVal !== null && smsErrorVal === true;
+        if (!smsError && this.smsSubmittedAt > 0 && (Date.now() - this.smsSubmittedAt) < 5000) {
+          console.info('sms_required right after submit, waiting for navigation…');
+          return;
+        }
+        this.smsSubmitted = false;
+        this.pendingSmsCode = '';
+        this.statusText = smsError ? '短信验证码错误，请重新输入' : '需要短信验证码';
         this.showSmsForm = true;
         return;
       }
@@ -468,6 +489,7 @@ struct Index {
             this.showWebView = false;
             this.statusText = `电费余额: ${balance.toFixed(2)} 元`;
             this.currentTab = 0;
+            this.tabsController.changeIndex(0);
             console.info(`electricity saved: balance=${this.electricityBalance} text=${this.electricityBalanceText()} showWebView=${this.showWebView} currentTab=${this.currentTab}`);
             return;
           }
@@ -521,6 +543,7 @@ struct Index {
     this.stopPolling();
     this.showWebView = false;
     this.currentTab = 2;
+    this.tabsController.changeIndex(2);
     console.info(`handleCollectedGrades: DONE, grades=${this.grades.length} GPA=${this.weightedPoint()} showWebView=${this.showWebView} currentTab=${this.currentTab}`);
   }
 
@@ -553,46 +576,50 @@ struct Index {
     }
     this.semesters = semOut;
     this.courses = couOut;
-    this.selectedSemesterIndex = 0;
+    this.assignCourseColors();
     this.saveCoursesToPref();
+    this.selectedSemesterIndex = 0;
     this.stopPolling();
     this.showWebView = false;
     this.statusText = `已导入 ${couOut.length} 门课程`;
     this.currentTab = 1;
+    this.tabsController.changeIndex(1);
     console.info(`handleCollectedSchedule: DONE, courses=${this.courses.length} semesters=${this.semesters.length}`);
   }
 
   build() {
     Stack() {
-      Tabs({ barPosition: BarPosition.End, index: this.currentTab }) {
+      Tabs({ barPosition: BarPosition.End, controller: this.tabsController }) {
         TabContent() {
           this.HomeContent()
         }
-        .tabBar(this.TabItem('首页', 0))
+        .tabBar('')
 
         TabContent() {
           this.ScheduleContent()
         }
-        .tabBar(this.TabItem('课表', 1))
+        .tabBar('')
 
         TabContent() {
           this.GradesContent()
         }
-        .tabBar(this.TabItem('成绩', 2))
+        .tabBar('')
 
         TabContent() {
           this.SettingsContent()
         }
-        .tabBar(this.TabItem('设置', 3))
+        .tabBar('')
       }
       .onChange((index: number) => {
         this.currentTab = index;
       })
       .width('100%')
       .height('100%')
-      .backgroundColor('#F5F5F5')
-      .barBackgroundColor(Color.White)
-      .barHeight(56)
+      .backgroundColor($r('app.color.page_background'))
+      .barBackgroundColor(Color.Transparent)
+      .barHeight(0)
+
+      this.FloatingTabBar()
 
       if (this.showWebView) {
         this.WebViewOverlay()
@@ -608,19 +635,43 @@ struct Index {
     }
     .width('100%')
     .height('100%')
+    .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
   }
 
   @Builder
-  TabItem(label: string, index: number) {
-    Column() {
-      Text(label)
-        .fontSize(12)
-        .fontColor(this.currentTab === index ? '#4A6CF7' : '#999999')
-        .fontWeight(this.currentTab === index ? FontWeight.Bold : FontWeight.Normal)
+  FloatingTabBar() {
+    Row() {
+      ForEach([
+        { 'label': '首页', 'index': 0 },
+        { 'label': '课表', 'index': 1 },
+        { 'label': '成绩', 'index': 2 },
+        { 'label': '设置', 'index': 3 },
+      ], (tab: Record<string, Object>) => {
+        Column() {
+          Text(tab['label'] as string)
+            .fontSize(12)
+            .fontColor(this.currentTab === (tab['index'] as number) ? $r('app.color.accent') : $r('app.color.text_hint'))
+            .fontWeight(this.currentTab === (tab['index'] as number) ? FontWeight.Bold : FontWeight.Normal)
+        }
+        .layoutWeight(1)
+        .height('100%')
+        .justifyContent(FlexAlign.Center)
+        .alignItems(HorizontalAlign.Center)
+        .onClick(() => {
+          const idx: number = tab['index'] as number;
+          this.currentTab = idx;
+          this.tabsController.changeIndex(idx);
+        })
+      }, (tab: Record<string, Object>) => `tab_${tab['index']}`)
     }
-    .width('100%')
-    .height('100%')
-    .justifyContent(FlexAlign.Center)
+    .width('92%')
+    .height(56)
+    .borderRadius(28)
+    .backgroundColor($r('app.color.tab_bar_bg'))
+    .shadow({ radius: 20, color: '#1A000000', offsetX: 0, offsetY: -2 })
+    .position({ x: '4%', y: '100%' })
+    .translate({ y: -24 })
+    .zIndex(10)
   }
 
   @Builder
@@ -630,12 +681,12 @@ struct Index {
         Text('翱翔助手')
           .fontSize(28)
           .fontWeight(FontWeight.Bold)
-          .fontColor('#1A1A2E')
+          .fontColor($r('app.color.text_primary'))
           .margin({ top: 40, bottom: 8 })
 
         Text('西北工业大学教务助手')
           .fontSize(14)
-          .fontColor('#888888')
+          .fontColor($r('app.color.text_tertiary'))
           .margin({ bottom: 32 })
 
         this.HomeMetrics()
@@ -644,7 +695,7 @@ struct Index {
           Button('导入课表')
             .layoutWeight(1)
             .height(44)
-            .backgroundColor('#4A6CF7')
+            .backgroundColor($r('app.color.accent'))
             .fontColor(Color.White)
             .fontSize(14)
             .borderRadius(8)
@@ -660,7 +711,7 @@ struct Index {
           Button('更新成绩')
             .layoutWeight(1)
             .height(44)
-            .backgroundColor('#4A6CF7')
+            .backgroundColor($r('app.color.accent'))
             .fontColor(Color.White)
             .fontSize(14)
             .borderRadius(8)
@@ -680,7 +731,7 @@ struct Index {
         Button('查看电费')
           .width('92%')
           .height(44)
-          .backgroundColor('#6C7B95')
+          .backgroundColor($r('app.color.button_secondary'))
           .fontColor(Color.White)
           .fontSize(14)
           .borderRadius(8)
@@ -698,8 +749,9 @@ struct Index {
     }
     .width('100%')
     .height('100%')
-     .scrollBar(BarState.Off)
-   }
+    .scrollBar(BarState.Off)
+    .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM])
+  }
 
   @Builder
   HomeMetrics() {
@@ -708,15 +760,15 @@ struct Index {
         Column() {
           Text('GPA')
             .fontSize(11)
-            .fontColor('#888888')
+            .fontColor($r('app.color.text_tertiary'))
           Text(this.weightedPoint())
             .fontSize(20)
             .fontWeight(FontWeight.Bold)
-            .fontColor('#333333')
+            .fontColor($r('app.color.text_secondary'))
             .margin({ top: 4, bottom: 2 })
           Text('绩点')
             .fontSize(10)
-            .fontColor('#AAAAAA')
+            .fontColor($r('app.color.text_hint'))
         }
         .layoutWeight(1)
         .alignItems(HorizontalAlign.Center)
@@ -724,15 +776,15 @@ struct Index {
         Column() {
           Text('加权成绩')
             .fontSize(11)
-            .fontColor('#888888')
+            .fontColor($r('app.color.text_tertiary'))
           Text(this.weightedScore())
             .fontSize(20)
             .fontWeight(FontWeight.Bold)
-            .fontColor('#333333')
+            .fontColor($r('app.color.text_secondary'))
             .margin({ top: 4, bottom: 2 })
           Text('分')
             .fontSize(10)
-            .fontColor('#AAAAAA')
+            .fontColor($r('app.color.text_hint'))
         }
         .layoutWeight(1)
         .alignItems(HorizontalAlign.Center)
@@ -740,15 +792,15 @@ struct Index {
         Column() {
           Text('课程')
             .fontSize(11)
-            .fontColor('#888888')
+            .fontColor($r('app.color.text_tertiary'))
           Text(`${this.grades.length}`)
             .fontSize(20)
             .fontWeight(FontWeight.Bold)
-            .fontColor('#333333')
+            .fontColor($r('app.color.text_secondary'))
             .margin({ top: 4, bottom: 2 })
           Text('门')
             .fontSize(10)
-            .fontColor('#AAAAAA')
+            .fontColor($r('app.color.text_hint'))
         }
         .layoutWeight(1)
         .alignItems(HorizontalAlign.Center)
@@ -758,22 +810,22 @@ struct Index {
       Row()
         .width('100%')
         .height(0.5)
-        .backgroundColor('#EEEEEE')
+        .backgroundColor($r('app.color.divider'))
         .margin({ top: 12, bottom: 12 })
 
       Row() {
         Column() {
           Text('电费余额')
             .fontSize(11)
-            .fontColor('#888888')
+            .fontColor($r('app.color.text_tertiary'))
           Text(this.electricityBalanceText())
             .fontSize(20)
             .fontWeight(FontWeight.Bold)
-            .fontColor('#333333')
+            .fontColor($r('app.color.text_secondary'))
             .margin({ top: 4, bottom: 2 })
           Text('元')
             .fontSize(10)
-            .fontColor('#AAAAAA')
+            .fontColor($r('app.color.text_hint'))
         }
         .layoutWeight(1)
         .alignItems(HorizontalAlign.Center)
@@ -781,15 +833,15 @@ struct Index {
         Column() {
           Text('课表')
             .fontSize(11)
-            .fontColor('#888888')
+            .fontColor($r('app.color.text_tertiary'))
           Text(`${this.courses.length}`)
             .fontSize(20)
             .fontWeight(FontWeight.Bold)
-            .fontColor('#333333')
+            .fontColor($r('app.color.text_secondary'))
             .margin({ top: 4, bottom: 2 })
           Text('门')
             .fontSize(10)
-            .fontColor('#AAAAAA')
+            .fontColor($r('app.color.text_hint'))
         }
         .layoutWeight(1)
         .alignItems(HorizontalAlign.Center)
@@ -797,7 +849,7 @@ struct Index {
       .width('100%')
     }
     .width('92%')
-    .backgroundColor(Color.White)
+    .backgroundColor($r('app.color.card_background'))
     .borderRadius(12)
     .padding(16)
     .margin({ bottom: 16 })
@@ -809,15 +861,15 @@ struct Index {
       Column() {
         Text('GPA')
           .fontSize(11)
-          .fontColor('#888888')
+          .fontColor($r('app.color.text_tertiary'))
         Text(this.weightedPoint())
           .fontSize(20)
           .fontWeight(FontWeight.Bold)
-          .fontColor('#333333')
+          .fontColor($r('app.color.text_secondary'))
           .margin({ top: 4, bottom: 2 })
         Text('绩点')
           .fontSize(10)
-          .fontColor('#AAAAAA')
+          .fontColor($r('app.color.text_hint'))
       }
       .layoutWeight(1)
       .alignItems(HorizontalAlign.Center)
@@ -825,15 +877,15 @@ struct Index {
       Column() {
         Text('加权成绩')
           .fontSize(11)
-          .fontColor('#888888')
+          .fontColor($r('app.color.text_tertiary'))
         Text(this.weightedScore())
           .fontSize(20)
           .fontWeight(FontWeight.Bold)
-          .fontColor('#333333')
+          .fontColor($r('app.color.text_secondary'))
           .margin({ top: 4, bottom: 2 })
         Text('分')
           .fontSize(10)
-          .fontColor('#AAAAAA')
+          .fontColor($r('app.color.text_hint'))
       }
       .layoutWeight(1)
       .alignItems(HorizontalAlign.Center)
@@ -841,21 +893,21 @@ struct Index {
       Column() {
         Text('课程')
           .fontSize(11)
-          .fontColor('#888888')
+          .fontColor($r('app.color.text_tertiary'))
         Text(`${this.grades.length}`)
           .fontSize(20)
           .fontWeight(FontWeight.Bold)
-          .fontColor('#333333')
+          .fontColor($r('app.color.text_secondary'))
           .margin({ top: 4, bottom: 2 })
         Text('门')
           .fontSize(10)
-          .fontColor('#AAAAAA')
+          .fontColor($r('app.color.text_hint'))
       }
       .layoutWeight(1)
       .alignItems(HorizontalAlign.Center)
     }
     .width('92%')
-    .backgroundColor(Color.White)
+    .backgroundColor($r('app.color.card_background'))
     .borderRadius(12)
     .padding(16)
     .margin({ bottom: 16 })
@@ -863,22 +915,46 @@ struct Index {
 
   @Builder
   ScheduleContent() {
-    Scroll() {
-      Column() {
-        Row() {
-          Text('课表')
-            .fontSize(24)
-            .fontWeight(FontWeight.Bold)
-            .fontColor('#333333')
+    Column() {
+      Row() {
+        Text('课表')
+          .fontSize(24)
+          .fontWeight(FontWeight.Bold)
+          .fontColor($r('app.color.text_secondary'))
 
-          Blank()
+        Blank()
 
-          Button('导入')
-            .height(32)
-            .backgroundColor(Color.Transparent)
-            .fontColor('#4A6CF7')
-            .fontSize(13)
-            .border({ width: 1, color: '#4A6CF7', radius: 6 })
+        Button('导入')
+          .height(32)
+          .backgroundColor(Color.Transparent)
+          .fontColor($r('app.color.accent'))
+          .fontSize(13)
+          .border({ width: 1, color: $r('app.color.accent'), radius: 6 })
+          .onClick(() => {
+            if (!this.hasCredentials) {
+              this.showLoginForm = true;
+              this.currentTarget = LoginTarget.SCHEDULE;
+              return;
+            }
+            this.startPortal(LoginTarget.SCHEDULE, false);
+          })
+      }
+      .width('92%')
+      .margin({ top: 20, bottom: 12 })
+
+      if (this.courses.length === 0) {
+        Column() {
+          Text('还没有课表数据')
+            .fontSize(14)
+            .fontColor($r('app.color.text_hint'))
+            .margin({ top: 40 })
+          Button('导入课表')
+            .height(44)
+            .backgroundColor($r('app.color.accent'))
+            .fontColor(Color.White)
+            .fontSize(14)
+            .borderRadius(8)
+            .margin({ top: 16 })
             .onClick(() => {
               if (!this.hasCredentials) {
                 this.showLoginForm = true;
@@ -888,113 +964,62 @@ struct Index {
               this.startPortal(LoginTarget.SCHEDULE, false);
             })
         }
-        .width('92%')
-        .margin({ top: 20, bottom: 16 })
-
-        if (this.courses.length === 0) {
-          Column() {
-            Text('还没有课表数据')
-              .fontSize(14)
-              .fontColor('#AAAAAA')
-              .margin({ top: 40 })
-            Button('导入课表')
-              .height(44)
-              .backgroundColor('#4A6CF7')
-              .fontColor(Color.White)
-              .fontSize(14)
-              .borderRadius(8)
-              .margin({ top: 16 })
-              .onClick(() => {
-                if (!this.hasCredentials) {
-                  this.showLoginForm = true;
-                  this.currentTarget = LoginTarget.SCHEDULE;
-                  return;
-                }
-                this.startPortal(LoginTarget.SCHEDULE, false);
-              })
-          }
-          .width('100%')
-          .alignItems(HorizontalAlign.Center)
-        } else {
-          if (this.semesters.length > 1) {
-            Row() {
-              Button('‹')
-                .fontSize(18)
-                .width(36)
-                .height(36)
-                .backgroundColor(Color.Transparent)
-                .fontColor('#4A6CF7')
-                .border({ width: 1, color: '#DDDDDD', radius: 6 })
-                .onClick(() => {
-                  if (this.selectedSemesterIndex > 0) {
-                    this.selectedSemesterIndex--;
-                  }
-                })
-              Text(this.semesters[this.selectedSemesterIndex].name)
-                .fontSize(14)
-                .fontColor('#333333')
-                .fontWeight(FontWeight.Medium)
-                .layoutWeight(1)
-                .textAlign(TextAlign.Center)
-                .maxLines(1)
-                .textOverflow({ overflow: TextOverflow.Ellipsis })
-              Button('›')
-                .fontSize(18)
-                .width(36)
-                .height(36)
-                .backgroundColor(Color.Transparent)
-                .fontColor('#4A6CF7')
-                .border({ width: 1, color: '#DDDDDD', radius: 6 })
-                .onClick(() => {
-                  if (this.selectedSemesterIndex < this.semesters.length - 1) {
-                    this.selectedSemesterIndex++;
-                  }
-                })
-            }
-            .width('92%')
-            .margin({ bottom: 12 })
-          }
-
+        .width('100%')
+        .alignItems(HorizontalAlign.Center)
+        .layoutWeight(1)
+      } else {
+        if (this.semesters.length > 1) {
           Row() {
-            Text(`共 ${this.currentSemesterCourses().length} 门课程`)
-              .fontSize(12)
-              .fontColor('#888888')
-            Blank()
-            Button('刷新')
-              .height(28)
+            Button('‹')
+              .fontSize(18)
+              .width(36)
+              .height(36)
               .backgroundColor(Color.Transparent)
-              .fontColor('#4A6CF7')
-              .fontSize(12)
-              .border({ width: 1, color: '#4A6CF7', radius: 6 })
+              .fontColor($r('app.color.accent'))
+              .border({ width: 1, color: $r('app.color.border_light'), radius: 6 })
               .onClick(() => {
-                if (!this.hasCredentials) {
-                  this.showLoginForm = true;
-                  this.currentTarget = LoginTarget.SCHEDULE;
-                  return;
+                if (this.selectedSemesterIndex > 0) {
+                  this.selectedSemesterIndex--;
                 }
-                this.startPortal(LoginTarget.SCHEDULE, false);
+              })
+            Text(this.semesters[this.selectedSemesterIndex].name)
+              .fontSize(14)
+              .fontColor($r('app.color.text_secondary'))
+              .fontWeight(FontWeight.Medium)
+              .layoutWeight(1)
+              .textAlign(TextAlign.Center)
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+            Button('›')
+              .fontSize(18)
+              .width(36)
+              .height(36)
+              .backgroundColor(Color.Transparent)
+              .fontColor($r('app.color.accent'))
+              .border({ width: 1, color: $r('app.color.border_light'), radius: 6 })
+              .onClick(() => {
+                if (this.selectedSemesterIndex < this.semesters.length - 1) {
+                  this.selectedSemesterIndex++;
+                }
               })
           }
           .width('92%')
-          .margin({ bottom: 8 })
-
-          Column() {
-            ForEach(this.currentSemesterCourses(), (course: Course, index: number) => {
-              this.CourseRow(course)
-            }, (course: Course, index: number) => `${index}_${course.name}_${course.scheduleText}`)
-          }
-          .width('92%')
-          .backgroundColor(Color.White)
-          .borderRadius(12)
-          .padding({ left: 14, right: 14 })
+          .margin({ bottom: 12 })
         }
+
+        Column() {
+          ScheduleGrid({ courses: this.currentSemesterCourses() })
+        }
+        .width('92%')
+        .backgroundColor($r('app.color.schedule_bg'))
+        .borderRadius(12)
+        .padding(8)
+        .layoutWeight(1)
       }
-      .width('100%')
-      .alignItems(HorizontalAlign.Center)
     }
     .width('100%')
     .height('100%')
-    .scrollBar(BarState.Off)
+    .alignItems(HorizontalAlign.Center)
   }
 
   @Builder
@@ -1005,16 +1030,16 @@ struct Index {
           Text('成绩')
             .fontSize(24)
             .fontWeight(FontWeight.Bold)
-            .fontColor('#333333')
+            .fontColor($r('app.color.text_secondary'))
 
           Blank()
 
           Button('更新')
             .height(32)
             .backgroundColor(Color.Transparent)
-            .fontColor('#4A6CF7')
+            .fontColor($r('app.color.accent'))
             .fontSize(13)
-            .border({ width: 1, color: '#4A6CF7', radius: 6 })
+            .border({ width: 1, color: $r('app.color.accent'), radius: 6 })
             .onClick(() => {
               if (!this.hasCredentials) {
                 this.showLoginForm = true;
@@ -1031,7 +1056,7 @@ struct Index {
 
         Text('成绩明细')
           .fontSize(14)
-          .fontColor('#888888')
+          .fontColor($r('app.color.text_tertiary'))
           .width('92%')
           .margin({ bottom: 8 })
 
@@ -1039,7 +1064,7 @@ struct Index {
           Column() {
             Text('还没有成绩')
               .fontSize(14)
-              .fontColor('#AAAAAA')
+              .fontColor($r('app.color.text_hint'))
               .margin({ top: 40 })
           }
           .width('100%')
@@ -1051,7 +1076,7 @@ struct Index {
             }, (grade: Grade, index: number) => `${index}`)
           }
           .width('92%')
-          .backgroundColor(Color.White)
+          .backgroundColor($r('app.color.card_background'))
           .borderRadius(12)
           .padding({ left: 14, right: 14 })
         }
@@ -1062,6 +1087,7 @@ struct Index {
     .width('100%')
     .height('100%')
     .scrollBar(BarState.Off)
+    .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM])
   }
 
   @Builder
@@ -1072,17 +1098,17 @@ struct Index {
           Text(grade.course)
             .fontSize(15)
             .fontWeight(FontWeight.Bold)
-            .fontColor('#333333')
+            .fontColor($r('app.color.text_secondary'))
             .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
           Text(`${grade.category} · ${grade.credits} 学分`)
             .fontSize(12)
-            .fontColor('#888888')
+            .fontColor($r('app.color.text_tertiary'))
             .margin({ top: 2 })
           if (grade.detail.length > 0) {
             Text(grade.detail)
               .fontSize(11)
-              .fontColor('#AAAAAA')
+              .fontColor($r('app.color.text_hint'))
               .margin({ top: 1 })
               .maxLines(1)
               .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -1095,10 +1121,10 @@ struct Index {
           Text(`绩点 ${grade.pointText()}`)
             .fontSize(15)
             .fontWeight(FontWeight.Bold)
-            .fontColor('#4A6CF7')
+            .fontColor($r('app.color.accent'))
           Text(`成绩 ${grade.scoreText()}`)
             .fontSize(11)
-            .fontColor('#888888')
+            .fontColor($r('app.color.text_tertiary'))
             .margin({ top: 2 })
         }
         .width(84)
@@ -1111,62 +1137,7 @@ struct Index {
       Row()
         .width('100%')
         .height(0.5)
-        .backgroundColor('#EEEEEE')
-    }
-  }
-
-  @Builder
-  CourseRow(course: Course) {
-    Column() {
-      Row() {
-        Column() {
-          Text(course.name)
-            .fontSize(15)
-            .fontWeight(FontWeight.Bold)
-            .fontColor('#333333')
-            .maxLines(1)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-          if (course.teacher.length > 0) {
-            Text(course.teacher)
-              .fontSize(12)
-              .fontColor('#888888')
-              .margin({ top: 2 })
-          }
-        }
-        .layoutWeight(1)
-        .alignItems(HorizontalAlign.Start)
-
-        Column() {
-          Text(course.displayDay())
-            .fontSize(13)
-            .fontWeight(FontWeight.Bold)
-            .fontColor('#4A6CF7')
-          Text(course.displaySection())
-            .fontSize(11)
-            .fontColor('#888888')
-            .margin({ top: 2 })
-        }
-        .width(80)
-        .alignItems(HorizontalAlign.End)
-      }
-      .width('100%')
-      .padding({ top: 8, bottom: 4 })
-      .alignItems(VerticalAlign.Center)
-
-      if (course.location.length > 0) {
-        Row() {
-          Text(course.location)
-            .fontSize(11)
-            .fontColor('#AAAAAA')
-        }
-        .width('100%')
-        .padding({ bottom: 4 })
-      }
-
-      Row()
-        .width('100%')
-        .height(0.5)
-        .backgroundColor('#EEEEEE')
+        .backgroundColor($r('app.color.divider'))
     }
   }
 
@@ -1177,18 +1148,18 @@ struct Index {
         Text('设置')
           .fontSize(24)
           .fontWeight(FontWeight.Bold)
-          .fontColor('#333333')
+          .fontColor($r('app.color.text_secondary'))
           .margin({ top: 20, bottom: 16 })
 
         Column() {
           Row() {
             Text('账号')
               .fontSize(15)
-              .fontColor('#333333')
+              .fontColor($r('app.color.text_secondary'))
             Blank()
             Text(this.hasCredentials ? this.maskAccount(this.savedAccount) : '尚未登录')
               .fontSize(14)
-              .fontColor('#888888')
+              .fontColor($r('app.color.text_tertiary'))
           }
           .width('100%')
           .height(52)
@@ -1197,15 +1168,15 @@ struct Index {
           Row()
             .width('100%')
             .height(0.5)
-            .backgroundColor('#EEEEEE')
+            .backgroundColor($r('app.color.divider'))
 
           Row() {
             Button(this.hasCredentials ? '更换账号' : '登录')
               .height(36)
               .backgroundColor(Color.Transparent)
-              .fontColor('#4A6CF7')
+              .fontColor($r('app.color.accent'))
               .fontSize(13)
-              .border({ width: 1, color: '#4A6CF7', radius: 6 })
+              .border({ width: 1, color: $r('app.color.accent'), radius: 6 })
               .onClick(() => {
                 this.showLoginForm = true;
               })
@@ -1214,9 +1185,9 @@ struct Index {
               Button('退出登录')
                 .height(36)
                 .backgroundColor(Color.Transparent)
-                .fontColor('#CC3333')
+                .fontColor($r('app.color.danger'))
                 .fontSize(13)
-                .border({ width: 1, color: '#CC3333', radius: 6 })
+                .border({ width: 1, color: $r('app.color.danger'), radius: 6 })
                 .margin({ left: 12 })
                 .onClick(() => {
                   this.onSignOut();
@@ -1227,7 +1198,7 @@ struct Index {
           .padding({ left: 16, right: 16, top: 8, bottom: 12 })
         }
         .width('92%')
-        .backgroundColor(Color.White)
+        .backgroundColor($r('app.color.card_background'))
         .borderRadius(12)
       }
       .width('100%')
@@ -1236,6 +1207,7 @@ struct Index {
     .width('100%')
     .height('100%')
     .scrollBar(BarState.Off)
+    .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM])
   }
 
   @Builder
@@ -1244,7 +1216,7 @@ struct Index {
       Row() {
         Text('‹')
           .fontSize(32)
-          .fontColor('#333333')
+          .fontColor($r('app.color.text_secondary'))
           .padding({ left: 12, right: 12 })
           .onClick(() => {
             this.showWebView = false;
@@ -1256,10 +1228,10 @@ struct Index {
             this.currentTarget === LoginTarget.GRADES ? '更新成绩' : '查看电费')
             .fontSize(16)
             .fontWeight(FontWeight.Bold)
-            .fontColor('#333333')
+            .fontColor($r('app.color.text_secondary'))
           Text(this.statusText)
             .fontSize(11)
-            .fontColor('#888888')
+            .fontColor($r('app.color.text_tertiary'))
             .margin({ top: 2 })
         }
         .alignItems(HorizontalAlign.Start)
@@ -1268,18 +1240,18 @@ struct Index {
       .width('100%')
       .height(56)
       .alignItems(VerticalAlign.Center)
-      .backgroundColor(Color.White)
+      .backgroundColor($r('app.color.card_background'))
 
       Progress({ value: this.webProgress, total: 100, type: ProgressType.Linear })
         .width('100%')
         .height(3)
-        .color('#4A6CF7')
+        .color($r('app.color.accent'))
 
       Column() {
         LoadingProgress()
           .width(42)
           .height(42)
-          .color('#4A6CF7')
+          .color($r('app.color.accent'))
 
         Column() {
           Text('正在通过统一认证' +
@@ -1287,14 +1259,14 @@ struct Index {
               this.currentTarget === LoginTarget.GRADES ? '更新成绩' : '查看电费'))
             .fontSize(16)
             .fontWeight(FontWeight.Bold)
-            .fontColor('#333333')
+            .fontColor($r('app.color.text_secondary'))
           Text(this.statusText)
             .fontSize(12)
-            .fontColor('#888888')
+            .fontColor($r('app.color.text_tertiary'))
             .margin({ top: 6 })
         }
         .width('90%')
-        .backgroundColor(Color.White)
+        .backgroundColor($r('app.color.card_background'))
         .borderRadius(12)
         .padding(18)
         .margin({ top: 16 })
@@ -1337,7 +1309,7 @@ struct Index {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor('#F5F5F5')
+    .backgroundColor($r('app.color.page_background'))
   }
 
   @Builder
@@ -1346,23 +1318,23 @@ struct Index {
       Column() {
         Text('账号')
           .fontSize(11)
-          .fontColor('#4A6CF7')
+          .fontColor($r('app.color.accent'))
           .fontWeight(FontWeight.Bold)
 
         Text('登录教务系统')
           .fontSize(21)
-          .fontColor('#333333')
+          .fontColor($r('app.color.text_secondary'))
           .fontWeight(FontWeight.Bold)
           .margin({ top: 4, bottom: 6 })
 
         Text(this.loginPhase === LoginPhase.CREDENTIALS_ERROR ? '账号或密码不正确，请重新确认' : '使用统一身份认证登录')
           .fontSize(12)
-          .fontColor('#888888')
+          .fontColor($r('app.color.text_tertiary'))
 
         Row()
           .width(42)
           .height(3)
-          .backgroundColor('#4A6CF7')
+          .backgroundColor($r('app.color.accent'))
           .borderRadius(2)
           .margin({ top: 8, bottom: 8 })
 
@@ -1388,17 +1360,19 @@ struct Index {
             .layoutWeight(1)
             .height(44)
             .backgroundColor(Color.Transparent)
-            .fontColor('#666666')
+            .fontColor($r('app.color.text_hint'))
             .fontSize(14)
-            .border({ width: 1, color: '#DDDDDD', radius: 8 })
+            .border({ width: 1, color: $r('app.color.border_light'), radius: 8 })
             .onClick(() => {
               this.showLoginForm = false;
+              this.stopPolling();
+              this.showWebView = false;
             })
 
           Button('保存')
             .layoutWeight(1)
             .height(44)
-            .backgroundColor('#4A6CF7')
+            .backgroundColor($r('app.color.accent'))
             .fontColor(Color.White)
             .fontSize(14)
             .borderRadius(8)
@@ -1411,17 +1385,14 @@ struct Index {
         .margin({ top: 12 })
       }
       .width('90%')
-      .backgroundColor(Color.White)
+      .backgroundColor($r('app.color.card_background'))
       .borderRadius(16)
       .padding(22)
     }
     .width('100%')
     .height('100%')
     .justifyContent(FlexAlign.Center)
-    .backgroundColor('rgba(0,0,0,0.4)')
-    .onClick(() => {
-      this.showLoginForm = false;
-    })
+    .backgroundColor($r('app.color.overlay_dim'))
   }
 
   @Builder
@@ -1430,23 +1401,23 @@ struct Index {
       Column() {
         Text('安全验证')
           .fontSize(11)
-          .fontColor('#4A6CF7')
+          .fontColor($r('app.color.accent'))
           .fontWeight(FontWeight.Bold)
 
         Text('输入短信验证码')
           .fontSize(21)
-          .fontColor('#333333')
+          .fontColor($r('app.color.text_secondary'))
           .fontWeight(FontWeight.Bold)
           .margin({ top: 4, bottom: 6 })
 
         Text('验证码已由校方认证系统发送，请输入后继续。')
           .fontSize(12)
-          .fontColor('#888888')
+          .fontColor($r('app.color.text_tertiary'))
 
         Row()
           .width(42)
           .height(3)
-          .backgroundColor('#4A6CF7')
+          .backgroundColor($r('app.color.accent'))
           .borderRadius(2)
           .margin({ top: 8, bottom: 8 })
 
@@ -1463,18 +1434,19 @@ struct Index {
             .layoutWeight(1)
             .height(44)
             .backgroundColor(Color.Transparent)
-            .fontColor('#666666')
+            .fontColor($r('app.color.text_hint'))
             .fontSize(14)
-            .border({ width: 1, color: '#DDDDDD', radius: 8 })
+            .border({ width: 1, color: $r('app.color.border_light'), radius: 8 })
             .onClick(() => {
               this.showSmsForm = false;
               this.stopPolling();
+              this.showWebView = false;
             })
 
           Button('验证')
             .layoutWeight(1)
             .height(44)
-            .backgroundColor('#4A6CF7')
+            .backgroundColor($r('app.color.accent'))
             .fontColor(Color.White)
             .fontSize(14)
             .borderRadius(8)
@@ -1487,16 +1459,13 @@ struct Index {
         .margin({ top: 12 })
       }
       .width('90%')
-      .backgroundColor(Color.White)
+      .backgroundColor($r('app.color.card_background'))
       .borderRadius(16)
       .padding(22)
     }
     .width('100%')
     .height('100%')
     .justifyContent(FlexAlign.Center)
-    .backgroundColor('rgba(0,0,0,0.4)')
-    .onClick(() => {
-      this.showSmsForm = false;
-    })
+    .backgroundColor($r('app.color.overlay_dim'))
   }
 }

@@ -3,6 +3,70 @@
     {
       "name": "start_window_background",
       "value": "#FFFFFF"
+    },
+    {
+      "name": "page_background",
+      "value": "#F5F5F5"
+    },
+    {
+      "name": "card_background",
+      "value": "#FFFFFF"
+    },
+    {
+      "name": "text_primary",
+      "value": "#1A1A2E"
+    },
+    {
+      "name": "text_secondary",
+      "value": "#333333"
+    },
+    {
+      "name": "text_tertiary",
+      "value": "#888888"
+    },
+    {
+      "name": "text_hint",
+      "value": "#AAAAAA"
+    },
+    {
+      "name": "accent",
+      "value": "#4A6CF7"
+    },
+    {
+      "name": "divider",
+      "value": "#EEEEEE"
+    },
+    {
+      "name": "schedule_bg",
+      "value": "#F7F9FC"
+    },
+    {
+      "name": "schedule_line",
+      "value": "#DCE3EB"
+    },
+    {
+      "name": "schedule_empty_bg",
+      "value": "#FFFFFF"
+    },
+    {
+      "name": "overlay_dim",
+      "value": "#66000000"
+    },
+    {
+      "name": "tab_bar_bg",
+      "value": "#F0FFFFFF"
+    },
+    {
+      "name": "danger",
+      "value": "#CC3333"
+    },
+    {
+      "name": "button_secondary",
+      "value": "#6C7B95"
+    },
+    {
+      "name": "border_light",
+      "value": "#DDDDDD"
     }
   ]
 }

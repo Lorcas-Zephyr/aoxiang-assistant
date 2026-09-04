@@ -111,11 +111,18 @@
     if (asksForSms) {
       if (canFillSms && smsCode) {
         setValue(smsField, smsCode);
-        const submit = findButton(loginDocument, /验证|确认|提交|登录/);
+        const submit = [...loginDocument.querySelectorAll("button, input[type=submit], input[type=button]")]
+          .find((element) => {
+            if (!visible(element)) return false;
+            const label = text(element.innerText || element.value);
+            if (/获取|发送|重发|重新|再次|resend|send\s*code/i.test(label)) return false;
+            return /验证|确认|提交|登录|submit|login/i.test(label);
+          });
         if (submit) clickElement(submit);
         return JSON.stringify({ phase: "sms_submitting", rows: [] });
       }
-      return JSON.stringify({ phase: "sms_required", rows: [] });
+      const smsError = /验证码\s*(错误|不正确|不对|无效)|验证码已\s*(过期|失效)|code\s*(error|invalid)/i.test(loginBody);
+      return JSON.stringify({ phase: "sms_required", smsError, rows: [] });
     }
     const usernameInput = [...loginDocument.querySelectorAll('input[name="username"], #username, input[type="text"], input[type="tel"], input[type="email"]')]
       .find((input) => visible(input) && input !== passwordInput);
