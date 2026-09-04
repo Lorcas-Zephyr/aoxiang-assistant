@@ -326,7 +326,7 @@ export class Course {
     const map: Record<string, Course> = {};
     for (let i = 0; i < courses.length; i++) {
       const c: Course = courses[i];
-      const key: string = `${c.code}|${c.name}`;
+      const key: string = c.code.length > 0 ? `${c.code}|${c.name}` : c.name;
       const existing: Course | undefined = map[key];
       if (existing === undefined) {
         map[key] = c;

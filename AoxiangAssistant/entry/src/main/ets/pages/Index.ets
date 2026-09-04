@@ -2,10 +2,13 @@ import webview from '@ohos.web.webview';
 import { common } from '@kit.AbilityKit';
 import { preferences } from '@kit.ArkData';
 import { util } from '@kit.ArkTS';
+import picker from '@ohos.file.picker';
+import fs from '@ohos.file.fs';
 import { CredentialStore } from '../model/CredentialStore';
 import { Grade, GradeMath } from '../model/GradeModel';
 import { Course, CoursePresetColors, Semester, TimeSlot } from '../model/CourseModel';
 import { WeekUtils } from '../model/WeekUtils';
+import { IcsExport } from '../model/IcsExport';
 import { ScheduleGrid } from '../components/ScheduleGrid';
 import { Constants, LoginPhase, LoginTarget } from '../common/Constants';
 import { BusinessError } from '@kit.BasicServicesKit';
@@ -54,6 +57,7 @@ struct Index {
   @State confirmTitle: string = '';
   @State confirmMessage: string = '';
   @State interactiveMode: boolean = false;
+  @State tabBarHidden: boolean = false;
   @StorageProp('topRectHeight') topRectHeight: number = 0;
 
   private webController: webview.WebviewController = new webview.WebviewController();
@@ -71,6 +75,7 @@ struct Index {
   private electricityReadyAt: number = 0;
   private smsSubmittedAt: number = 0;
   private gradePref: preferences.Preferences | undefined = undefined;
+  private lastScrollY: number = 0;
 
   async aboutToAppear(): Promise<void> {
     const context = getContext(this) as common.UIAbilityContext;
@@ -106,15 +111,22 @@ struct Index {
   }
 
   private async refreshCredentialState(): Promise<void> {
-    this.hasCredentials = this.credentialStore.hasCredentials();
-    if (this.hasCredentials) {
-      const creds: string[] = await this.credentialStore.readCredentials();
-      this.savedAccount = creds[0];
-      this.username = creds[0];
-      this.password = creds[1];
-    } else {
+    if (!this.credentialStore.hasCredentials()) {
+      this.hasCredentials = false;
       this.savedAccount = '';
+      return;
     }
+    const creds: string[] = await this.credentialStore.readCredentials();
+    if (creds[0].length === 0) {
+      await this.credentialStore.clearCredentials();
+      this.hasCredentials = false;
+      this.savedAccount = '';
+      return;
+    }
+    this.hasCredentials = true;
+    this.savedAccount = creds[0];
+    this.username = creds[0];
+    this.password = creds[1];
   }
 
   private maskAccount(account: string): string {
@@ -483,6 +495,15 @@ struct Index {
     this.statusText = '已退出登录';
   }
 
+  private async persistLoginState(): Promise<void> {
+    await this.credentialStore.markCredentialsVerified();
+    try {
+      webview.WebCookieManager.saveCookieSync();
+    } catch (e) {
+      console.error('saveCookieSync failed');
+    }
+  }
+
   private startPolling(): void {
     this.stopPolling();
     this.pollTimer = setInterval(() => {
@@ -680,6 +701,7 @@ struct Index {
           if (isFinite(balance) && balance >= 0) {
             this.electricityBalance = balance;
             this.saveElectricityToPref();
+            this.persistLoginState();
             this.stopPolling();
             this.showWebView = false;
             this.statusText = `电费余额: ${balance.toFixed(2)} 元`;
@@ -729,6 +751,7 @@ struct Index {
           if (isFinite(balance) && balance >= 0) {
             this.electricityBalance = balance;
             this.saveElectricityToPref();
+            this.persistLoginState();
             this.stopPolling();
             this.showWebView = false;
             this.statusText = `电费余额: ${balance.toFixed(2)} 元`;
@@ -790,6 +813,7 @@ struct Index {
     }
     this.grades = out;
     this.saveGradesToPref();
+    this.persistLoginState();
     this.stopPolling();
     this.showWebView = false;
     this.currentTab = 2;
@@ -847,6 +871,7 @@ struct Index {
     this.semesters = semOut;
     this.courses = mergedAll;
     this.saveCoursesToPref();
+    this.persistLoginState();
     this.selectedSemesterIndex = 0;
     this.selectedWeekOffset = 0;
     this.stopPolling();
@@ -932,7 +957,9 @@ struct Index {
       .barBackgroundColor(Color.Transparent)
       .barHeight(0)
 
-      this.FloatingTabBar()
+      if (!this.showLoginForm && !this.showSmsForm && !this.showSemesterDialog && !this.showCourseDialog && !this.showConfirmDialog && !this.showWebView && !this.interactiveMode) {
+        this.FloatingTabBar()
+      }
 
       if (this.showWebView) {
         this.WebViewOverlay()
@@ -996,7 +1023,8 @@ struct Index {
     .backgroundColor($r('app.color.tab_bar_bg'))
     .shadow({ radius: 20, color: '#1A000000', offsetX: 0, offsetY: -2 })
     .position({ x: '4%', y: '100%' })
-    .translate({ y: -80 })
+    .translate({ y: this.tabBarHidden ? 80 : -80 })
+    .animation({ duration: 250, curve: Curve.FastOutSlowIn })
     .zIndex(10)
   }
 
@@ -1072,11 +1100,22 @@ struct Index {
       }
       .width('100%')
       .alignItems(HorizontalAlign.Center)
+      .padding({ bottom: 80 })
     }
     .width('100%')
     .height('100%')
     .scrollBar(BarState.Off)
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM])
+    .onScroll((_: number, yOffset: number) => {
+      if (yOffset <= 0) {
+        this.tabBarHidden = false;
+      } else if (yOffset > this.lastScrollY) {
+        this.tabBarHidden = true;
+      } else if (yOffset < this.lastScrollY) {
+        this.tabBarHidden = false;
+      }
+      this.lastScrollY = yOffset;
+    })
   }
 
   @Builder
@@ -1420,6 +1459,7 @@ struct Index {
     .width('100%')
     .height('100%')
     .alignItems(HorizontalAlign.Center)
+    .padding({ bottom: 80 })
   }
 
   private weekTitleText(): string {
@@ -1486,19 +1526,53 @@ struct Index {
               this.GradeRow(grade)
             }, (grade: Grade, index: number) => `${index}`)
           }
-          .width('92%')
-          .backgroundColor($r('app.color.card_background'))
-          .borderRadius(12)
-          .padding({ left: 14, right: 14 })
+.width('92%')
+        .backgroundColor($r('app.color.card_background'))
+        .borderRadius(12)
+      }
+
+      Column() {
+        Row() {
+          Text('课表')
+            .fontSize(14)
+            .fontColor($r('app.color.text_secondary'))
+          Blank()
+          Button('导出课表')
+            .height(36)
+            .backgroundColor(Color.Transparent)
+            .fontColor($r('app.color.accent'))
+            .fontSize(13)
+            .border({ width: 1, color: $r('app.color.accent'), radius: 6 })
+            .onClick(() => {
+              this.exportIcsSchedule();
+            })
         }
+        .width('100%')
+        .padding({ left: 16, right: 16, top: 8, bottom: 12 })
+      }
+      .width('92%')
+      .backgroundColor($r('app.color.card_background'))
+      .borderRadius(12)
+      .margin({ top: 12 })
       }
       .width('100%')
       .alignItems(HorizontalAlign.Center)
+      .padding({ bottom: 80 })
     }
     .width('100%')
     .height('100%')
     .scrollBar(BarState.Off)
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM])
+    .onScroll((_: number, yOffset: number) => {
+      if (yOffset <= 0) {
+        this.tabBarHidden = false;
+      } else if (yOffset > this.lastScrollY) {
+        this.tabBarHidden = true;
+      } else if (yOffset < this.lastScrollY) {
+        this.tabBarHidden = false;
+      }
+      this.lastScrollY = yOffset;
+    })
   }
 
   @Builder
@@ -1614,11 +1688,22 @@ struct Index {
       }
       .width('100%')
       .alignItems(HorizontalAlign.Center)
+      .padding({ bottom: 80 })
     }
     .width('100%')
     .height('100%')
     .scrollBar(BarState.Off)
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM])
+    .onScroll((_: number, yOffset: number) => {
+      if (yOffset <= 0) {
+        this.tabBarHidden = false;
+      } else if (yOffset > this.lastScrollY) {
+        this.tabBarHidden = true;
+      } else if (yOffset < this.lastScrollY) {
+        this.tabBarHidden = false;
+      }
+      this.lastScrollY = yOffset;
+    })
   }
 
   @Builder
@@ -1742,11 +1827,22 @@ struct Index {
       }
       .width('100%')
       .alignItems(HorizontalAlign.Center)
+      .padding({ bottom: 80 })
     }
     .width('100%')
     .height('100%')
     .scrollBar(BarState.Off)
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM])
+    .onScroll((_: number, yOffset: number) => {
+      if (yOffset <= 0) {
+        this.tabBarHidden = false;
+      } else if (yOffset > this.lastScrollY) {
+        this.tabBarHidden = true;
+      } else if (yOffset < this.lastScrollY) {
+        this.tabBarHidden = false;
+      }
+      this.lastScrollY = yOffset;
+    })
   }
 
   private selectedSemesterName(): string {
@@ -2133,6 +2229,36 @@ struct Index {
     this.saveCoursesToPref();
   }
 
+  private async exportIcsSchedule(): Promise<void> {
+    const sem: Semester | undefined = this.selectedSemester();
+    if (sem === undefined) {
+      this.statusText = '请先导入课表';
+      return;
+    }
+    if (sem.startDate.length === 0) {
+      this.statusText = '请先设置第一周日期';
+      return;
+    }
+    const ics: string = IcsExport.generate(this.courses, sem, new Date());
+    try {
+      const docPicker = new picker.DocumentViewPicker();
+      const saveOptions: picker.DocumentSaveOptions = new picker.DocumentSaveOptions();
+      saveOptions.newFileNames = [`课表-${sem.name}.ics`];
+      saveOptions.fileSuffixChoices = ['ics'];
+      const uris: Array<string> = await docPicker.save(saveOptions);
+      if (uris.length > 0) {
+        const fileUri: string = uris[0];
+        const file = fs.openSync(fileUri, fs.OpenMode.WRITE_ONLY);
+        fs.writeSync(file.fd, ics);
+        fs.closeSync(file);
+        this.statusText = '课表已导出为日历文件';
+      }
+    } catch (e) {
+      console.error(`exportIcs failed: ${e}`);
+      this.statusText = '导出失败';
+    }
+  }
+
   @Builder
   SemesterDialogBuilder() {
     Column() {
@@ -2217,6 +2343,7 @@ struct Index {
     .height('100%')
     .justifyContent(FlexAlign.Center)
     .backgroundColor($r('app.color.overlay_dim'))
+    .zIndex(15)
   }
 
   @Builder
@@ -2333,6 +2460,7 @@ struct Index {
     .height('100%')
     .justifyContent(FlexAlign.Center)
     .backgroundColor($r('app.color.overlay_dim'))
+    .zIndex(15)
   }
 
   @Builder
@@ -2393,6 +2521,7 @@ struct Index {
     .height('100%')
     .justifyContent(FlexAlign.Center)
     .backgroundColor($r('app.color.overlay_dim'))
+    .zIndex(15)
   }
 
   @Builder
@@ -2525,6 +2654,7 @@ struct Index {
     .width('100%')
     .height('100%')
     .backgroundColor($r('app.color.page_background'))
+    .zIndex(20)
   }
 
   @Builder
@@ -2608,6 +2738,7 @@ struct Index {
     .height('100%')
     .justifyContent(FlexAlign.Center)
     .backgroundColor($r('app.color.overlay_dim'))
+    .zIndex(15)
   }
 
   @Builder
@@ -2682,5 +2813,6 @@ struct Index {
     .height('100%')
     .justifyContent(FlexAlign.Center)
     .backgroundColor($r('app.color.overlay_dim'))
+    .zIndex(15)
   }
 }
