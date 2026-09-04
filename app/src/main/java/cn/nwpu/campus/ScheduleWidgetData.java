@@ -45,7 +45,8 @@ final class ScheduleWidgetData {
     static DayData forDate(LocalDate date, boolean upcomingOnly) {
         android.content.Context context = ScheduleWidgetContext.get();
         if (context == null) return new DayData(new ArrayList<>(), "假期");
-        android.content.SharedPreferences store = context.getSharedPreferences("campus_private", android.content.Context.MODE_PRIVATE);
+        android.content.SharedPreferences store = context.getSharedPreferences(
+                LocalDataStore.PREFERENCES_NAME, android.content.Context.MODE_PRIVATE);
         List<ScheduleModels.Semester> semesters = ScheduleStorage.loadSemesters(store);
         List<ScheduleModels.Course> courses = ScheduleStorage.loadCourses(store);
         ScheduleModels.Semester semester = semesterForDate(date, semesters);

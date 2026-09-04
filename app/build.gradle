@@ -9,6 +9,12 @@ if (keystorePropertiesFile.exists()) {
 android { namespace "cn.nwpu.campus"; compileSdk 35
     defaultConfig { applicationId "cn.nwpu.campus"; minSdk 26; targetSdk 35; versionCode 20; versionName "2.2.2" }
 
+    sourceSets {
+        test {
+            resources.srcDir(rootProject.file("contract-fixtures"))
+        }
+    }
+
     signingConfigs {
         release {
             if (!keystoreProperties.isEmpty()) {
