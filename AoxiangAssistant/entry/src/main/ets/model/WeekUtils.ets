@@ -8,6 +8,7 @@ export class WeekUtils {
       for (let w = 1; w <= 16; w++) {
         weeks.push(w);
       }
+      console.info(`parseWeeks: range='' => weeks=[1..16] count=16`);
       return weeks;
     }
     const parts: string[] = range.split(',');
@@ -16,11 +17,39 @@ export class WeekUtils {
       if (part.length === 0) {
         continue;
       }
-      const bounds: string[] = part.split('-');
-      const start: number = parseInt(bounds[0].trim(), 10);
-      const end: number = bounds.length >= 2 ? parseInt(bounds[1].trim(), 10) : start;
-      if (!isFinite(start) || !isFinite(end)) {
+      const idx: number = part.indexOf('-');
+      let startStr: string;
+      let endStr: string;
+      if (idx >= 0) {
+        startStr = part.substring(0, idx).trim();
+        endStr = part.substring(idx + 1).trim();
+        if (endStr.length === 0) {
+          endStr = '';
+        }
+      } else {
+        if (!WeekUtils.isDigits(part)) {
+          continue;
+        }
+        startStr = part;
+        endStr = '';
+      }
+      if (!WeekUtils.isDigits(startStr)) {
         continue;
+      }
+      const start: number = parseInt(startStr, 10);
+      if (isNaN(start)) {
+        continue;
+      }
+      let end: number = start;
+      if (endStr.length > 0) {
+        if (!WeekUtils.isDigits(endStr)) {
+          continue;
+        }
+        const parsedEnd: number = parseInt(endStr, 10);
+        if (isNaN(parsedEnd)) {
+          continue;
+        }
+        end = parsedEnd;
       }
       for (let w = start; w <= end; w++) {
         if (w > 0 && w <= 53) {
@@ -29,6 +58,26 @@ export class WeekUtils {
       }
     }
     return weeks;
+  }
+
+  private static isDigits(value: string): boolean {
+    if (value.length === 0) {
+      return false;
+    }
+    let startIdx: number = 0;
+    if (value.charAt(0) === '-') {
+      startIdx = 1;
+    }
+    if (startIdx >= value.length) {
+      return false;
+    }
+    for (let i = startIdx; i < value.length; i++) {
+      const ch: string = value.charAt(i);
+      if (ch < '0' || ch > '9') {
+        return false;
+      }
+    }
+    return true;
   }
 
   static isWeekInRange(week: number, range: string): boolean {

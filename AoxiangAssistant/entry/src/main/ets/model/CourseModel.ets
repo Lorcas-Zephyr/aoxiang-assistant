@@ -1,7 +1,13 @@
+class SlotGroup {
+  key: string = '';
+  items: TimeSlot[] = [];
+}
+
 export class TimeSlot {
   dayOfWeek: number = 0;
   sectionStart: number = 0;
   sectionEnd: number = 0;
+  sections: number[] = [];
   weekRange: string = '';
   repeatRule: string = '';
   campus: string = '';
@@ -23,14 +29,32 @@ export class TimeSlot {
     s.campus = cp !== undefined && cp !== null ? (cp as string) : '';
     const loc: Object | undefined = obj['location'];
     s.location = loc !== undefined && loc !== null ? (loc as string) : '';
+    const secRaw: Object | undefined = obj['sections'];
+    if (secRaw !== undefined && secRaw !== null) {
+      const secArr: Object[] = secRaw as Object[];
+      for (let i = 0; i < secArr.length; i++) {
+        s.sections.push(secArr[i] as number);
+      }
+    }
+    if (s.sections.length === 0 && s.sectionStart >= 1) {
+      const e: number = s.sectionEnd >= s.sectionStart ? s.sectionEnd : s.sectionStart;
+      for (let i = s.sectionStart; i <= e; i++) {
+        s.sections.push(i);
+      }
+    }
     return s;
   }
 
   toRecord(): Record<string, Object> {
+    const secArr: Object[] = [];
+    for (let i = 0; i < this.sections.length; i++) {
+      secArr.push(this.sections[i]);
+    }
     return {
       'dayOfWeek': this.dayOfWeek,
       'sectionStart': this.sectionStart,
       'sectionEnd': this.sectionEnd,
+      'sections': secArr,
       'weekRange': this.weekRange,
       'repeatRule': this.repeatRule,
       'campus': this.campus,
@@ -137,51 +161,109 @@ export class Course {
   }
 
   static parseScheduleText(c: Course): void {
-    if (c.scheduleText.length === 0) {
-      return;
+    const slots: TimeSlot[] = Course.parseScheduleSlots(c.scheduleText);
+    for (let i = 0; i < slots.length; i++) {
+      if (slots[i].location.length === 0) {
+        slots[i].location = c.location;
+      }
+      slots[i].campus = Course.extractCampus(slots[i].location);
     }
-    const segments: string[] = c.scheduleText.split(/[;；]/);
-    for (let i = 0; i < segments.length; i++) {
-      const seg: string = segments[i].trim();
-      if (seg.length === 0) {
-        continue;
-      }
-      const slot: TimeSlot = new TimeSlot();
-      slot.weekRange = Course.extractWeekRanges(seg);
-      slot.repeatRule = Course.extractRepeatRule(seg);
-      slot.campus = Course.extractCampus(seg + ' ' + c.location);
-      const dayMap: Record<string, number> = {
-        '周一': 1, '周二': 2, '周三': 3, '周四': 4,
-        '周五': 5, '周六': 6, '周日': 7, '周天': 7,
-        '星期一': 1, '星期二': 2, '星期三': 3, '星期四': 4,
-        '星期五': 5, '星期六': 6, '星期日': 7,
-      };
-      for (const key of Object.keys(dayMap)) {
-        if (seg.includes(key)) {
-          slot.dayOfWeek = dayMap[key];
-          break;
-        }
-      }
-      const sectionMatchA: RegExpMatchArray | null = seg.match(/[第]?\s*(\d+)\s*[-–—~至]\s*(\d+)\s*节/);
-      if (sectionMatchA !== null && sectionMatchA.length >= 3) {
-        slot.sectionStart = parseInt(sectionMatchA[1], 10);
-        slot.sectionEnd = parseInt(sectionMatchA[2], 10);
-      } else {
-        const sectionMatchB: RegExpMatchArray | null = seg.match(/[第]?\s*(\d+)\s*[-–—~至]\s*(\d+)/);
-        if (sectionMatchB !== null && sectionMatchB.length >= 3) {
-          slot.sectionStart = parseInt(sectionMatchB[1], 10);
-          slot.sectionEnd = parseInt(sectionMatchB[2], 10);
-        }
-      }
-      slot.location = c.location;
-      if (slot.dayOfWeek >= 1 && slot.dayOfWeek <= 7 && slot.sectionStart >= 1) {
-        c.timeSlots.push(slot);
-      }
-    }
+    c.timeSlots = slots;
     console.info(`parseScheduleText: text='${c.scheduleText}' slots=${c.timeSlots.length}`);
   }
 
-  private static extractRepeatRule(text: string): string {
+  static parseSlotText(text: string, defaultLocation: string): TimeSlot[] {
+    const slots: TimeSlot[] = Course.parseScheduleSlots(text);
+    for (let i = 0; i < slots.length; i++) {
+      if (slots[i].location.length === 0) {
+        slots[i].location = defaultLocation;
+      }
+      slots[i].campus = Course.extractCampus(slots[i].location);
+    }
+    return slots;
+  }
+
+  private static parseScheduleSlots(value: string): TimeSlot[] {
+    const slots: TimeSlot[] = [];
+    if (value === null || value === undefined || value.trim().length === 0) {
+      return slots;
+    }
+    const cleaned: string = value
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/&nbsp;/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    const segments: string[] = cleaned.split(/[;；]/);
+    for (let i = 0; i < segments.length; i++) {
+      const segment: string = segments[i].trim();
+      if (segment.length === 0 || Course.containsOnline(segment)) {
+        continue;
+      }
+      const day: number = Course.parseDayOfWeek(segment);
+      if (day === 0) {
+        continue;
+      }
+      const dayPosition: number = Course.findDayPosition(segment);
+      const weekPart: string = dayPosition >= 0 ? segment.substring(0, dayPosition) : segment;
+      const restPart: string = dayPosition >= 0 ? segment.substring(dayPosition) : segment;
+      const sections: number[] = Course.parseSections(restPart);
+      if (sections.length === 0) {
+        continue;
+      }
+      const repeatRule: string = Course.parseRepeatRule(segment);
+      const weekRanges: string[] = Course.extractWeekRanges(weekPart);
+      for (let w = 0; w < weekRanges.length; w++) {
+        const slot: TimeSlot = new TimeSlot();
+        slot.weekRange = weekRanges[w];
+        slot.repeatRule = repeatRule;
+        slot.dayOfWeek = day;
+        slot.sections = sections;
+        slot.sectionStart = sections[0];
+        slot.sectionEnd = sections[sections.length - 1];
+        slots.push(slot);
+      }
+    }
+    return Course.mergeSlots(slots);
+  }
+
+  private static containsOnline(text: string): boolean {
+    const keywords: string[] = ['网课', '线上', '在线'];
+    for (let i = 0; i < keywords.length; i++) {
+      if (text.includes(keywords[i])) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private static parseDayOfWeek(text: string): number {
+    const dayMap: Array<[string, number]> = [
+      ['周一', 1], ['周二', 2], ['周三', 3], ['周四', 4], ['周五', 5], ['周六', 6], ['周日', 7],
+      ['星期一', 1], ['星期二', 2], ['星期三', 3], ['星期四', 4], ['星期五', 5], ['星期六', 6],
+      ['星期日', 7], ['星期天', 7],
+    ];
+    for (let i = 0; i < dayMap.length; i++) {
+      if (text.includes(dayMap[i][0])) {
+        return dayMap[i][1];
+      }
+    }
+    return 0;
+  }
+
+  private static findDayPosition(text: string): number {
+    const keys: string[] = ['周一', '周二', '周三', '周四', '周五', '周六', '周日',
+      '星期一', '星期二', '星期三', '星期四', '星期五', '星期六', '星期日', '星期天'];
+    let index: number = -1;
+    for (let i = 0; i < keys.length; i++) {
+      const found: number = text.indexOf(keys[i]);
+      if (found >= 0 && (index < 0 || found < index)) {
+        index = found;
+      }
+    }
+    return index;
+  }
+
+  private static parseRepeatRule(text: string): string {
     if (text.includes('单周') || text.includes('(单)') || text.includes('（单）')) {
       return '仅单周';
     }
@@ -204,121 +286,283 @@ export class Course {
     return '';
   }
 
-  private static extractWeekRanges(text: string): string {
-    const chineseNums: Record<string, string> = {
-      '一': '1', '二': '2', '三': '3', '四': '4', '五': '5', '六': '6', '七': '7', '八': '8',
-      '九': '9', '十': '10', '十一': '11', '十二': '12', '十三': '13', '十四': '14',
-      '十五': '15', '十六': '16', '十七': '17', '十八': '18', '十九': '19', '二十': '20',
-      '二十一': '21', '二十二': '22',
+  private static extractWeekRanges(text: string): string[] {
+    const chineseNums: Record<string, number> = {
+      '一': 1, '二': 2, '三': 3, '四': 4, '五': 5, '六': 6, '七': 7, '八': 8, '九': 9, '十': 10,
+      '十一': 11, '十二': 12, '十三': 13, '十四': 14, '十五': 15, '十六': 16, '十七': 17,
+      '十八': 18, '十九': 19, '二十': 20, '二十一': 21, '二十二': 22,
     };
     let converted: string = text;
     for (const key of Object.keys(chineseNums)) {
-      converted = converted.split(`第${key}周`).join(chineseNums[key]);
+      converted = converted.split(`第${key}周`).join(String(chineseNums[key]));
     }
-    const weekPart: string = converted.replace(/周/g, ' ').trim();
+    converted = converted.split('周').join('').trim();
+    if (converted.length === 0) {
+      console.info(`extractWeekRanges: '${text}' -> ['1-17'] (empty fallback)`);
+      return ['1-17'];
+    }
     const ranges: string[] = [];
-    const segments: string[] = weekPart.split(/[,，、\s]+/);
-    for (let i = 0; i < segments.length; i++) {
-      const seg: string = segments[i].trim();
-      if (seg.length === 0) {
+    const parts: string[] = converted.split(/[,，、]/);
+    for (let i = 0; i < parts.length; i++) {
+      const part: string = parts[i].trim();
+      if (part.length === 0) {
         continue;
       }
-      const rangeMatch: RegExpMatchArray | null = seg.match(/^(\d+)\s*[-~至—]\s*(\d+)$/);
+      const rangeMatch: RegExpMatchArray | null = part.match(/(\d{1,3})[~至\-—](\d{1,3})/);
       if (rangeMatch !== null && rangeMatch.length >= 3) {
-        const start: number = parseInt(rangeMatch[1], 10);
-        const end: number = parseInt(rangeMatch[2], 10);
+        const start: number = Course.parseNum(rangeMatch[1]);
+        const end: number = Course.parseNum(rangeMatch[2]);
         if (start > 0 && end >= start) {
           ranges.push(start === end ? `${start}` : `${start}-${end}`);
         }
         continue;
       }
-      const singleMatch: RegExpMatchArray | null = seg.match(/^(\d+)$/);
+      const singleMatch: RegExpMatchArray | null = part.match(/(\d{1,3})/);
       if (singleMatch !== null && singleMatch.length >= 2) {
-        const week: number = parseInt(singleMatch[1], 10);
+        const week: number = Course.parseNum(singleMatch[1]);
         if (week > 0) {
           ranges.push(`${week}`);
         }
       }
     }
     if (ranges.length === 0) {
-      return '1-16';
+      console.info(`extractWeekRanges: '${text}' -> ['1-17'] (no ranges)`);
+      return ['1-17'];
     }
-    return Course.mergeRanges(ranges);
+    console.info(`extractWeekRanges: '${text}' -> [${ranges.join('|')}]`);
+    return ranges;
   }
 
-  private static mergeRanges(ranges: string[]): string {
-    const nums: number[] = [];
-    for (let i = 0; i < ranges.length; i++) {
-      const bounds: string[] = ranges[i].split('-');
-      const start: number = parseInt(bounds[0], 10);
-      const end: number = bounds.length >= 2 ? parseInt(bounds[1], 10) : start;
-      for (let w = start; w <= end; w++) {
-        if (!nums.includes(w)) {
-          nums.push(w);
-        }
-      }
+  private static parseSections(text: string): number[] {
+    const CHINESE_SECTION_RANGE: RegExp = /第(十一|十二|十三|十四|十五|十六|十七|十八|十九|二十|一|二|三|四|五|六|七|八|九|十)节[~至\-—]?第?(十一|十二|十三|十四|十五|十六|十七|十八|十九|二十|一|二|三|四|五|六|七|八|九|十)?节/;
+    const ARABIC_SECTION_RANGE_A: RegExp = /第(\d+)[节~至\-](?:第)?(\d+)节/;
+    const ARABIC_SECTION_RANGE_B: RegExp = /(\d+)[节~至\-](\d+)节/;
+    const ARABIC_SECTION_LIST: RegExp = /第((?:\d+,)*\d+)节/;
+    const ARABIC_SECTION_LIST_B: RegExp = /((?:\d+,)*\d+)节/;
+    const CHINESE_SECTION_SINGLE: RegExp = /第(十一|十二|十三|十四|十五|十六|十七|十八|十九|二十|一|二|三|四|五|六|七|八|九|十)节/;
+    const ARABIC_SECTION_SINGLE: RegExp = /第(\d+)节/;
+    const ARABIC_SECTION_SINGLE_B: RegExp = /(\d+)节/;
+
+    let m: RegExpMatchArray | null = text.match(CHINESE_SECTION_RANGE);
+    if (m !== null && m.length >= 3) {
+      return Course.sectionRange(Course.chineseNumber(m[1]),
+        Course.chineseNumber(m[2] === undefined ? m[1] : m[2]));
     }
-    nums.sort((a: number, b: number) => a - b);
-    const merged: string[] = [];
-    let runStart: number = nums[0];
-    let runEnd: number = nums[0];
-    for (let i = 1; i < nums.length; i++) {
-      if (nums[i] === runEnd + 1) {
-        runEnd = nums[i];
-      } else {
-        merged.push(runStart === runEnd ? `${runStart}` : `${runStart}-${runEnd}`);
-        runStart = nums[i];
-        runEnd = nums[i];
-      }
+    m = text.match(ARABIC_SECTION_RANGE_A);
+    if (m !== null && m.length >= 3) {
+      return Course.sectionRange(Course.parseNum(m[1]), Course.parseNum(m[2]));
     }
-    merged.push(runStart === runEnd ? `${runStart}` : `${runStart}-${runEnd}`);
-    return merged.join(',');
+    m = text.match(ARABIC_SECTION_RANGE_B);
+    if (m !== null && m.length >= 3) {
+      return Course.sectionRange(Course.parseNum(m[1]), Course.parseNum(m[2]));
+    }
+    m = text.match(ARABIC_SECTION_LIST);
+    if (m !== null && m.length >= 2) {
+      return Course.parseCsv(m[1]);
+    }
+    m = text.match(ARABIC_SECTION_LIST_B);
+    if (m !== null && m.length >= 2) {
+      return Course.parseCsv(m[1]);
+    }
+    m = text.match(CHINESE_SECTION_SINGLE);
+    if (m !== null && m.length >= 2) {
+      return [Course.chineseNumber(m[1])];
+    }
+    m = text.match(ARABIC_SECTION_SINGLE);
+    if (m !== null && m.length >= 2) {
+      return [Course.parseNum(m[1])];
+    }
+    m = text.match(ARABIC_SECTION_SINGLE_B);
+    if (m !== null && m.length >= 2) {
+      return [Course.parseNum(m[1])];
+    }
+    return [];
   }
 
-  static parseSlotText(text: string, defaultLocation: string): TimeSlot[] {
-    const slots: TimeSlot[] = [];
-    if (text.length === 0) {
-      return slots;
+  private static sectionRange(start: number, end: number): number[] {
+    const out: number[] = [];
+    const lo: number = Math.min(start, end);
+    const hi: number = Math.max(start, end);
+    for (let v = lo; v <= hi; v++) {
+      out.push(v);
     }
-    const segments: string[] = text.split(/[;；\n]/);
-    for (let i = 0; i < segments.length; i++) {
-      const seg: string = segments[i].trim();
-      if (seg.length === 0) {
-        continue;
+    return out;
+  }
+
+  private static parseCsv(value: string): number[] {
+    const out: number[] = [];
+    const parts: string[] = value.split(',');
+    for (let i = 0; i < parts.length; i++) {
+      const parsed: number = Course.parseNum(parts[i].trim());
+      if (parsed > 0) {
+        out.push(parsed);
       }
-      const slot: TimeSlot = new TimeSlot();
-      slot.weekRange = Course.extractWeekRanges(seg);
-      slot.repeatRule = Course.extractRepeatRule(seg);
-      slot.campus = Course.extractCampus(seg + ' ' + defaultLocation);
-      slot.location = defaultLocation;
-      const dayMap: Record<string, number> = {
-        '周一': 1, '周二': 2, '周三': 3, '周四': 4,
-        '周五': 5, '周六': 6, '周日': 7, '周天': 7,
-        '星期一': 1, '星期二': 2, '星期三': 3, '星期四': 4,
-        '星期五': 5, '星期六': 6, '星期日': 7,
-      };
-      for (const key of Object.keys(dayMap)) {
-        if (seg.includes(key)) {
-          slot.dayOfWeek = dayMap[key];
+    }
+    return out;
+  }
+
+  private static parseNum(value: string): number {
+    if (value === null || value === undefined) {
+      return 0;
+    }
+    const trimmed: string = value.trim();
+    if (trimmed.length === 0) {
+      return 0;
+    }
+    const parsed: number = parseInt(trimmed, 10);
+    return isNaN(parsed) ? 0 : parsed;
+  }
+
+  private static chineseNumber(value: string): number {
+    if (value === null || value === undefined) {
+      return 0;
+    }
+    const chineseNums: Record<string, number> = {
+      '一': 1, '二': 2, '三': 3, '四': 4, '五': 5, '六': 6, '七': 7, '八': 8, '九': 9, '十': 10,
+      '十一': 11, '十二': 12, '十三': 13, '十四': 14, '十五': 15, '十六': 16, '十七': 17,
+      '十八': 18, '十九': 19, '二十': 20, '二十一': 21, '二十二': 22,
+    };
+    const parsed: number | undefined = chineseNums[value];
+    return parsed === undefined ? Course.parseNum(value) : parsed;
+  }
+
+  private static mergeSlots(slots: TimeSlot[]): TimeSlot[] {
+    const out: TimeSlot[] = [];
+    const groupMap: SlotGroup[] = [];
+    for (let i = 0; i < slots.length; i++) {
+      const slot: TimeSlot = slots[i];
+      const key: string = `${slot.dayOfWeek}:${Course.sectionsKey(slot.sections)}:${slot.repeatRule}:${slot.location}`;
+      let groupEntry: SlotGroup | undefined = undefined;
+      for (let j = 0; j < groupMap.length; j++) {
+        if (groupMap[j].key === key) {
+          groupEntry = groupMap[j];
           break;
         }
       }
-      const sectionMatchA: RegExpMatchArray | null = seg.match(/[第]?\s*(\d+)\s*[-–—~至]\s*(\d+)\s*节/);
-      if (sectionMatchA !== null && sectionMatchA.length >= 3) {
-        slot.sectionStart = parseInt(sectionMatchA[1], 10);
-        slot.sectionEnd = parseInt(sectionMatchA[2], 10);
-      } else {
-        const sectionMatchB: RegExpMatchArray | null = seg.match(/[第]?\s*(\d+)\s*[-–—~至]\s*(\d+)/);
-        if (sectionMatchB !== null && sectionMatchB.length >= 3) {
-          slot.sectionStart = parseInt(sectionMatchB[1], 10);
-          slot.sectionEnd = parseInt(sectionMatchB[2], 10);
+      if (groupEntry === undefined) {
+        groupEntry = new SlotGroup();
+        groupEntry.key = key;
+        groupEntry.items = [];
+        groupMap.push(groupEntry);
+      }
+      groupEntry.items.push(slot);
+    }
+    for (let g = 0; g < groupMap.length; g++) {
+      const intervals: number[][] = [];
+      for (let i = 0; i < groupMap[g].items.length; i++) {
+        const weeks: number[] = Course.parseListWeeks(groupMap[g].items[i].weekRange);
+        if (weeks.length === 0) {
+          continue;
+        }
+        const first: number = weeks[0];
+        const last: number = weeks[weeks.length - 1];
+        intervals.push([first, last]);
+      }
+      intervals.sort((a: number[], b: number[]) => a[0] - b[0]);
+      const mergedIntervals: number[][] = [];
+      for (let i = 0; i < intervals.length; i++) {
+        if (mergedIntervals.length === 0) {
+          mergedIntervals.push(intervals[i]);
+          continue;
+        }
+        const last: number[] = mergedIntervals[mergedIntervals.length - 1];
+        if (intervals[i][0] <= last[1] + 1) {
+          last[1] = Math.max(last[1], intervals[i][1]);
+        } else {
+          mergedIntervals.push(intervals[i]);
         }
       }
-      if (slot.dayOfWeek >= 1 && slot.dayOfWeek <= 7 && slot.sectionStart >= 1) {
-        slots.push(slot);
+      for (let i = 0; i < mergedIntervals.length; i++) {
+        const interval: number[] = mergedIntervals[i];
+        const base: TimeSlot = groupMap[g].items[0];
+        const slot: TimeSlot = new TimeSlot();
+        slot.weekRange = interval[0] === interval[1] ? `${interval[0]}` : `${interval[0]}-${interval[1]}`;
+        slot.repeatRule = base.repeatRule;
+        slot.dayOfWeek = base.dayOfWeek;
+        slot.sections = base.sections.slice();
+        slot.sectionStart = base.sectionStart;
+        slot.sectionEnd = base.sectionEnd;
+        slot.location = base.location;
+        out.push(slot);
       }
     }
-    return slots;
+    return out;
+  }
+
+  private static sectionsKey(sections: number[]): string {
+    return sections.join(',');
+  }
+
+  static parseListWeeks(range: string): number[] {
+    const weeks: number[] = [];
+    if (range === null || range === undefined) {
+      return weeks;
+    }
+    const parts: string[] = range.split(',');
+    for (let i = 0; i < parts.length; i++) {
+      const part: string = parts[i].trim();
+      if (part.length === 0) {
+        continue;
+      }
+      const idx: number = part.indexOf('-');
+      let startStr: string;
+      let endStr: string;
+      if (idx >= 0) {
+        startStr = part.substring(0, idx).trim();
+        endStr = part.substring(idx + 1).trim();
+        if (endStr.length === 0) {
+          endStr = '';
+        }
+      } else {
+        startStr = part;
+        endStr = '';
+      }
+      // 严格整数解析（对齐安卓 Integer.parseInt：非纯数字视为解析失败并跳过该段）
+      if (!Course.isDigits(startStr)) {
+        continue;
+      }
+      const start: number = parseInt(startStr, 10);
+      if (isNaN(start)) {
+        continue;
+      }
+      let end: number = start;
+      if (endStr.length > 0) {
+        if (!Course.isDigits(endStr)) {
+          continue;
+        }
+        const parsedEnd: number = parseInt(endStr, 10);
+        if (isNaN(parsedEnd)) {
+          continue;
+        }
+        end = parsedEnd;
+      }
+      for (let week = start; week <= end; week++) {
+        if (week > 0 && week <= 53) {
+          weeks.push(week);
+        }
+      }
+    }
+    return weeks;
+  }
+
+  private static isDigits(value: string): boolean {
+    if (value.length === 0) {
+      return false;
+    }
+    let startIdx: number = 0;
+    if (value.charAt(0) === '-') {
+      startIdx = 1;
+    }
+    if (startIdx >= value.length) {
+      return false;
+    }
+    for (let i = startIdx; i < value.length; i++) {
+      const ch: string = value.charAt(i);
+      if (ch < '0' || ch > '9') {
+        return false;
+      }
+    }
+    return true;
   }
 
   static mergeByName(courses: Course[]): Course[] {
@@ -336,8 +580,7 @@ export class Course {
           const candidate: TimeSlot = c.timeSlots[j];
           const dup: boolean = existing.timeSlots.some((slot: TimeSlot) =>
             slot.dayOfWeek === candidate.dayOfWeek &&
-            slot.sectionStart === candidate.sectionStart &&
-            slot.sectionEnd === candidate.sectionEnd &&
+            Course.sectionsKey(slot.sections) === Course.sectionsKey(candidate.sections) &&
             slot.weekRange === candidate.weekRange &&
             slot.repeatRule === candidate.repeatRule &&
             slot.campus === candidate.campus &&
@@ -422,12 +665,10 @@ export class Semester {
       const course: Course = courses[i];
       for (let j = 0; j < course.timeSlots.length; j++) {
         const slot: TimeSlot = course.timeSlots[j];
-        const bounds: string[] = slot.weekRange.split(',');
-        for (let k = 0; k < bounds.length; k++) {
-          const parts: string[] = bounds[k].split('-');
-          const end: number = parseInt(parts.length >= 2 ? parts[1] : parts[0], 10);
-          if (isFinite(end) && end > maxWeek) {
-            maxWeek = end;
+        const weeks: number[] = Course.parseListWeeks(slot.weekRange);
+        for (let k = 0; k < weeks.length; k++) {
+          if (weeks[k] > maxWeek) {
+            maxWeek = weeks[k];
           }
         }
       }

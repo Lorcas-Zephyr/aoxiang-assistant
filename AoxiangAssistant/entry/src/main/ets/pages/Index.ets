@@ -889,7 +889,18 @@ struct Index {
     }
     const couOut: Course[] = [];
     for (let i = 0; i < couRaw.length; i++) {
-      couOut.push(Course.fromRecord(couRaw[i] as Record<string, Object>));
+      const rawObj: Record<string, Object> = couRaw[i] as Record<string, Object>;
+      console.info(`scheduleRawJson[${i}]: ${JSON.stringify(rawObj)}`);
+      couOut.push(Course.fromRecord(rawObj));
+    }
+    for (let i = 0; i < couOut.length; i++) {
+      const cc: Course = couOut[i];
+      const slotInfo: string[] = [];
+      for (let j = 0; j < cc.timeSlots.length; j++) {
+        const s: TimeSlot = cc.timeSlots[j];
+        slotInfo.push(`[wr='${s.weekRange}' day=${s.dayOfWeek} sec=${s.sectionStart}-${s.sectionEnd}]`);
+      }
+      console.info(`scheduleRaw[${i}]: name='${cc.name}' scheduleText='${cc.scheduleText}' slots=${slotInfo.join(' ')}`);
     }
     if (couOut.length === 0 && semOut.length === 0) {
       this.stopPolling();
