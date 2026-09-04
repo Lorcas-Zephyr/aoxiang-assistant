@@ -570,7 +570,7 @@ export class Course {
     const map: Record<string, Course> = {};
     for (let i = 0; i < courses.length; i++) {
       const c: Course = courses[i];
-      const key: string = c.code.length > 0 ? `${c.code}|${c.name}` : c.name;
+      const key: string = c.code.length > 0 ? `${c.code.toLowerCase()}|${c.name}` : c.name;
       const existing: Course | undefined = map[key];
       if (existing === undefined) {
         map[key] = c;
@@ -590,8 +590,10 @@ export class Course {
             existing.timeSlots.push(candidate);
           }
         }
-        if (existing.teacher.length === 0 && c.teacher.length > 0) {
-          existing.teacher = c.teacher;
+        existing.timeSlots = Course.mergeSlots(existing.timeSlots);
+        existing.teacher = Course.mergeTeachers(existing.teacher, c.teacher);
+        if (existing.location.length === 0 && c.location.length > 0) {
+          existing.location = c.location;
         }
       }
     }
@@ -605,6 +607,38 @@ export class Course {
       out.push(c);
     }
     return out;
+  }
+
+  private static mergeTeachers(existing: string, incoming: string): string {
+    const out: string[] = [];
+    const combined: string = existing.length > 0 && incoming.length > 0
+      ? existing + ',' + incoming
+      : (existing.length > 0 ? existing : incoming);
+    const parts: string[] = combined.split(/[,，、;/；|｜\s]+/);
+    for (let i = 0; i < parts.length; i++) {
+      const name: string = parts[i].trim();
+      if (name.length > 0 && !Course.isTeacherMetadata(name) && !out.includes(name)) {
+        out.push(name);
+      }
+      if (out.length >= 15) {
+        break;
+      }
+    }
+    return out.join('、');
+  }
+
+  private static isTeacherMetadata(value: string): boolean {
+    const metaKeywords: string[] = [
+      '学科基础', '专业基础', '专业核心', '公共基础', '通识教育',
+      '实践实训', '集中实践', '创新创业', '素质拓展', '全校',
+      '本科', '研究生', '培养方案', '课程类别', '必修', '选修', '限选', '任选'
+    ];
+    for (let i = 0; i < metaKeywords.length; i++) {
+      if (value.includes(metaKeywords[i])) {
+        return true;
+      }
+    }
+    return false;
   }
 
   toRecord(): Record<string, Object> {

@@ -891,7 +891,12 @@ struct Index {
     for (let i = 0; i < couRaw.length; i++) {
       const rawObj: Record<string, Object> = couRaw[i] as Record<string, Object>;
       console.info(`scheduleRawJson[${i}]: ${JSON.stringify(rawObj)}`);
-      couOut.push(Course.fromRecord(rawObj));
+      const parsed: Course = Course.fromRecord(rawObj);
+      if (parsed.timeSlots.length === 0) {
+        console.info(`scheduleRawJson[${i}]: skipped (no timeSlots after parse)`);
+        continue;
+      }
+      couOut.push(parsed);
     }
     for (let i = 0; i < couOut.length; i++) {
       const cc: Course = couOut[i];
