@@ -82,8 +82,7 @@ final class HomeWidgetSupport {
     }
 
     private static Summary readSummary(Context context) {
-        SharedPreferences store = context.getSharedPreferences(
-                LocalDataStore.PREFERENCES_NAME, Context.MODE_PRIVATE);
+        SharedPreferences store = context.getSharedPreferences("campus_private", Context.MODE_PRIVATE);
         DecimalFormat scoreFormat = new DecimalFormat("0.00");
         DecimalFormat gpaFormat = new DecimalFormat("0.000");
 
@@ -92,7 +91,7 @@ final class HomeWidgetSupport {
 
         List<GradeRecord> grades = new ArrayList<>();
         try {
-            JSONArray array = LocalDataStore.readArray(store, "grades");
+            JSONArray array = new JSONArray(store.getString("grades", ""));
             for (int i = 0; i < array.length(); i++) {
                 JSONObject item = array.optJSONObject(i);
                 if (item != null) grades.add(GradeRecord.from(item));
@@ -173,8 +172,7 @@ final class HomeWidgetSupport {
     }
 
     private static Theme theme(Context context) {
-        SharedPreferences store = context.getSharedPreferences(
-                LocalDataStore.PREFERENCES_NAME, Context.MODE_PRIVATE);
+        SharedPreferences store = context.getSharedPreferences("campus_private", Context.MODE_PRIVATE);
         boolean dark = ScheduleStorage.loadDarkMode(store);
         return dark
                 ? new Theme(R.drawable.widget_background_dark, 0xFFF5F8FC, 0xFF9CB0C7, 0xFF3B4654)

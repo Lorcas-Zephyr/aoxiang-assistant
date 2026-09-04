@@ -19,8 +19,7 @@ final class BackgroundSyncScheduler {
 
     static void schedule(Context context, long minimumDelayMillis) {
         Context app = context.getApplicationContext();
-        SharedPreferences store = app.getSharedPreferences(
-                LocalDataStore.PREFERENCES_NAME, Context.MODE_PRIVATE);
+        SharedPreferences store = app.getSharedPreferences("campus_private", Context.MODE_PRIVATE);
         if (!hasCredentials(store)) {
             cancel(app);
             return;

@@ -46,8 +46,7 @@ public class ScheduleWidgetProvider extends AppWidgetProvider {
         views.setRemoteAdapter(R.id.widget_course_list, service);
         views.setPendingIntentTemplate(R.id.widget_course_list, openSchedule(context));
         views.setOnClickPendingIntent(R.id.widget_root, openSchedule(context));
-        android.content.SharedPreferences store = context.getSharedPreferences(
-                LocalDataStore.PREFERENCES_NAME, Context.MODE_PRIVATE);
+        android.content.SharedPreferences store = context.getSharedPreferences("campus_private", Context.MODE_PRIVATE);
         boolean dark = ScheduleStorage.loadDarkMode(store);
         views.setInt(R.id.widget_header_divider, "setBackgroundColor", dark ? 0xFF3B4654 : 0xFFE5EDF5);
         views.setInt(R.id.widget_content_divider, "setBackgroundColor", dark ? 0xFF718096 : 0xFFB6C4D2);

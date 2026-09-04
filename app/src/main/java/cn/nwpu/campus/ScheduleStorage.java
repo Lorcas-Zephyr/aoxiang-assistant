@@ -20,7 +20,9 @@ public final class ScheduleStorage {
     public static List<ScheduleModels.Semester> loadSemesters(SharedPreferences store) {
         List<ScheduleModels.Semester> semesters = new ArrayList<>();
         try {
-            JSONArray array = LocalDataStore.readArray(store, KEY_SEMESTERS);
+            String raw = store.getString(KEY_SEMESTERS, "");
+            if (raw == null || raw.isEmpty()) return semesters;
+            JSONArray array = new JSONArray(raw);
             for (int i = 0; i < array.length(); i++) {
                 JSONObject item = array.optJSONObject(i);
                 if (item != null) semesters.add(ScheduleModels.Semester.from(item));
@@ -33,14 +35,16 @@ public final class ScheduleStorage {
         try {
             JSONArray array = new JSONArray();
             for (ScheduleModels.Semester semester : semesters) array.put(semester.json());
-            LocalDataStore.writeArray(store, KEY_SEMESTERS, array);
+            store.edit().putString(KEY_SEMESTERS, array.toString()).apply();
         } catch (Exception ignored) {}
     }
 
     public static List<ScheduleModels.Course> loadCourses(SharedPreferences store) {
         List<ScheduleModels.Course> courses = new ArrayList<>();
         try {
-            JSONArray array = LocalDataStore.readArray(store, KEY_COURSES);
+            String raw = store.getString(KEY_COURSES, "");
+            if (raw == null || raw.isEmpty()) return courses;
+            JSONArray array = new JSONArray(raw);
             for (int i = 0; i < array.length(); i++) {
                 JSONObject item = array.optJSONObject(i);
                 if (item != null) courses.add(ScheduleModels.Course.from(item));
@@ -53,30 +57,8 @@ public final class ScheduleStorage {
         try {
             JSONArray array = new JSONArray();
             for (ScheduleModels.Course course : courses) array.put(course.json());
-            LocalDataStore.writeArray(store, KEY_COURSES, array);
+            store.edit().putString(KEY_COURSES, array.toString()).apply();
         } catch (Exception ignored) {}
-    }
-
-    /** Save the two related collections together after both current values are verified. */
-    public static boolean saveSchedule(SharedPreferences store,
-                                       List<ScheduleModels.Semester> semesters,
-                                       List<ScheduleModels.Course> courses) {
-        try {
-            JSONArray semesterArray = new JSONArray();
-            JSONArray courseArray = new JSONArray();
-            for (ScheduleModels.Semester semester : semesters) semesterArray.put(semester.json());
-            for (ScheduleModels.Course course : courses) courseArray.put(course.json());
-            return LocalDataStore.writeArrays(store, KEY_SEMESTERS, semesterArray,
-                    KEY_COURSES, courseArray);
-        } catch (Exception ignored) {
-            return false;
-        }
-    }
-
-    /** Check that a paired schedule write cannot overwrite an unknown schema. */
-    public static boolean canSaveSchedule(SharedPreferences store) {
-        return LocalDataStore.canWriteArray(store, KEY_SEMESTERS)
-                && LocalDataStore.canWriteArray(store, KEY_COURSES);
     }
 
     public static String loadSelectedSemester(SharedPreferences store) {
