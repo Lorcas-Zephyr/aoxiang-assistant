@@ -1,0 +1,56 @@
+{
+  "app": {
+    "signingConfigs": [
+      {
+        "name": "default",
+        "type": "HarmonyOS",
+        "material": {
+          "certpath": "C:\\Users\\gaodu\\.ohos\\config\\default_AoxiangAssistant_HXa0Ls7oKx9O5AgH9j_4ggri3Ox1-8GLKvUjlXVYhaY=.cer",
+          "keyAlias": "debugKey",
+          "keyPassword": "0000001B792E7D0907DD0BBCB86731AFDDB0F53C8D0F62F20605980068011C41F61DDBDBDC3603E52E404D",
+          "profile": "C:\\Users\\gaodu\\.ohos\\config\\default_AoxiangAssistant_HXa0Ls7oKx9O5AgH9j_4ggri3Ox1-8GLKvUjlXVYhaY=.p7b",
+          "signAlg": "SHA256withECDSA",
+          "storeFile": "C:\\Users\\gaodu\\.ohos\\config\\default_AoxiangAssistant_HXa0Ls7oKx9O5AgH9j_4ggri3Ox1-8GLKvUjlXVYhaY=.p12",
+          "storePassword": "0000001B3EE43316EAEF90D16E5ACD6396AFDCD9824EB9CA241DF12360C05B7CFC1993D713AD06F639AA59"
+        }
+      }
+    ],
+    "products": [
+      {
+        "name": "default",
+        "signingConfig": "default",
+        "targetSdkVersion": "6.1.1(24)",
+        "compatibleSdkVersion": "6.1.1(24)",
+        "runtimeOS": "HarmonyOS",
+        "buildOption": {
+          "strictMode": {
+            "caseSensitiveCheck": true,
+            "useNormalizedOHMUrl": true
+          }
+        }
+      }
+    ],
+    "buildModeSet": [
+      {
+        "name": "debug",
+      },
+      {
+        "name": "release"
+      }
+    ]
+  },
+  "modules": [
+    {
+      "name": "entry",
+      "srcPath": "./entry",
+      "targets": [
+        {
+          "name": "default",
+          "applyToProducts": [
+            "default"
+          ]
+        }
+      ]
+    }
+  ]
+}
