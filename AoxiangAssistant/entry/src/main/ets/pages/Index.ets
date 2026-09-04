@@ -13,6 +13,7 @@ import { AppLogger } from '../model/AppLogger';
 import { ScheduleGrid } from '../components/ScheduleGrid';
 import { Constants, LoginPhase, LoginTarget } from '../common/Constants';
 import { BusinessError } from '@kit.BasicServicesKit';
+import { WidgetPusher } from '../model/WidgetPusher';
 
 @Entry
 @Component
@@ -89,6 +90,17 @@ struct Index {
     this.loadElectricityFromPref();
     this.loadCoursesFromPref();
     console.info(`aboutToAppear done: grades=${this.grades.length} electricity=${this.electricityBalance} hasCreds=${this.hasCredentials}`);
+    this.pushWidgetData();
+  }
+
+  private pushWidgetData(): void {
+    try {
+      const context = getContext(this) as common.UIAbilityContext;
+      WidgetPusher.refresh(context, this.courses, this.semesters,
+        this.selectedSemesterIndex, this.electricityBalance);
+    } catch (e) {
+      console.error(`pushWidgetData failed: ${e}`);
+    }
   }
 
   aboutToDisappear(): void {
@@ -546,6 +558,7 @@ struct Index {
     this.selectedSemesterIndex = 0;
     this.selectedWeekOffset = 0;
     this.statusText = '已退出登录';
+    this.pushWidgetData();
   }
 
   private async persistLoginState(): Promise<void> {
@@ -755,6 +768,7 @@ struct Index {
             this.electricityBalance = balance;
             this.saveElectricityToPref();
             this.persistLoginState();
+            this.pushWidgetData();
             this.stopPolling();
             this.showWebView = false;
             this.statusText = `电费余额: ${balance.toFixed(2)} 元`;
@@ -840,6 +854,7 @@ struct Index {
             this.electricityBalance = balance;
             this.saveElectricityToPref();
             this.persistLoginState();
+            this.pushWidgetData();
             this.stopPolling();
             this.showWebView = false;
             this.statusText = `电费余额: ${balance.toFixed(2)} 元`;
@@ -996,6 +1011,7 @@ struct Index {
     this.currentTab = 1;
     this.tabsController.changeIndex(1);
     this.tryJumpToFirstCourseWeek();
+    this.pushWidgetData();
     console.info(`handleCollectedSchedule: DONE, courses=${this.courses.length} semesters=${this.semesters.length}`);
   }
 
