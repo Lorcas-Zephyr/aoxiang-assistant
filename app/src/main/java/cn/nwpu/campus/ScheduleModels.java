@@ -101,7 +101,6 @@ public final class ScheduleModels {
     public static class SectionTime {
         public String start;
         public String end;
-        private JSONObject originalJson;
 
         public SectionTime(String start, String end) {
             this.start = start;
@@ -109,7 +108,7 @@ public final class ScheduleModels {
         }
 
         public JSONObject json() {
-            JSONObject o = copyOf(originalJson);
+            JSONObject o = new JSONObject();
             try {
                 o.put("start", start);
                 o.put("end", end);
@@ -118,10 +117,7 @@ public final class ScheduleModels {
         }
 
         public static SectionTime from(JSONObject o) {
-            SectionTime time = new SectionTime(
-                    o.optString("start", "08:00"), o.optString("end", "08:45"));
-            time.originalJson = copyOf(o);
-            return time;
+            return new SectionTime(o.optString("start", "08:00"), o.optString("end", "08:45"));
         }
     }
 
@@ -132,8 +128,6 @@ public final class ScheduleModels {
         public List<Integer> classSections;
         public String teacher;
         public String location;
-        private String repeatRuleWireValue;
-        private JSONObject originalJson;
 
         public TimeSlot(String weekRange, RepeatRule repeatRule, int dayOfWeek, List<Integer> classSections) {
             this(weekRange, repeatRule, dayOfWeek, classSections, null, null);
@@ -150,10 +144,10 @@ public final class ScheduleModels {
         }
 
         public JSONObject json() {
-            JSONObject o = copyOf(originalJson);
+            JSONObject o = new JSONObject();
             try {
                 o.put("weekRange", weekRange);
-                o.put("repeatRule", repeatRuleWireValue == null ? repeatRule.storedValue : repeatRuleWireValue);
+                o.put("repeatRule", repeatRule.storedValue);
                 o.put("dayOfWeek", dayOfWeek);
                 JSONArray sections = new JSONArray();
                 for (Integer value : classSections) {
@@ -177,7 +171,7 @@ public final class ScheduleModels {
             if (sections.isEmpty()) {
                 sections.add(1);
             }
-            TimeSlot slot = new TimeSlot(
+            return new TimeSlot(
                     o.optString("weekRange", "1-17"),
                     RepeatRule.fromStoredValue(o.optString("repeatRule", "")),
                     o.optInt("dayOfWeek", 1),
@@ -185,19 +179,6 @@ public final class ScheduleModels {
                     o.isNull("teacher") ? null : o.optString("teacher", null),
                     o.isNull("location") ? null : o.optString("location", null)
             );
-            String repeatRuleValue = o.has("repeatRule") && !o.isNull("repeatRule")
-                    ? o.optString("repeatRule", "") : null;
-            // Preserve only values the current enum cannot interpret. Known values
-            // must be serialized from the mutable enum so edits are not overwritten
-            // by the original wire value.
-            slot.repeatRuleWireValue = slot.repeatRule == RepeatRule.ALL
-                    && repeatRuleValue != null
-                    && !RepeatRule.ALL.storedValue.equals(repeatRuleValue)
-                    && RepeatRule.ODD.storedValue.equals(repeatRuleValue) == false
-                    && RepeatRule.EVEN.storedValue.equals(repeatRuleValue) == false
-                    ? repeatRuleValue : null;
-            slot.originalJson = copyOf(o);
-            return slot;
         }
     }
 
@@ -209,7 +190,6 @@ public final class ScheduleModels {
         public int weekCount;
         public int sectionCount;
         public List<SectionTime> sectionTimes;
-        private JSONObject originalJson;
 
         public Semester(String id, String name, String startDate, String endDate, int weekCount, int sectionCount, List<SectionTime> sectionTimes) {
             this.id = id;
@@ -222,7 +202,7 @@ public final class ScheduleModels {
         }
 
         public JSONObject json() {
-            JSONObject o = copyOf(originalJson);
+            JSONObject o = new JSONObject();
             try {
                 o.put("id", id);
                 o.put("name", name);
@@ -240,7 +220,6 @@ public final class ScheduleModels {
         }
 
         public static Semester from(JSONObject o) {
-            String id = requireId(o, "id", "Semester");
             List<SectionTime> sectionTimes = new ArrayList<>();
             JSONArray array = o.optJSONArray("sectionTimes");
             if (array != null) {
@@ -255,8 +234,8 @@ public final class ScheduleModels {
             if (sectionTimes.isEmpty()) {
                 sectionTimes = buildDefaultSectionTimes(sectionCount);
             }
-            Semester semester = new Semester(
-                    id,
+            return new Semester(
+                    o.optString("id", "semester-default"),
                     o.optString("name", "学期"),
                     o.optString("startDate", LocalDate.now().toString()),
                     o.optString("endDate", LocalDate.now().plusWeeks(17).minusDays(1).toString()),
@@ -264,8 +243,6 @@ public final class ScheduleModels {
                     sectionCount,
                     sectionTimes
             );
-            semester.originalJson = copyOf(o);
-            return semester;
         }
     }
 
@@ -281,8 +258,6 @@ public final class ScheduleModels {
         public AssessmentMethod assessmentMethod;
         public String notes;
         public String color;
-        private String assessmentMethodWireValue;
-        private JSONObject originalJson;
 
         public Course(String id, String name, String semesterId, List<TimeSlot> timeSlots) {
             this.id = id;
@@ -292,7 +267,7 @@ public final class ScheduleModels {
         }
 
         public JSONObject json() {
-            JSONObject o = copyOf(originalJson);
+            JSONObject o = new JSONObject();
             try {
                 o.put("id", id);
                 o.put("name", name);
@@ -306,9 +281,7 @@ public final class ScheduleModels {
                 o.put("location", location == null ? JSONObject.NULL : location);
                 o.put("credits", credits == null ? JSONObject.NULL : credits);
                 o.put("teacher", teacher == null ? JSONObject.NULL : teacher);
-                o.put("assessmentMethod", assessmentMethod != null
-                        ? assessmentMethod.label
-                        : assessmentMethodWireValue == null ? JSONObject.NULL : assessmentMethodWireValue);
+                o.put("assessmentMethod", assessmentMethod == null ? JSONObject.NULL : assessmentMethod.label);
                 o.put("notes", notes == null ? JSONObject.NULL : notes);
                 o.put("color", color == null ? JSONObject.NULL : color);
             } catch (Exception ignored) {}
@@ -316,8 +289,6 @@ public final class ScheduleModels {
         }
 
         public static Course from(JSONObject o) {
-            String id = requireId(o, "id", "Course");
-            String semesterId = requireId(o, "semesterId", "Course");
             List<TimeSlot> slots = new ArrayList<>();
             JSONArray array = o.optJSONArray("timeSlots");
             if (array != null) {
@@ -332,9 +303,9 @@ public final class ScheduleModels {
                 slots.add(new TimeSlot("1-17", RepeatRule.ALL, 1, Arrays.asList(1, 2)));
             }
             Course course = new Course(
-                    id,
+                    o.optString("id", "course-" + System.currentTimeMillis()),
                     o.optString("name", "课程"),
-                    semesterId,
+                    o.optString("semesterId", ""),
                     slots
             );
             course.code = o.isNull("code") ? null : o.optString("code", null);
@@ -345,13 +316,9 @@ public final class ScheduleModels {
                 if (slot.location == null) slot.location = course.location;
                 if (slot.teacher == null) slot.teacher = course.teacher;
             }
-            String assessmentValue = o.isNull("assessmentMethod")
-                    ? null : o.optString("assessmentMethod", "");
-            course.assessmentMethod = assessmentValue == null ? null : AssessmentMethod.fromLabel(assessmentValue);
-            course.assessmentMethodWireValue = course.assessmentMethod == null ? assessmentValue : null;
+            course.assessmentMethod = o.isNull("assessmentMethod") ? null : AssessmentMethod.fromLabel(o.optString("assessmentMethod", ""));
             course.notes = o.isNull("notes") ? null : o.optString("notes", null);
             course.color = o.isNull("color") ? null : o.optString("color", null);
-            course.originalJson = copyOf(o);
             return course;
         }
 
@@ -463,30 +430,5 @@ public final class ScheduleModels {
     private static int parseMinutes(String value) {
         String[] parts = value.split(":", 2);
         return Integer.parseInt(parts[0]) * 60 + Integer.parseInt(parts[1]);
-    }
-
-    private static JSONObject copyOf(JSONObject source) {
-        if (source == null) return new JSONObject();
-        try {
-            return new JSONObject(source.toString());
-        } catch (Exception ignored) {
-            return new JSONObject();
-        }
-    }
-
-    private static String requireId(JSONObject object, String key, String kind) {
-        if (object == null || !object.has(key) || object.isNull(key)) {
-            throw new IllegalArgumentException(kind + " " + key + " must be a non-empty string");
-        }
-        Object value;
-        try {
-            value = object.get(key);
-        } catch (Exception error) {
-            throw new IllegalArgumentException(kind + " " + key + " must be a non-empty string", error);
-        }
-        if (!(value instanceof String) || ((String) value).trim().isEmpty()) {
-            throw new IllegalArgumentException(kind + " " + key + " must be a non-empty string");
-        }
-        return (String) value;
     }
 }

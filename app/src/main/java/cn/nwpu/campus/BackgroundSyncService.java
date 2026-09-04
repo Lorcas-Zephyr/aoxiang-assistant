@@ -85,7 +85,7 @@ public class BackgroundSyncService extends Service {
 
     @Override public void onCreate() {
         super.onCreate();
-        store = getSharedPreferences(LocalDataStore.PREFERENCES_NAME, MODE_PRIVATE);
+        store = getSharedPreferences("campus_private", MODE_PRIVATE);
         createChannels();
         startForeground(SERVICE_NOTIFICATION_ID, serviceNotification("正在准备自动更新"));
         PowerManager power = (PowerManager) getSystemService(POWER_SERVICE);
@@ -362,14 +362,10 @@ public class BackgroundSyncService extends Service {
             finishAttempt(false);
             return;
         }
+        String previous = store.getString("grades", "");
         List<String> changedCourses = UpdateDiff.changedNames(
-                gradeDiffItems(LocalDataStore.readArray(store, "grades")),
-                gradeDiffItems(updated));
-        if (!LocalDataStore.writeArray(store, "grades", updated)) {
-            finishAttempt(false);
-            return;
-        }
-        SharedPreferences.Editor editor = store.edit();
+                gradeDiffItems(previous), gradeDiffItems(updated.toString()));
+        SharedPreferences.Editor editor = store.edit().putString("grades", updated.toString());
         if (!Double.isNaN(gpa)) editor.putString(PORTRAIT_GPA, Double.toString(gpa));
         editor.apply();
         ScheduleWidgetUpdater.updateAll(this);
@@ -452,10 +448,8 @@ public class BackgroundSyncService extends Service {
         if (importedCount > 0 || importedEmptySchedule) {
             List<String> changedCourses = UpdateDiff.changedNames(
                     previousItems, UpdateDiff.scheduleItems(courses));
-            if (!ScheduleStorage.saveSchedule(store, semesters, courses)) {
-                finishAttempt(false);
-                return;
-            }
+            ScheduleStorage.saveSemesters(store, semesters);
+            ScheduleStorage.saveCourses(store, courses);
             if (!firstImportedId.isEmpty()) ScheduleStorage.saveSelectedSemester(store, firstImportedId);
             ScheduleWidgetUpdater.updateAll(this);
             DataUpdateSignal.publish(this, DataUpdateSignal.TARGET_SCHEDULE);
@@ -640,9 +634,10 @@ public class BackgroundSyncService extends Service {
         return -1;
     }
 
-    private List<UpdateDiff.Item> gradeDiffItems(JSONArray grades) {
+    private List<UpdateDiff.Item> gradeDiffItems(String raw) {
         List<UpdateDiff.Item> items = new ArrayList<>();
         try {
+            JSONArray grades = new JSONArray(raw);
             for (int i = 0; i < grades.length(); i++) {
                 JSONObject grade = grades.optJSONObject(i);
                 if (grade == null) continue;

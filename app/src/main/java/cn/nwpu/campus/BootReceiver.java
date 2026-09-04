@@ -16,8 +16,7 @@ public class BootReceiver extends BroadcastReceiver {
                 && !(Build.VERSION.SDK_INT >= 31
                     && AlarmManager.ACTION_SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED.equals(action))) return;
         if (Intent.ACTION_BOOT_COMPLETED.equals(action)) {
-            boolean enabled = context.getSharedPreferences(
-                    LocalDataStore.PREFERENCES_NAME, Context.MODE_PRIVATE)
+            boolean enabled = context.getSharedPreferences("campus_private", Context.MODE_PRIVATE)
                     .getBoolean("boot_auto_start", true);
             if (!enabled) return;
         }
