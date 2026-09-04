@@ -480,7 +480,7 @@
         const name = text(option.textContent);
         const value = text(option.value || option.getAttribute("value"));
         if (!name) return;
-        if (!semesterValuePattern.test(value) && !/(学期|春|秋|夏|冬|\d{4}-\d{4})/.test(name)) return;
+        if (!semesterValuePattern.test(value) && !/春|秋|夏|冬|\d{4}-\d{4}|学期/.test(name)) return;
         const dataSemester = value || name;
         const key = dataSemester + "|" + name;
         if (seenSemesters.has(key)) return;
@@ -652,8 +652,10 @@
   };
 
   const schedulePayload = extractSchedulePayload();
-  if (mode === "schedule" && schedulePayload.courses.length) {
-    return JSON.stringify({ phase: "schedule_data", payload: schedulePayload });
+  if (mode === "schedule") {
+    if (schedulePayload.courses.length) {
+      return JSON.stringify({ phase: "schedule_data", payload: schedulePayload });
+    }
   }
 
   return JSON.stringify({
