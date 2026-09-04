@@ -42,7 +42,7 @@ export struct ScheduleGrid {
       }
       return dates;
     }
-    const start: Date = WeekUtils.weekStart(this.weekStartDate, this.week);
+    const start: Date = WeekUtils.parseStartDate(this.weekStartDate);
     for (let i = 0; i < 7; i++) {
       const d: Date = new Date(start.getTime() + i * 24 * 60 * 60 * 1000);
       dates.push(WeekUtils.formatMD(d));
