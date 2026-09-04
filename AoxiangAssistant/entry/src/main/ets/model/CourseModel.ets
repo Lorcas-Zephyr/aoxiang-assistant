@@ -686,6 +686,7 @@ export class Semester {
   name: string = '';
   dataSemester: string = '';
   startDate: string = '';
+  endDate: string = '';
   weekCount: number = 20;
 
   static fromJsObject(obj: Record<string, Object>): Semester {
@@ -694,13 +695,21 @@ export class Semester {
     s.dataSemester = (obj['dataSemester'] ?? '') as string;
     const sd: Object | undefined = obj['startDate'];
     s.startDate = sd !== undefined && sd !== null ? (sd as string) : '';
+    const ed: Object | undefined = obj['endDate'];
+    s.endDate = ed !== undefined && ed !== null ? (ed as string) : '';
     const wc: Object | undefined = obj['weekCount'];
     s.weekCount = wc !== undefined && wc !== null ? (wc as number) : 20;
     return s;
   }
 
   toRecord(): Record<string, Object> {
-    return { 'name': this.name, 'dataSemester': this.dataSemester, 'startDate': this.startDate, 'weekCount': this.weekCount };
+    return {
+      'name': this.name,
+      'dataSemester': this.dataSemester,
+      'startDate': this.startDate,
+      'endDate': this.endDate,
+      'weekCount': this.weekCount,
+    };
   }
 
   static computeWeekCount(courses: Course[]): number {

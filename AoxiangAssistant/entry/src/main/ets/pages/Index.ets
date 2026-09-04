@@ -968,7 +968,12 @@ struct Index {
             semCourses.push(couOut[j]);
           }
         }
-        semOut[i].weekCount = Semester.computeWeekCount(semCourses);
+        if (semOut[i].startDate.length > 0 && semOut[i].endDate.length > 0) {
+          semOut[i].weekCount = WeekUtils.weekCountForRange(semOut[i].startDate, semOut[i].endDate);
+          console.info(`weekCount from range: sem='${semOut[i].name}' start=${semOut[i].startDate} end=${semOut[i].endDate} weeks=${semOut[i].weekCount}`);
+        } else {
+          semOut[i].weekCount = Semester.computeWeekCount(semCourses);
+        }
       }
     }
     const defaultSemester: string = semOut.length > 0 ? semOut[0].dataSemester : 'current';
