@@ -39,7 +39,8 @@ public class ScheduleWidgetService extends RemoteViewsService {
 
         private void reload() {
             ScheduleWidgetContext.set(context);
-            android.content.SharedPreferences store = context.getSharedPreferences("campus_private", android.content.Context.MODE_PRIVATE);
+            android.content.SharedPreferences store = context.getSharedPreferences(
+                    LocalDataStore.PREFERENCES_NAME, android.content.Context.MODE_PRIVATE);
             dark = ScheduleStorage.loadDarkMode(store);
             rows.clear();
             ScheduleWidgetData.DayData today = ScheduleWidgetData.forDate(LocalDate.now(), small);

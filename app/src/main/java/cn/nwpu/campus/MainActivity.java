@@ -240,7 +240,8 @@ public class MainActivity extends Activity {
     @Override
     protected void onCreate(Bundle state) {
         super.onCreate(state);
-        store = getSharedPreferences("campus_private", MODE_PRIVATE);
+        store = getSharedPreferences(LocalDataStore.PREFERENCES_NAME, MODE_PRIVATE);
+        LocalDataStore.ensureCurrent(store);
         themeColor = ScheduleStorage.loadThemeColor(store);
         darkMode = ScheduleStorage.loadDarkMode(store);
         autoCollectScript = loadAsset("auto_collect.js");
@@ -2851,10 +2852,23 @@ public class MainActivity extends Activity {
         List<String> changedCourses = UpdateDiff.changedNames(
                 gradeDiffItems(grades), gradeDiffItems(out));
         boolean wasAutomatic = automaticRun;
-        markCredentialsVerified();
+        List<GradeRecord> previousGrades = grades;
+        double previousPortraitGpa = portraitGpa;
         grades = out;
         portraitGpa = gpa;
-        saveGrades();
+        if (!saveGrades()) {
+            grades = previousGrades;
+            portraitGpa = previousPortraitGpa;
+            cancelAutomation();
+            if (initialSyncInProgress) {
+                finishInitialSyncStep("grades", false);
+            } else if (!wasAutomatic) {
+                Toast.makeText(this, "本地成绩数据版本暂不支持，未覆盖原数据", Toast.LENGTH_LONG).show();
+            }
+            recordAutomaticAttempt("grades", wasAutomatic);
+            return;
+        }
+        markCredentialsVerified();
         refreshDataPage("grades");
         cancelAutomation();
         if (initialSyncInProgress) {
@@ -2942,6 +2956,9 @@ public class MainActivity extends Activity {
             importedEmptySchedule = true;
         }
 
+        List<ScheduleModels.Semester> previousSemesters = semesters;
+        List<ScheduleModels.Course> previousCourses = courses;
+        String previousSelectedSemesterId = selectedSemesterId;
         if (importedCount == 0 && !importedEmptySchedule) {
             cancelAutomation();
             if (initialSyncInProgress) {
@@ -2961,7 +2978,19 @@ public class MainActivity extends Activity {
         List<String> changedCourses = UpdateDiff.changedNames(
                 previousItems, UpdateDiff.scheduleItems(courses));
         if (!firstImportedId.isEmpty()) selectedSemesterId = firstImportedId;
-        saveScheduleState();
+        if (!saveScheduleState()) {
+            semesters = previousSemesters;
+            courses = previousCourses;
+            selectedSemesterId = previousSelectedSemesterId;
+            cancelAutomation();
+            if (initialSyncInProgress) {
+                finishInitialSyncStep("schedule", false);
+            } else if (!wasAutomatic) {
+                Toast.makeText(this, "本地课表数据版本暂不支持，未覆盖原数据", Toast.LENGTH_LONG).show();
+            }
+            recordAutomaticAttempt("schedule", wasAutomatic);
+            return;
+        }
         scheduleShowMonth = false;
         scheduleWeekOffset = 0;
         refreshDataPage("schedule");
@@ -3191,25 +3220,14 @@ public class MainActivity extends Activity {
     }
 
     private void exportBackup() {
-        JSONObject backup = new JSONObject();
         try {
-            backup.put("version", "2.0");
-            backup.put("exportDate", LocalDate.now().toString());
-            JSONArray courseArray = new JSONArray();
-            for (ScheduleModels.Course course : courses) courseArray.put(course.json());
-            backup.put("courses", courseArray);
-            JSONObject settings = new JSONObject();
-            JSONArray semestersArray = new JSONArray();
-            for (ScheduleModels.Semester semester : semesters) semestersArray.put(semester.json());
-            settings.put("semesters", semestersArray);
-            settings.put("themeColor", themeColor);
-            settings.put("darkMode", darkMode);
-            backup.put("settings", settings);
+            JSONObject backup = BackupContract.createDocument(
+                    courses, semesters, selectedSemesterId, themeColor, darkMode, BackupContract.today());
             pendingExportJson = backup.toString(2);
             Intent intent = new Intent(Intent.ACTION_CREATE_DOCUMENT);
             intent.addCategory(Intent.CATEGORY_OPENABLE);
             intent.setType("application/json");
-            intent.putExtra(Intent.EXTRA_TITLE, "soaring-schedule-" + LocalDate.now() + ".json");
+            intent.putExtra(Intent.EXTRA_TITLE, "soaring-schedule-" + BackupContract.today() + ".json");
             startActivityForResult(intent, REQUEST_EXPORT_JSON);
         } catch (Exception e) {
             Toast.makeText(this, "导出失败", Toast.LENGTH_SHORT).show();
@@ -3240,31 +3258,41 @@ public class MainActivity extends Activity {
             StringBuilder builder = new StringBuilder();
             String line;
             while ((line = reader.readLine()) != null) builder.append(line).append('\n');
-            JSONObject parsed = new JSONObject(builder.toString());
-            JSONArray courseArray = parsed.optJSONArray("courses");
-            JSONObject settings = parsed.optJSONObject("settings");
-            if (courseArray == null || settings == null) throw new IllegalStateException();
+            BackupContract.BackupData backup = BackupContract.readDocument(
+                    new JSONObject(builder.toString()));
+            BackupContract.validateForImport(backup);
+            if (!ScheduleStorage.canSaveSchedule(store)) throw new IllegalStateException();
 
             List<ScheduleModels.Course> importedCourses = new ArrayList<>();
-            for (int i = 0; i < courseArray.length(); i++) {
-                JSONObject item = courseArray.optJSONObject(i);
+            for (int i = 0; i < backup.courses.length(); i++) {
+                JSONObject item = backup.courses.optJSONObject(i);
                 if (item != null) importedCourses.add(ScheduleModels.Course.from(item));
             }
             List<ScheduleModels.Semester> importedSemesters = new ArrayList<>();
-            JSONArray semesterArray = settings.optJSONArray("semesters");
-            if (semesterArray != null) {
-                for (int i = 0; i < semesterArray.length(); i++) {
-                    JSONObject item = semesterArray.optJSONObject(i);
-                    if (item != null) importedSemesters.add(ScheduleModels.Semester.from(item));
-                }
+            for (int i = 0; i < backup.semesters.length(); i++) {
+                JSONObject item = backup.semesters.optJSONObject(i);
+                if (item != null) importedSemesters.add(ScheduleModels.Semester.from(item));
             }
+            List<ScheduleModels.Course> previousCourses = courses;
+            List<ScheduleModels.Semester> previousSemesters = semesters;
+            String previousThemeColor = themeColor;
+            boolean previousDarkMode = darkMode;
+            String previousSelectedSemesterId = selectedSemesterId;
             courses = importedCourses;
             semesters = importedSemesters;
             normalizeSemesterSectionTimes();
-            themeColor = settings.optString("themeColor", ScheduleModels.DEFAULT_THEME_COLOR);
-            darkMode = settings.optBoolean("darkMode", false);
+            themeColor = backup.themeColor;
+            darkMode = backup.darkMode;
+            selectedSemesterId = backup.selectedSemesterId;
             ensureSelectedSemester();
-            saveScheduleState();
+            if (!saveScheduleState()) {
+                courses = previousCourses;
+                semesters = previousSemesters;
+                themeColor = previousThemeColor;
+                darkMode = previousDarkMode;
+                selectedSemesterId = previousSelectedSemesterId;
+                throw new IllegalStateException();
+            }
             applyWindowTheme();
             showTab(TAB_SETTINGS, true);
             Toast.makeText(this, "导入成功", Toast.LENGTH_SHORT).show();
@@ -3273,21 +3301,33 @@ public class MainActivity extends Activity {
         }
     }
 
-    private void saveScheduleState() {
+    private boolean saveScheduleState() {
         ensureSelectedSemester();
-        ScheduleStorage.saveSemesters(store, semesters);
-        ScheduleStorage.saveCourses(store, courses);
+        if (!ScheduleStorage.saveSchedule(store, semesters, courses)) return false;
         ScheduleStorage.saveSelectedSemester(store, selectedSemesterId);
         ScheduleStorage.saveTheme(store, themeColor, darkMode);
         ScheduleWidgetUpdater.updateAll(this);
+        return true;
     }
 
     private boolean normalizeSemesterSectionTimes() {
         boolean changed = false;
         for (ScheduleModels.Semester semester : semesters) {
-            List<ScheduleModels.SectionTime> expected = ScheduleModels.buildDefaultSectionTimes(semester.sectionCount);
-            if (!sameSectionTimes(semester.sectionTimes, expected)) {
-                semester.sectionTimes = expected;
+            int expectedCount = Math.max(1, semester.sectionCount);
+            List<ScheduleModels.SectionTime> actual = semester.sectionTimes;
+            if (actual == null || actual.isEmpty()) {
+                semester.sectionTimes = ScheduleModels.buildDefaultSectionTimes(expectedCount);
+                changed = true;
+                continue;
+            }
+            if (actual.size() < expectedCount) {
+                List<ScheduleModels.SectionTime> defaults =
+                        ScheduleModels.buildDefaultSectionTimes(expectedCount);
+                List<ScheduleModels.SectionTime> completed = new ArrayList<>(actual);
+                for (int i = actual.size(); i < expectedCount; i++) {
+                    completed.add(defaults.get(i));
+                }
+                semester.sectionTimes = completed;
                 changed = true;
             }
         }
@@ -3324,16 +3364,6 @@ public class MainActivity extends Activity {
         } catch (Exception ignored) {
             return ScheduleUtils.mondayOnOrBefore(LocalDate.now()).toString();
         }
-    }
-
-    private boolean sameSectionTimes(List<ScheduleModels.SectionTime> first, List<ScheduleModels.SectionTime> second) {
-        if (first == null || first.size() != second.size()) return false;
-        for (int i = 0; i < first.size(); i++) {
-            ScheduleModels.SectionTime left = first.get(i);
-            ScheduleModels.SectionTime right = second.get(i);
-            if (!left.start.equals(right.start) || !left.end.equals(right.end)) return false;
-        }
-        return true;
     }
 
     private void saveTheme() {
@@ -4906,9 +4936,7 @@ public class MainActivity extends Activity {
 
     private List<GradeRecord> loadGrades() {
         try {
-            String raw = store.getString("grades", "");
-            if (raw == null || raw.isEmpty()) return new ArrayList<>();
-            JSONArray array = new JSONArray(raw);
+            JSONArray array = LocalDataStore.readArray(store, "grades");
             List<GradeRecord> out = new ArrayList<>();
             for (int i = 0; i < array.length(); i++) out.add(GradeRecord.from(array.getJSONObject(i)));
             return GradeRecord.keepHighest(out);
@@ -4917,16 +4945,19 @@ public class MainActivity extends Activity {
         }
     }
 
-    private void saveGrades() {
+    private boolean saveGrades() {
         try {
             JSONArray array = new JSONArray();
             for (GradeRecord grade : grades) array.put(grade.json());
-            SharedPreferences.Editor editor = store.edit().putString("grades", array.toString());
+            if (!LocalDataStore.writeArray(store, "grades", array)) return false;
+            SharedPreferences.Editor editor = store.edit();
             if (Double.isNaN(portraitGpa)) editor.remove(PORTRAIT_GPA);
             else editor.putString(PORTRAIT_GPA, Double.toString(portraitGpa));
             editor.apply();
             ScheduleWidgetUpdater.updateAll(this);
+            return true;
         } catch (Exception ignored) {}
+        return false;
     }
 
     private void addAutomaticUpdateControls(LinearLayout parent, String title, String target) {

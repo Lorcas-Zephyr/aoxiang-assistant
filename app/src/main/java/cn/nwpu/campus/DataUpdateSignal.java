@@ -11,7 +11,7 @@ public final class DataUpdateSignal {
     public static final String TARGET_SCHEDULE = "schedule";
     public static final String TARGET_ELECTRICITY = "electricity";
 
-    private static final String PREFERENCES = "campus_private";
+    private static final String PREFERENCES = LocalDataStore.PREFERENCES_NAME;
     private static final String REVISION_PREFIX = "data_revision_";
 
     private DataUpdateSignal() {}

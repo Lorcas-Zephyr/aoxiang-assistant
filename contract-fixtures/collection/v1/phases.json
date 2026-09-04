@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "scope": "runtime-only",
+  "phases": [
+    {
+      "name": "grade_api_raw",
+      "description": "成绩接口原始响应已经可解析"
+    },
+    {
+      "name": "schedule_data",
+      "description": "课表数据已经可解析"
+    },
+    {
+      "name": "sms_required",
+      "description": "需要用户在运行时完成短信验证"
+    }
+  ]
+}
