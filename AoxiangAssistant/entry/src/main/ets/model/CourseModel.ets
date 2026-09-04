@@ -333,7 +333,19 @@ export class Course {
         order.push(key);
       } else {
         for (let j = 0; j < c.timeSlots.length; j++) {
-          existing.timeSlots.push(c.timeSlots[j]);
+          const candidate: TimeSlot = c.timeSlots[j];
+          const dup: boolean = existing.timeSlots.some((slot: TimeSlot) =>
+            slot.dayOfWeek === candidate.dayOfWeek &&
+            slot.sectionStart === candidate.sectionStart &&
+            slot.sectionEnd === candidate.sectionEnd &&
+            slot.weekRange === candidate.weekRange &&
+            slot.repeatRule === candidate.repeatRule &&
+            slot.campus === candidate.campus &&
+            slot.location === candidate.location
+          );
+          if (!dup) {
+            existing.timeSlots.push(candidate);
+          }
         }
         if (existing.teacher.length === 0 && c.teacher.length > 0) {
           existing.teacher = c.teacher;

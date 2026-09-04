@@ -57,7 +57,6 @@ struct Index {
   @State confirmTitle: string = '';
   @State confirmMessage: string = '';
   @State interactiveMode: boolean = false;
-  @State tabBarHidden: boolean = false;
   @StorageProp('topRectHeight') topRectHeight: number = 0;
 
   private webController: webview.WebviewController = new webview.WebviewController();
@@ -75,7 +74,6 @@ struct Index {
   private electricityReadyAt: number = 0;
   private smsSubmittedAt: number = 0;
   private gradePref: preferences.Preferences | undefined = undefined;
-  private lastScrollY: number = 0;
 
   async aboutToAppear(): Promise<void> {
     const context = getContext(this) as common.UIAbilityContext;
@@ -1023,8 +1021,7 @@ struct Index {
     .backgroundColor($r('app.color.tab_bar_bg'))
     .shadow({ radius: 20, color: '#1A000000', offsetX: 0, offsetY: -2 })
     .position({ x: '4%', y: '100%' })
-    .translate({ y: this.tabBarHidden ? 80 : -80 })
-    .animation({ duration: 250, curve: Curve.FastOutSlowIn })
+    .translate({ y: -80 })
     .zIndex(10)
   }
 
@@ -1100,22 +1097,13 @@ struct Index {
       }
       .width('100%')
       .alignItems(HorizontalAlign.Center)
-      .padding({ bottom: 80 })
+      .padding({ bottom: 100 })
     }
     .width('100%')
     .height('100%')
     .scrollBar(BarState.Off)
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM])
-    .onScroll((_: number, yOffset: number) => {
-      if (yOffset <= 0) {
-        this.tabBarHidden = false;
-      } else if (yOffset > this.lastScrollY) {
-        this.tabBarHidden = true;
-      } else if (yOffset < this.lastScrollY) {
-        this.tabBarHidden = false;
-      }
-      this.lastScrollY = yOffset;
-    })
+    
   }
 
   @Builder
@@ -1459,7 +1447,6 @@ struct Index {
     .width('100%')
     .height('100%')
     .alignItems(HorizontalAlign.Center)
-    .padding({ bottom: 80 })
   }
 
   private weekTitleText(): string {
@@ -1531,48 +1518,16 @@ struct Index {
         .borderRadius(12)
       }
 
-      Column() {
-        Row() {
-          Text('课表')
-            .fontSize(14)
-            .fontColor($r('app.color.text_secondary'))
-          Blank()
-          Button('导出课表')
-            .height(36)
-            .backgroundColor(Color.Transparent)
-            .fontColor($r('app.color.accent'))
-            .fontSize(13)
-            .border({ width: 1, color: $r('app.color.accent'), radius: 6 })
-            .onClick(() => {
-              this.exportIcsSchedule();
-            })
-        }
-        .width('100%')
-        .padding({ left: 16, right: 16, top: 8, bottom: 12 })
-      }
-      .width('92%')
-      .backgroundColor($r('app.color.card_background'))
-      .borderRadius(12)
-      .margin({ top: 12 })
       }
       .width('100%')
       .alignItems(HorizontalAlign.Center)
-      .padding({ bottom: 80 })
+      .padding({ bottom: 100 })
     }
     .width('100%')
     .height('100%')
     .scrollBar(BarState.Off)
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM])
-    .onScroll((_: number, yOffset: number) => {
-      if (yOffset <= 0) {
-        this.tabBarHidden = false;
-      } else if (yOffset > this.lastScrollY) {
-        this.tabBarHidden = true;
-      } else if (yOffset < this.lastScrollY) {
-        this.tabBarHidden = false;
-      }
-      this.lastScrollY = yOffset;
-    })
+    
   }
 
   @Builder
@@ -1688,22 +1643,13 @@ struct Index {
       }
       .width('100%')
       .alignItems(HorizontalAlign.Center)
-      .padding({ bottom: 80 })
+      .padding({ bottom: 100 })
     }
     .width('100%')
     .height('100%')
     .scrollBar(BarState.Off)
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM])
-    .onScroll((_: number, yOffset: number) => {
-      if (yOffset <= 0) {
-        this.tabBarHidden = false;
-      } else if (yOffset > this.lastScrollY) {
-        this.tabBarHidden = true;
-      } else if (yOffset < this.lastScrollY) {
-        this.tabBarHidden = false;
-      }
-      this.lastScrollY = yOffset;
-    })
+    
   }
 
   @Builder
@@ -1824,25 +1770,40 @@ struct Index {
         .width('92%')
         .backgroundColor($r('app.color.card_background'))
         .borderRadius(12)
+
+        Column() {
+          Row() {
+            Text('课表')
+              .fontSize(14)
+              .fontColor($r('app.color.text_secondary'))
+            Blank()
+            Button('导出课表')
+              .height(36)
+              .backgroundColor(Color.Transparent)
+              .fontColor($r('app.color.accent'))
+              .fontSize(13)
+              .border({ width: 1, color: $r('app.color.accent'), radius: 6 })
+              .onClick(() => {
+                this.exportIcsSchedule();
+              })
+          }
+          .width('100%')
+          .padding({ left: 16, right: 16, top: 8, bottom: 12 })
+        }
+        .width('92%')
+        .backgroundColor($r('app.color.card_background'))
+        .borderRadius(12)
+        .margin({ top: 12 })
       }
       .width('100%')
       .alignItems(HorizontalAlign.Center)
-      .padding({ bottom: 80 })
+      .padding({ bottom: 100 })
     }
     .width('100%')
     .height('100%')
     .scrollBar(BarState.Off)
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM])
-    .onScroll((_: number, yOffset: number) => {
-      if (yOffset <= 0) {
-        this.tabBarHidden = false;
-      } else if (yOffset > this.lastScrollY) {
-        this.tabBarHidden = true;
-      } else if (yOffset < this.lastScrollY) {
-        this.tabBarHidden = false;
-      }
-      this.lastScrollY = yOffset;
-    })
+    
   }
 
   private selectedSemesterName(): string {

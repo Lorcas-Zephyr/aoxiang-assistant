@@ -247,8 +247,9 @@ export struct ScheduleGrid {
         }
         .width('100%')
         .alignItems(VerticalAlign.Top)
-      }
+}
       .width('100%')
+      .padding({ bottom: 100 })
     }
     .width('100%')
     .scrollBar(BarState.Off)
