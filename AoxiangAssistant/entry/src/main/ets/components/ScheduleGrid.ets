@@ -240,10 +240,13 @@ export struct ScheduleGrid {
                       .backgroundColor($r('app.color.schedule_empty_bg'))
                   }, (ei: number) => `e_${this.week}_${col.day}_${bi}_${ei}`)
                 }
-              }, (block: GridBlock, bi: number) => `b_${this.week}_${col.day}_${bi}`)
+              }, (block: GridBlock, bi: number) => {
+                const colorKey: string = block.course !== undefined ? `c${block.course.colorIndex}` : 'e';
+                return `b_${this.week}_${col.day}_${bi}_${colorKey}`;
+              })
             }
             .layoutWeight(1)
-          }, (col: DayColumnData) => `d_${this.week}_${col.day}`)
+          }, (col: DayColumnData) => `d_${this.week}_${col.day}_${this.colorSignature()}`)
         }
         .width('100%')
         .alignItems(VerticalAlign.Top)
@@ -261,6 +264,14 @@ export struct ScheduleGrid {
       arr.push(i);
     }
     return arr;
+  }
+
+  private colorSignature(): string {
+    let sig: string = '';
+    for (let i = 0; i < this.courses.length; i++) {
+      sig += `${this.courses[i].id}:${this.courses[i].colorIndex};`;
+    }
+    return sig;
   }
 
   private sectionLabels(): string[] {

@@ -57,6 +57,8 @@ struct Index {
   @State confirmTitle: string = '';
   @State confirmMessage: string = '';
   @State interactiveMode: boolean = false;
+  @State showCourseColorDialog: boolean = false;
+  @State colorPickCourse: Course | undefined = undefined;
   @StorageProp('topRectHeight') topRectHeight: number = 0;
 
   private webController: webview.WebviewController = new webview.WebviewController();
@@ -1005,7 +1007,7 @@ struct Index {
       .barBackgroundColor(Color.Transparent)
       .barHeight(0)
 
-      if (!this.showLoginForm && !this.showSmsForm && !this.showSemesterDialog && !this.showCourseDialog && !this.showConfirmDialog && !this.showWebView && !this.interactiveMode) {
+      if (!this.showLoginForm && !this.showSmsForm && !this.showSemesterDialog && !this.showCourseDialog && !this.showConfirmDialog && !this.showCourseColorDialog && !this.showWebView && !this.interactiveMode) {
         this.FloatingTabBar()
       }
 
@@ -1031,6 +1033,10 @@ struct Index {
 
       if (this.showConfirmDialog) {
         this.ConfirmDialogBuilder()
+      }
+
+      if (this.showCourseColorDialog) {
+        this.CourseColorDialog()
       }
     }
     .width('100%')
@@ -1814,7 +1820,7 @@ struct Index {
           } else {
             ForEach(this.currentManageCourses(), (course: Course, idx: number) => {
               this.ManageCourseCard(course)
-            }, (course: Course, idx: number) => `mc_${idx}_${course.id}`)
+            }, (course: Course, idx: number) => `mc_${idx}_${course.id}_${course.colorIndex}`)
           }
         }
         .width('92%')
@@ -1963,17 +1969,17 @@ struct Index {
             .fontSize(14)
             .fontWeight(FontWeight.Bold)
             .fontColor($r('app.color.text_secondary'))
-            .maxLines(1)
+            .maxLines(2)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
-          Text(this.courseTimeSummary(course))
-            .fontSize(11)
-            .fontColor($r('app.color.text_hint'))
-            .margin({ top: 2 })
-          if (course.location.length > 0 || course.teacher.length > 0) {
-            Text(this.courseMetaText(course))
+          if (course.timeSlots.length > 0) {
+            ForEach(course.timeSlots, (slot: TimeSlot, idx: number) => {
+              this.SlotDetailGroup(slot, course, idx)
+            }, (slot: TimeSlot, idx: number) => `slot_${idx}_${slot.dayOfWeek}_${slot.sectionStart}_${slot.weekRange}`)
+          } else {
+            Text(course.scheduleText)
               .fontSize(11)
               .fontColor($r('app.color.text_hint'))
-              .margin({ top: 1 })
+              .margin({ top: 2 })
           }
         }
         .layoutWeight(1)
@@ -1981,27 +1987,22 @@ struct Index {
 
         Column() {
           Row()
-            .width(16)
-            .height(16)
-            .borderRadius(8)
+            .width(24)
+            .height(24)
+            .borderRadius(12)
             .backgroundColor(course.getColor())
-            .margin({ bottom: 6 })
-          Button('编辑')
-            .height(28)
-            .backgroundColor(Color.Transparent)
-            .fontColor($r('app.color.accent'))
-            .fontSize(12)
-            .border({ width: 1, color: $r('app.color.accent'), radius: 6 })
+            .border({ width: 2, color: Color.White, radius: 12 })
             .onClick(() => {
-              this.openCourseDialog(course);
+              this.colorPickCourse = course;
+              this.showCourseColorDialog = true;
             })
+            .margin({ bottom: 10 })
           Button('删除')
             .height(28)
             .backgroundColor(Color.Transparent)
             .fontColor($r('app.color.danger'))
             .fontSize(12)
             .border({ width: 1, color: $r('app.color.danger'), radius: 6 })
-            .margin({ top: 6 })
             .onClick(() => {
               this.requestDeleteCourse(course.id);
             })
@@ -2019,6 +2020,39 @@ struct Index {
     }
   }
 
+  @Builder
+  SlotDetailGroup(slot: TimeSlot, course: Course, idx: number) {
+    Column() {
+      ForEach(this.slotDetailLines(slot, course), (line: string, li: number) => {
+        Text(line)
+          .fontSize(11)
+          .fontColor($r('app.color.text_hint'))
+          .width('100%')
+          .textAlign(TextAlign.Start)
+          .margin({ top: li === 0 ? 0 : 1 })
+      }, (line: string, li: number) => `l${li}`)
+    }
+    .width('100%')
+    .alignItems(HorizontalAlign.Start)
+    .margin({ top: idx === 0 ? 4 : 8 })
+  }
+
+  private slotDetailLines(slot: TimeSlot, course: Course): string[] {
+    const lines: string[] = [];
+    const repeat: string = slot.repeatRule.length > 0 ? `(${slot.repeatRule})` : '';
+    lines.push(`${slot.weekRange}周${repeat} ${this.dayLabel(slot.dayOfWeek)} ${slot.sectionStart}-${slot.sectionEnd}节`);
+    const campus: string = slot.campus.length > 0 ? slot.campus : '';
+    const loc: string = slot.location.length > 0 ? slot.location : course.location;
+    const place: string = campus.length > 0 && loc.length > 0 ? `${campus} ${loc}` : (campus + loc);
+    if (place.length > 0) {
+      lines.push(place);
+    }
+    if (course.teacher.length > 0) {
+      lines.push(`教师：${course.teacher}`);
+    }
+    return lines;
+  }
+
   private courseTimeSummary(course: Course): string {
     const parts: string[] = [];
     for (let i = 0; i < course.timeSlots.length; i++) {
@@ -2031,17 +2065,6 @@ struct Index {
   private dayLabel(day: number): string {
     const labels: string[] = ['', '周一', '周二', '周三', '周四', '周五', '周六', '周日'];
     return day >= 1 && day <= 7 ? labels[day] : '';
-  }
-
-  private courseMetaText(course: Course): string {
-    const arr: string[] = [];
-    if (course.teacher.length > 0) {
-      arr.push(`教师：${course.teacher}`);
-    }
-    if (course.location.length > 0) {
-      arr.push(`地点：${course.location}`);
-    }
-    return arr.join('　');
   }
 
   private openSemesterDialog(sem: Semester | undefined): void {
@@ -2533,6 +2556,126 @@ struct Index {
     .justifyContent(FlexAlign.Center)
     .backgroundColor($r('app.color.overlay_dim'))
     .zIndex(15)
+  }
+
+  @Builder
+  CourseColorDialog() {
+    Column() {
+      Column() {
+        Text('课程颜色')
+          .fontSize(17)
+          .fontColor($r('app.color.text_secondary'))
+          .fontWeight(FontWeight.Bold)
+          .margin({ bottom: 12 })
+
+        ForEach(this.colorRowIndices(), (rowIndices: number[], ri: number) => {
+          Row() {
+            ForEach(rowIndices, (idx: number) => {
+              Column() {
+                Row()
+                  .width(30)
+                  .height(30)
+                  .borderRadius(15)
+                  .backgroundColor(CoursePresetColors.COLORS[idx])
+                  .border({
+                    width: this.colorPickCourse !== undefined &&
+                      this.colorPickCourse.colorIndex % CoursePresetColors.COLORS.length === idx ? 3 : 0,
+                    color: Color.White,
+                    radius: 15
+                  })
+              }
+              .width(40)
+              .height(40)
+              .justifyContent(FlexAlign.Center)
+              .alignItems(HorizontalAlign.Center)
+              .border({
+                width: this.colorPickCourse !== undefined &&
+                  this.colorPickCourse.colorIndex % CoursePresetColors.COLORS.length === idx ? 1 : 0,
+                color: $r('app.color.accent'),
+                radius: 20
+              })
+              .onClick(() => {
+                this.changeCourseColor(idx);
+              })
+            }, (idx: number) => `cc_${ri}_${idx}`)
+          }
+          .width('100%')
+          .justifyContent(FlexAlign.SpaceBetween)
+        }, (rowIndices: number[], ri: number) => `crow_${ri}`)
+
+        Row() {
+          Button('关闭')
+            .layoutWeight(1)
+            .height(44)
+            .backgroundColor(Color.Transparent)
+            .fontColor($r('app.color.text_hint'))
+            .fontSize(14)
+            .border({ width: 1, color: $r('app.color.border_light'), radius: 8 })
+            .onClick(() => {
+              this.showCourseColorDialog = false;
+              this.colorPickCourse = undefined;
+            })
+        }
+        .width('100%')
+        .margin({ top: 16 })
+      }
+      .width('86%')
+      .backgroundColor($r('app.color.card_background'))
+      .borderRadius(16)
+      .padding(22)
+    }
+    .width('100%')
+    .height('100%')
+    .justifyContent(FlexAlign.Center)
+    .backgroundColor($r('app.color.overlay_dim'))
+    .zIndex(15)
+  }
+
+  private colorRowIndices(): number[][] {
+    const rows: number[][] = [];
+    const first: number[] = [];
+    const second: number[] = [];
+    for (let i = 0; i < CoursePresetColors.COLORS.length; i++) {
+      if (i < 4) {
+        first.push(i);
+      } else {
+        second.push(i);
+      }
+    }
+    rows.push(first);
+    rows.push(second);
+    return rows;
+  }
+
+  private changeCourseColor(colorIndex: number): void {
+    const c: Course | undefined = this.colorPickCourse;
+    if (c === undefined) {
+      return;
+    }
+    if (c.colorIndex % CoursePresetColors.COLORS.length === colorIndex) {
+      return;
+    }
+    const newCourse: Course = new Course();
+    newCourse.id = c.id;
+    newCourse.name = c.name;
+    newCourse.code = c.code;
+    newCourse.teacher = c.teacher;
+    newCourse.scheduleText = c.scheduleText;
+    newCourse.location = c.location;
+    newCourse.dataSemester = c.dataSemester;
+    newCourse.colorIndex = colorIndex;
+    newCourse.timeSlots = c.timeSlots;
+    const refreshed: Course[] = [];
+    for (let i = 0; i < this.courses.length; i++) {
+      if (this.courses[i].id === c.id) {
+        refreshed.push(newCourse);
+      } else {
+        refreshed.push(this.courses[i]);
+      }
+    }
+    this.courses = refreshed;
+    this.colorPickCourse = newCourse;
+    this.saveCoursesToPref();
   }
 
   @Builder
