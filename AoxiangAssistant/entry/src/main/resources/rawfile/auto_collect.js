@@ -5,10 +5,20 @@
   const smsCode = __SMS_CODE__;
   const canAutofill = __CAN_AUTOFILL__;
   const canFillSms = __CAN_FILL_SMS__;
+  const unifiedAuthExited = __AUTH_EXITED__;
+  const headless = __HEADLESS__;
+  const collectionMode = mode === "grades" || mode === "schedule" || mode === "electricity";
 
   const text = (value) => (value || "").replace(/\s+/g, " ").trim();
   const visible = (element) => {
     try {
+      if (headless) {
+        for (let current = element; current; current = current.parentElement) {
+          const currentStyle = getComputedStyle(current);
+          if (currentStyle.display === "none" || currentStyle.visibility === "hidden") return false;
+        }
+        return true;
+      }
       const style = getComputedStyle(element);
       return style.display !== "none" && style.visibility !== "hidden" && element.getClientRects().length > 0;
     } catch (ignored) {
@@ -37,6 +47,17 @@
 
   const body = text(documents.map((doc) => (doc.body ? doc.body.innerText : "")).join(" "));
   const host = location.hostname;
+
+  const interactiveVerificationVisible = host === "uis.nwpu.edu.cn" && (
+    /当前登录环境异常|安全验证|手机验证码|短信验证码|动态验证码|确认是本人|发送验证请求/.test(body) ||
+    documents.some((doc) => [...doc.querySelectorAll(
+      '.sw-cas-safe-pop, .van-popup, [class*="mfa" i], [class*="guard" i]'
+    )].some((element) => visible(element) &&
+      /安全验证|登录环境异常|确认是本人|验证方式|发送验证/.test(text(element.innerText || element.textContent))))
+  );
+  if (collectionMode && interactiveVerificationVisible) {
+    return JSON.stringify({ phase: "interactive_login", rows: [] });
+  }
 
   const setValue = (input, value) => {
     const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;

@@ -29,6 +29,7 @@ struct Index {
   @State grades: Grade[] = [];
   @State webViewSrc: string = '';
   @State electricityBalance: number = -1;
+  @State apiGpa: number = -1;
   @State courses: Course[] = [];
   @State semesters: Semester[] = [];
   @State selectedSemesterIndex: number = 0;
@@ -52,12 +53,14 @@ struct Index {
   @State showConfirmDialog: boolean = false;
   @State confirmTitle: string = '';
   @State confirmMessage: string = '';
+  @State interactiveMode: boolean = false;
   @StorageProp('topRectHeight') topRectHeight: number = 0;
 
   private webController: webview.WebviewController = new webview.WebviewController();
   private tabsController: TabsController = new TabsController();
   private credentialStore: CredentialStore = new CredentialStore();
   private autoCollectScript: string = '';
+  private apiCollectScript: string = '';
   private pollTimer: number = -1;
   private attempts: number = 0;
   private credentialsSubmitted: boolean = false;
@@ -91,7 +94,14 @@ struct Index {
       const decoder: util.TextDecoder = new util.TextDecoder('utf-8');
       this.autoCollectScript = decoder.decodeToString(rawBuf);
     } catch (e) {
-      console.error('Failed to load auto_collect.js');
+      console.error('load auto_collect.js failed');
+    }
+    try {
+      const rawBuf: Uint8Array = await context.resourceManager.getRawFileContent('api_collect.js');
+      const decoder: util.TextDecoder = new util.TextDecoder('utf-8');
+      this.apiCollectScript = decoder.decodeToString(rawBuf);
+    } catch (e) {
+      console.error('load api_collect.js failed');
     }
   }
 
@@ -360,6 +370,9 @@ struct Index {
   }
 
   private weightedPoint(): string {
+    if (this.apiGpa >= 0 && this.apiGpa <= 5) {
+      return this.apiGpa.toFixed(3);
+    }
     if (this.grades.length === 0) {
       return '--';
     }
@@ -385,6 +398,15 @@ struct Index {
     }
     const result: number = GradeMath.weightedAverage(credits, scores);
     return isNaN(result) ? '--' : result.toFixed(2);
+  }
+
+  private enterInteractiveMode(): void {
+    this.interactiveMode = true;
+    this.statusText = '请完成安全验证后点击继续';
+  }
+
+  private exitInteractiveMode(): void {
+    this.interactiveMode = false;
   }
 
   private async onSaveCredentials(): Promise<void> {
@@ -486,6 +508,53 @@ struct Index {
       return;
     }
 
+    const isCollectTarget: boolean = this.currentTarget === LoginTarget.GRADES ||
+      this.currentTarget === LoginTarget.SCHEDULE || this.currentTarget === LoginTarget.ELECTRICITY;
+    if (this.interactiveMode) {
+      this.runLegacyScript();
+      return;
+    }
+    if (isCollectTarget && this.apiCollectScript.length > 0) {
+      try {
+        const apiScript: string = this.buildApiScript();
+        this.webController.runJavaScript(apiScript, (error: BusinessError, apiResult: string) => {
+          if (error) {
+            console.error(`api runJavaScript error: ${error.code} ${error.message}`);
+            this.runLegacyScript();
+            return;
+          }
+          const phase: string = this.extractPhase(apiResult);
+          console.info(`api phase='${phase}' target=${this.currentTarget}`);
+          if (phase === LoginPhase.API_UNAVAILABLE || phase === LoginPhase.TARGET_ERROR) {
+            this.runLegacyScript();
+            return;
+          }
+          this.handleJsResult(apiResult);
+        });
+      } catch (e) {
+        console.error(`api runJavaScript exception: ${e}`);
+        this.runLegacyScript();
+      }
+      return;
+    }
+    this.runLegacyScript();
+  }
+
+  private extractPhase(result: string): string {
+    try {
+      let parsed: Object = JSON.parse(result) as Object;
+      if (typeof parsed === 'string') {
+        parsed = JSON.parse(parsed as string) as Object;
+      }
+      const obj: Record<string, Object> = parsed as Record<string, Object>;
+      const phaseVal: Object | undefined = obj['phase'];
+      return phaseVal !== undefined && phaseVal !== null ? String(phaseVal) : '';
+    } catch (e) {
+      return '';
+    }
+  }
+
+  private runLegacyScript(): void {
     const script: string = this.buildScript();
     try {
       this.webController.runJavaScript(script, (error: BusinessError, result: string) => {
@@ -501,6 +570,14 @@ struct Index {
     }
   }
 
+  private buildApiScript(): string {
+    const now: number = Date.now();
+    const allowNav: boolean = now >= this.navigationCooldownUntil;
+    return this.apiCollectScript
+      .replace('"__MODE__"', `"${this.currentTarget}"`)
+      .replace('__ALLOW_NAV__', allowNav.toString());
+  }
+
   private buildScript(): string {
     const now: number = Date.now();
     const allowNav: boolean = now >= this.navigationCooldownUntil;
@@ -514,7 +591,9 @@ struct Index {
       .replace('__PASSWORD__', JSON.stringify(this.password))
       .replace('__SMS_CODE__', JSON.stringify(this.pendingSmsCode))
       .replace('__CAN_AUTOFILL__', canAutofill.toString())
-      .replace('__CAN_FILL_SMS__', canFillSms.toString());
+      .replace('__CAN_FILL_SMS__', canFillSms.toString())
+      .replace('__AUTH_EXITED__', 'false')
+      .replace('__HEADLESS__', 'false');
   }
 
   private handleJsResult(result: string): void {
@@ -584,7 +663,7 @@ struct Index {
           this.statusText = `成绩加载中，还需 ${seconds} 秒…`;
         } else {
           console.info('countdown done, calling handleCollectedGrades');
-          this.handleCollectedGrades(obj['rows']);
+          this.handleCollectedGrades(obj['rows'], undefined);
         }
         return;
       }
@@ -613,6 +692,55 @@ struct Index {
         this.statusText = '未能读取电费余额';
         return;
       }
+      if (phase === LoginPhase.INTERACTIVE_LOGIN) {
+        this.statusText = '需要手动完成安全验证';
+        this.enterInteractiveMode();
+        return;
+      }
+      if (phase === LoginPhase.CREDENTIALS_VALID) {
+        this.exitInteractiveMode();
+        this.statusText = '验证完成，继续采集…';
+        return;
+      }
+      if (phase === LoginPhase.API_WAITING) {
+        this.statusText = '正在读取数据…';
+        return;
+      }
+      if (phase === LoginPhase.TARGET_ERROR) {
+        const msgVal: Object | undefined = obj['message'];
+        const msg: string = msgVal !== undefined && msgVal !== null ? String(msgVal) : '接口读取失败，请稍后重试';
+        this.statusText = msg;
+        return;
+      }
+      if (phase === LoginPhase.GRADE_API_RAW && this.currentTarget === LoginTarget.GRADES) {
+        console.info('grade_api_raw received');
+        this.handleCollectedGrades(obj['rows'], obj['gpa']);
+        return;
+      }
+      if (phase === LoginPhase.SCHEDULE_API_RAW && this.currentTarget === LoginTarget.SCHEDULE) {
+        console.info('schedule_api_raw received');
+        this.handleCollectedSchedule(obj['payload']);
+        return;
+      }
+      if (phase === LoginPhase.ELECTRICITY_API_RAW && this.currentTarget === LoginTarget.ELECTRICITY) {
+        const balanceVal: Object | undefined = obj['balance'];
+        if (balanceVal !== undefined && balanceVal !== null) {
+          const balance: number = parseFloat(String(balanceVal));
+          if (isFinite(balance) && balance >= 0) {
+            this.electricityBalance = balance;
+            this.saveElectricityToPref();
+            this.stopPolling();
+            this.showWebView = false;
+            this.statusText = `电费余额: ${balance.toFixed(2)} 元`;
+            this.currentTab = 0;
+            this.tabsController.changeIndex(0);
+            console.info(`electricity_api saved: balance=${balance}`);
+            return;
+          }
+        }
+        this.statusText = '未能读取电费余额';
+        return;
+      }
       if (phase === LoginPhase.WAITING) {
         this.statusText = '正在查找目标页面…';
         return;
@@ -623,8 +751,14 @@ struct Index {
     }
   }
 
-  private handleCollectedGrades(rowsObj: Object | undefined): void {
+  private handleCollectedGrades(rowsObj: Object | undefined, gpaVal: Object | undefined): void {
     console.info(`handleCollectedGrades called, rowsObj type=${typeof rowsObj}`);
+    if (gpaVal !== undefined && gpaVal !== null) {
+      const gpaNum: number = parseFloat(String(gpaVal));
+      if (isFinite(gpaNum) && gpaNum >= 0 && gpaNum <= 5) {
+        this.apiGpa = gpaNum;
+      }
+    }
     if (rowsObj === undefined || rowsObj === null) {
       console.info('handleCollectedGrades: rowsObj is null/undefined, stopping');
       this.stopPolling();
@@ -676,12 +810,6 @@ struct Index {
     const semRaw: Object[] = payload['semesters'] as Object[];
     const couRaw: Object[] = payload['courses'] as Object[];
     console.info(`handleCollectedSchedule: semesters=${semRaw.length} courses=${couRaw.length}`);
-    if (couRaw.length === 0) {
-      this.stopPolling();
-      this.showWebView = false;
-      this.statusText = '没有解析到课表数据';
-      return;
-    }
     const semOut: Semester[] = [];
     for (let i = 0; i < semRaw.length; i++) {
       semOut.push(Semester.fromJsObject(semRaw[i] as Record<string, Object>));
@@ -689,6 +817,12 @@ struct Index {
     const couOut: Course[] = [];
     for (let i = 0; i < couRaw.length; i++) {
       couOut.push(Course.fromRecord(couRaw[i] as Record<string, Object>));
+    }
+    if (couOut.length === 0 && semOut.length === 0) {
+      this.stopPolling();
+      this.showWebView = false;
+      this.statusText = '没有解析到课表数据';
+      return;
     }
     if (semOut.length === 0) {
       const s: Semester = new Semester();
@@ -717,7 +851,11 @@ struct Index {
     this.selectedWeekOffset = 0;
     this.stopPolling();
     this.showWebView = false;
-    this.statusText = `已导入 ${mergedSemCourses.length} 门课程`;
+    if (mergedSemCourses.length === 0) {
+      this.statusText = '该学期暂无课程';
+    } else {
+      this.statusText = `已导入 ${mergedSemCourses.length} 门课程`;
+    }
     this.currentTab = 1;
     this.tabsController.changeIndex(1);
     console.info(`handleCollectedSchedule: DONE, courses=${this.courses.length} semesters=${this.semesters.length}`);
@@ -1132,25 +1270,27 @@ struct Index {
 
       if (this.courses.length === 0) {
         Column() {
-          Text('还没有课表数据')
+          Text(this.semesters.length === 0 ? '还没有课表数据' : '该学期暂无课程')
             .fontSize(14)
             .fontColor($r('app.color.text_hint'))
             .margin({ top: 40 })
-          Button('导入课表')
-            .height(44)
-            .backgroundColor($r('app.color.accent'))
-            .fontColor(Color.White)
-            .fontSize(14)
-            .borderRadius(8)
-            .margin({ top: 16 })
-            .onClick(() => {
-              if (!this.hasCredentials) {
-                this.showLoginForm = true;
-                this.currentTarget = LoginTarget.SCHEDULE;
-                return;
-              }
-              this.startPortal(LoginTarget.SCHEDULE, false);
-            })
+          if (this.semesters.length === 0) {
+            Button('导入课表')
+              .height(44)
+              .backgroundColor($r('app.color.accent'))
+              .fontColor(Color.White)
+              .fontSize(14)
+              .borderRadius(8)
+              .margin({ top: 16 })
+              .onClick(() => {
+                if (!this.hasCredentials) {
+                  this.showLoginForm = true;
+                  this.currentTarget = LoginTarget.SCHEDULE;
+                  return;
+                }
+                this.startPortal(LoginTarget.SCHEDULE, false);
+              })
+          }
         }
         .width('100%')
         .alignItems(HorizontalAlign.Center)
@@ -2293,38 +2433,67 @@ struct Index {
         .height(3)
         .color($r('app.color.accent'))
 
-      Column() {
-        LoadingProgress()
-          .width(42)
-          .height(42)
-          .color($r('app.color.accent'))
-
+      if (!this.interactiveMode) {
         Column() {
-          Text('正在通过统一认证' +
-            (this.currentTarget === LoginTarget.SCHEDULE ? '导入课表' :
-              this.currentTarget === LoginTarget.GRADES ? '更新成绩' : '查看电费'))
-            .fontSize(16)
-            .fontWeight(FontWeight.Bold)
-            .fontColor($r('app.color.text_secondary'))
-          Text(this.statusText)
-            .fontSize(12)
-            .fontColor($r('app.color.text_tertiary'))
-            .margin({ top: 6 })
+          LoadingProgress()
+            .width(42)
+            .height(42)
+            .color($r('app.color.accent'))
+
+          Column() {
+            Text('正在通过统一认证' +
+              (this.currentTarget === LoginTarget.SCHEDULE ? '导入课表' :
+                this.currentTarget === LoginTarget.GRADES ? '更新成绩' : '查看电费'))
+              .fontSize(16)
+              .fontWeight(FontWeight.Bold)
+              .fontColor($r('app.color.text_secondary'))
+            Text(this.statusText)
+              .fontSize(12)
+              .fontColor($r('app.color.text_tertiary'))
+              .margin({ top: 6 })
+          }
+          .width('90%')
+          .backgroundColor($r('app.color.card_background'))
+          .borderRadius(12)
+          .padding(18)
+          .margin({ top: 16 })
         }
-        .width('90%')
-        .backgroundColor($r('app.color.card_background'))
-        .borderRadius(12)
-        .padding(18)
-        .margin({ top: 16 })
+        .width('100%')
+        .layoutWeight(1)
+        .justifyContent(FlexAlign.Center)
+        .alignItems(HorizontalAlign.Center)
+      } else {
+        Column() {
+          Row() {
+            Text('请在下方页面完成安全验证')
+              .fontSize(13)
+              .fontColor($r('app.color.text_tertiary'))
+              .layoutWeight(1)
+
+            Button('验证完成')
+              .height(32)
+              .fontSize(12)
+              .fontColor(Color.White)
+              .backgroundColor($r('app.color.accent'))
+              .borderRadius(6)
+              .onClick(() => {
+                this.interactiveMode = false;
+                this.statusText = '正在继续采集…';
+              })
+          }
+          .width('100%')
+          .padding({ left: 16, right: 16, top: 8, bottom: 8 })
+          .alignItems(VerticalAlign.Center)
+          .backgroundColor($r('app.color.card_background'))
+        }
+        .width('100%')
+        .layoutWeight(1)
+        .backgroundColor($r('app.color.page_background'))
       }
-      .width('100%')
-      .layoutWeight(1)
-      .justifyContent(FlexAlign.Center)
-      .alignItems(HorizontalAlign.Center)
 
       Web({ src: this.webViewSrc, controller: this.webController })
-        .width(1)
-        .height(1)
+        .width(this.interactiveMode ? '100%' : 1)
+        .height(this.interactiveMode ? '100%' : 1)
         .javaScriptAccess(true)
         .domStorageAccess(true)
         .onlineImageAccess(true)
