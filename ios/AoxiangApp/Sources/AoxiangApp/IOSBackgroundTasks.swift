@@ -354,7 +354,11 @@ private struct SystemNotificationAuthorizationPort: IOSNotificationAuthorization
 public final class IOSUserAttentionNotifier: SyncUserAttentionNotifier, IOSNotificationAuthorizationPort {
     private let authorization: IOSNotificationAuthorizationPort
 
-    public init(authorization: IOSNotificationAuthorizationPort = SystemNotificationAuthorizationPort()) {
+    public init() {
+        self.authorization = SystemNotificationAuthorizationPort()
+    }
+
+    public init(authorization: IOSNotificationAuthorizationPort) {
         self.authorization = authorization
     }
 
