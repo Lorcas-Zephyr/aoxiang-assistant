@@ -2,6 +2,12 @@ name: Build re-signable iOS IPA
 
 on:
   workflow_dispatch:
+    inputs:
+      source_ref:
+        description: Branch or commit containing the iPhone/iPad source to archive
+        required: true
+        default: iOS
+        type: string
 
 permissions:
   contents: read
@@ -19,6 +25,7 @@ jobs:
       - name: Check out source
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          ref: ${{ inputs.source_ref }}
           persist-credentials: false
 
       - name: Set up Python

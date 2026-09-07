@@ -39,6 +39,14 @@ class WorkflowDependencyPinTest(unittest.TestCase):
         self.assertIn("scripts/validate_pr_contract.py", content)
         self.assertNotIn("github.event.pull_request.head.sha", content)
 
+    def test_re_signable_ipa_workflow_uses_an_explicit_source_ref(self):
+        workflow = WORKFLOW_ROOT / "ios-re-signable-ipa.yml"
+        self.assertTrue(workflow.is_file(), "re-signable IPA workflow is required")
+        content = workflow.read_text(encoding="utf-8")
+        self.assertIn("source_ref:", content)
+        self.assertIn("default: iOS", content)
+        self.assertIn("ref: ${{ inputs.source_ref }}", content)
+
 
 if __name__ == "__main__":
     unittest.main()
