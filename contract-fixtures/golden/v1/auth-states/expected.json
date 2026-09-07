@@ -1,0 +1,8 @@
+{
+  "cases": [
+    {"id": "login-success", "credentialsValid": true, "interactiveLogin": false, "explicitCredentialError": false, "authExited": true},
+    {"id": "credential-error", "credentialsValid": false, "interactiveLogin": true, "explicitCredentialError": true, "authExited": false},
+    {"id": "sms-verification", "credentialsValid": false, "interactiveLogin": true, "explicitCredentialError": false, "authExited": false},
+    {"id": "authentication-expired", "credentialsValid": false, "interactiveLogin": true, "explicitCredentialError": false, "authExited": false}
+  ]
+}

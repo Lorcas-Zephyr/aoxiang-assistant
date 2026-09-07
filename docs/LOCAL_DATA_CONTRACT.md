@@ -148,17 +148,21 @@ before they are persisted.
 
 Android v2.2.2 maps an unrecognized `repeatRule` to `""` and an unrecognized
 `assessmentMethod` to `null`; that legacy parser behavior is not a safe
-round-trip guarantee. For the iOS migration, an unknown enum in a
-read-modify-write transaction is a validation failure: retain the original raw
-record and do not serialize an inferred fallback. Unknown object members must
-also survive a cross-version round-trip, either by retaining the raw JSON or by
-rejecting the write without replacing stored data.
+round-trip guarantee. The portable backup contract now rejects an unknown enum
+before import or export. Local readers may retain an unknown wire value for
+recovery, but a read-modify-write path must not serialize an inferred fallback;
+it must either preserve the raw record or reject the write without replacing
+stored data. Unknown object members must also survive a cross-version
+round-trip, either by retaining the raw JSON or by rejecting the write without
+replacing stored data.
 
 The Android contract implementation retains unknown members inside course,
 semester, section-time, and time-slot records. It cannot retain unknown
 members added to the backup envelope or `settings`, so those members are
 rejected before import or migration rather than silently dropped. A migration
 also runs the complete identifier validation before writing schema `1`.
+Export runs the same identifier and reference-integrity validation before a
+document is returned, so Android cannot emit a backup that iOS must reject.
 `exportDate`, when present, must be a valid `YYYY-MM-DD` calendar date; invalid
 dates are rejected rather than replaced with the current date.
 
@@ -197,6 +201,11 @@ repository-root `contract-fixtures` directory:
 | `backup/v1/minimal_schedule_backup.json` | Current minimal portable backup with one fictional course and semester. |
 | `local/v1/grades.json` | Current versioned grade collection with two fictional records. |
 | `collection/v1/phases.json` | Runtime-only collection phase names; it is not backup payload data. |
+
+The second-phase behavioral corpus is under
+[`contract-fixtures/golden/`](../contract-fixtures/golden/). Its versioned manifests and
+scenario files are shared by Android JVM tests and the future iOS XCTest target;
+see [`docs/GOLDEN_FIXTURES.md`](GOLDEN_FIXTURES.md) for the path and security rules.
 
 Android's `ContractFixtureTest` checks that these resources are on the unit
 test classpath and that the backup fixture contains none of the prohibited

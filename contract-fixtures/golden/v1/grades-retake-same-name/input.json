@@ -1,0 +1,28 @@
+{
+  "records": [
+    {
+      "course": "操作系统",
+      "credits": 3.0,
+      "point": 2.3,
+      "score": 72.0,
+      "category": "课程",
+      "detail": "首次修读"
+    },
+    {
+      "course": "  操作系统 ",
+      "credits": 3.0,
+      "point": 4.0,
+      "score": 91.0,
+      "category": "重修",
+      "detail": "重修通过"
+    },
+    {
+      "course": "计算机网络",
+      "credits": 2.0,
+      "point": 3.7,
+      "score": 88.0,
+      "category": "课程",
+      "detail": "正常修读"
+    }
+  ]
+}

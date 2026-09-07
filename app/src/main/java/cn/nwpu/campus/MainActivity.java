@@ -177,6 +177,7 @@ public class MainActivity extends Activity {
     private boolean automaticUpdateNotificationShown;
     private boolean silentBoot;
     private boolean darkMode;
+    private boolean scheduleDataReadFailed;
     private boolean scheduleShowMonth;
     private boolean scheduleShowAllCourses;
     private int gradeIntervalValue;
@@ -248,9 +249,15 @@ public class MainActivity extends Activity {
         apiCollectScript = loadAsset("api_collect.js");
         grades = loadGrades();
         portraitGpa = parseStoredDouble(PORTRAIT_GPA, Double.NaN);
-        semesters = ScheduleStorage.loadSemesters(store);
-        courses = ScheduleStorage.loadCourses(store);
-        if (normalizeSemesterSectionTimes() | normalizeSemesterStartDates()) {
+        ScheduleStorage.LoadResult<ScheduleModels.Semester> semesterResult =
+                ScheduleStorage.loadSemestersResult(store);
+        ScheduleStorage.LoadResult<ScheduleModels.Course> courseResult =
+                ScheduleStorage.loadCoursesResult(store);
+        scheduleDataReadFailed = !semesterResult.success || !courseResult.success;
+        semesters = semesterResult.items;
+        courses = courseResult.items;
+        if (!scheduleDataReadFailed
+                && (normalizeSemesterSectionTimes() | normalizeSemesterStartDates())) {
             ScheduleStorage.saveSemesters(store, semesters);
         }
         selectedSemesterId = ScheduleStorage.loadSelectedSemester(store);
@@ -454,10 +461,16 @@ public class MainActivity extends Activity {
             return;
         }
         if (DataUpdateSignal.TARGET_SCHEDULE.equals(target)) {
-            semesters = ScheduleStorage.loadSemesters(store);
-            courses = ScheduleStorage.loadCourses(store);
+            ScheduleStorage.LoadResult<ScheduleModels.Semester> semesterResult =
+                    ScheduleStorage.loadSemestersResult(store);
+            ScheduleStorage.LoadResult<ScheduleModels.Course> courseResult =
+                    ScheduleStorage.loadCoursesResult(store);
+            scheduleDataReadFailed = !semesterResult.success || !courseResult.success;
+            semesters = semesterResult.items;
+            courses = courseResult.items;
             selectedSemesterId = ScheduleStorage.loadSelectedSemester(store);
-            if (normalizeSemesterSectionTimes() | normalizeSemesterStartDates()) {
+            if (!scheduleDataReadFailed
+                    && (normalizeSemesterSectionTimes() | normalizeSemesterStartDates())) {
                 ScheduleStorage.saveSemesters(store, semesters);
             }
             ensureSelectedSemester();
@@ -727,8 +740,7 @@ public class MainActivity extends Activity {
         topRow.setGravity(Gravity.CENTER_VERTICAL);
         Button semesterButton = action(semester.name, false);
         semesterButton.setOnClickListener(v -> showSemesterPicker("选择学期", picked -> {
-            selectedSemesterId = picked.id;
-            ScheduleStorage.saveSelectedSemester(store, selectedSemesterId);
+            if (!selectSemester(picked.id)) return;
             scheduleWeekOffset = 0;
             scheduleMonthAnchor = LocalDate.parse(picked.startDate);
             semesterButton.setText(picked.name);
@@ -871,9 +883,7 @@ public class MainActivity extends Activity {
         } else {
             Button picker = action("当前学期：" + semester.name, false);
             picker.setOnClickListener(v -> showSemesterPicker("切换学期", picked -> {
-                selectedSemesterId = picked.id;
-                ScheduleStorage.saveSelectedSemester(store, selectedSemesterId);
-                showTab(TAB_MANAGE);
+                if (selectSemester(picked.id)) showTab(TAB_MANAGE);
             }));
             l.addView(picker, new LinearLayout.LayoutParams(-1, dp(42)));
             addGap(l, 8);
@@ -1179,9 +1189,19 @@ public class MainActivity extends Activity {
     private void addAppearanceSettings(LinearLayout parent) {
         LinearLayout appearance = card(panelColor());
         Switch darkSwitch = settingSwitch("深色模式", darkMode);
+        final boolean[] restoringDarkMode = {false};
         darkSwitch.setOnCheckedChangeListener((button, checked) -> {
+            if (restoringDarkMode[0]) return;
+            boolean previousDarkMode = darkMode;
             darkMode = checked;
-            saveTheme();
+            if (!saveTheme()) {
+                darkMode = previousDarkMode;
+                restoringDarkMode[0] = true;
+                button.setChecked(previousDarkMode);
+                restoringDarkMode[0] = false;
+                Toast.makeText(this, "本地主题设置保存失败", Toast.LENGTH_LONG).show();
+                return;
+            }
             applyWindowTheme();
             showTab(TAB_SETTINGS, true);
         });
@@ -1219,8 +1239,13 @@ public class MainActivity extends Activity {
         for (String color : ScheduleModels.PRESET_COLORS) {
             View swatch = colorSwatch(color, themeColor.equals(color));
             swatch.setOnClickListener(v -> {
+                String previousThemeColor = themeColor;
                 themeColor = color;
-                saveTheme();
+                if (!saveTheme()) {
+                    themeColor = previousThemeColor;
+                    Toast.makeText(this, "本地主题设置保存失败", Toast.LENGTH_LONG).show();
+                    return;
+                }
                 applyWindowTheme();
                 showTab(TAB_SETTINGS, true);
             });
@@ -2011,9 +2036,10 @@ public class MainActivity extends Activity {
                 Toast.makeText(this, "学期时间范围与现有学期重叠", Toast.LENGTH_LONG).show();
                 return;
             }
-            saveSemester(semester, isEdit);
-            dialog.dismiss();
-            showTab(TAB_MANAGE);
+            if (saveSemester(semester, isEdit)) {
+                dialog.dismiss();
+                showTab(TAB_MANAGE);
+            }
         }));
         dialog.show();
     }
@@ -2100,9 +2126,10 @@ public class MainActivity extends Activity {
                 Toast.makeText(this, conflict, Toast.LENGTH_LONG).show();
                 return;
             }
-            saveCourse(course, isEdit);
-            dialog.dismiss();
-            showTab(TAB_MANAGE);
+            if (saveCourse(course, isEdit)) {
+                dialog.dismiss();
+                showTab(TAB_MANAGE);
+            }
         }));
         dialog.show();
     }
@@ -2742,8 +2769,9 @@ public class MainActivity extends Activity {
                             JSONArray rows = PortalApiParsers.gradeRows(payload.optJSONArray("gradeResponses"));
                             double apiGpa = PortalApiParsers.gpa(payload.optJSONObject("gpaResponse"));
                             if (rows.length() > 0) {
-                                if (!Double.isNaN(apiGpa)) {
-                                    handleCollectedGrades(rows, apiGpa, true);
+                                double selectedGpa = PortalApiParsers.selectGpa(apiGpa, Double.NaN);
+                                if (!Double.isNaN(selectedGpa)) {
+                                    handleCollectedGrades(rows, selectedGpa, true);
                                 } else {
                                     // Some accounts return the grade rows but leave getMyGpa empty.
                                     // Continue through the student portrait DOM/API fallback instead
@@ -2788,7 +2816,8 @@ public class MainActivity extends Activity {
                             status.setText("正在读取学生画像 GPA…");
                         } else if ("portrait_data".equals(phase) && "grades".equals(target)
                                 && collectedGradeRows[0] != null) {
-                            double gpa = payload.optDouble("gpa", Double.NaN);
+                            double gpa = PortalApiParsers.selectGpa(
+                                    Double.NaN, payload.optDouble("gpa", Double.NaN));
                             if (!Double.isNaN(gpa)) {
                                 handleCollectedGrades(collectedGradeRows[0], gpa, true);
                                 return;
@@ -2897,8 +2926,8 @@ public class MainActivity extends Activity {
         String firstImportedId = "";
         boolean importedEmptySchedule = false;
 
-        List<ScheduleModels.Semester> updatedSemesters = new ArrayList<>(semesters);
-        List<ScheduleModels.Course> updatedCourses = new ArrayList<>(courses);
+        List<ScheduleModels.Semester> updatedSemesters = copySemesters(semesters);
+        List<ScheduleModels.Course> updatedCourses = copyCourses(courses);
 
         for (ScheduleImport.RawSemester rawSemester : parsed.semesters) {
             List<ScheduleModels.Course> semesterCourses = ScheduleImport.convertToCourses(parsed.courses, "", rawSemester.dataSemester);
@@ -2959,6 +2988,7 @@ public class MainActivity extends Activity {
         List<ScheduleModels.Semester> previousSemesters = semesters;
         List<ScheduleModels.Course> previousCourses = courses;
         String previousSelectedSemesterId = selectedSemesterId;
+        boolean previousScheduleDataReadFailed = scheduleDataReadFailed;
         if (importedCount == 0 && !importedEmptySchedule) {
             cancelAutomation();
             if (initialSyncInProgress) {
@@ -2982,6 +3012,7 @@ public class MainActivity extends Activity {
             semesters = previousSemesters;
             courses = previousCourses;
             selectedSemesterId = previousSelectedSemesterId;
+            scheduleDataReadFailed = previousScheduleDataReadFailed;
             cancelAutomation();
             if (initialSyncInProgress) {
                 finishInitialSyncStep("schedule", false);
@@ -3302,10 +3333,11 @@ public class MainActivity extends Activity {
     }
 
     private boolean saveScheduleState() {
+        if (scheduleDataReadFailed) return false;
         ensureSelectedSemester();
-        if (!ScheduleStorage.saveSchedule(store, semesters, courses)) return false;
-        ScheduleStorage.saveSelectedSemester(store, selectedSemesterId);
-        ScheduleStorage.saveTheme(store, themeColor, darkMode);
+        if (!ScheduleStorage.saveScheduleAndSettings(store, semesters, courses,
+                selectedSemesterId, themeColor, darkMode)) return false;
+        scheduleDataReadFailed = false;
         ScheduleWidgetUpdater.updateAll(this);
         return true;
     }
@@ -3366,12 +3398,28 @@ public class MainActivity extends Activity {
         }
     }
 
-    private void saveTheme() {
-        ScheduleStorage.saveTheme(store, themeColor, darkMode);
+    private boolean saveTheme() {
+        if (!ScheduleStorage.saveTheme(store, themeColor, darkMode)) return false;
         ScheduleWidgetUpdater.updateAll(this);
+        return true;
     }
 
-    private void saveSemester(ScheduleModels.Semester semester, boolean isEdit) {
+    /** Update the visible semester only after the selected id is durably persisted. */
+    private boolean selectSemester(String semesterId) {
+        String normalized = semesterId == null ? "" : semesterId;
+        if (!ScheduleStorage.saveSelectedSemester(store, normalized)) {
+            Toast.makeText(this, "本地学期选择保存失败", Toast.LENGTH_LONG).show();
+            return false;
+        }
+        selectedSemesterId = normalized;
+        return true;
+    }
+
+    private boolean saveSemester(ScheduleModels.Semester semester, boolean isEdit) {
+        List<ScheduleModels.Semester> previousSemesters = copySemesters(semesters);
+        List<ScheduleModels.Course> previousCourses = copyCourses(courses);
+        String previousSelectedSemesterId = selectedSemesterId;
+        boolean previousScheduleDataReadFailed = scheduleDataReadFailed;
         semester.startDate = normalizeSemesterStartDate(semester.startDate);
         semester.endDate = LocalDate.parse(semester.startDate)
                 .plusWeeks(Math.max(1, semester.weekCount)).minusDays(1).toString();
@@ -3387,21 +3435,42 @@ public class MainActivity extends Activity {
             semesters.add(semester);
         }
         selectedSemesterId = semester.id;
-        saveScheduleState();
+        if (saveScheduleState()) return true;
+        semesters = previousSemesters;
+        courses = previousCourses;
+        selectedSemesterId = previousSelectedSemesterId;
+        scheduleDataReadFailed = previousScheduleDataReadFailed;
+        Toast.makeText(this, "本地课表数据版本暂不支持，未保存修改", Toast.LENGTH_LONG).show();
+        return false;
     }
 
-    private void saveCourse(ScheduleModels.Course course, boolean isEdit) {
+    private boolean saveCourse(ScheduleModels.Course course, boolean isEdit) {
+        List<ScheduleModels.Semester> previousSemesters = copySemesters(semesters);
+        List<ScheduleModels.Course> previousCourses = copyCourses(courses);
+        String previousSelectedSemesterId = selectedSemesterId;
+        boolean previousScheduleDataReadFailed = scheduleDataReadFailed;
         if (isEdit) {
             for (int i = 0; i < courses.size(); i++) {
                 if (courses.get(i).id.equals(course.id)) {
                     courses.set(i, course);
-                    saveScheduleState();
-                    return;
+                    if (saveScheduleState()) return true;
+                    semesters = previousSemesters;
+                    courses = previousCourses;
+                    selectedSemesterId = previousSelectedSemesterId;
+                    scheduleDataReadFailed = previousScheduleDataReadFailed;
+                    Toast.makeText(this, "本地课表数据版本暂不支持，未保存修改", Toast.LENGTH_LONG).show();
+                    return false;
                 }
             }
         }
         courses.add(course);
-        saveScheduleState();
+        if (saveScheduleState()) return true;
+        semesters = previousSemesters;
+        courses = previousCourses;
+        selectedSemesterId = previousSelectedSemesterId;
+        scheduleDataReadFailed = previousScheduleDataReadFailed;
+        Toast.makeText(this, "本地课表数据版本暂不支持，未保存修改", Toast.LENGTH_LONG).show();
+        return false;
     }
 
     private void signOut() {
@@ -3412,6 +3481,7 @@ public class MainActivity extends Activity {
         grades = new ArrayList<>();
         semesters = new ArrayList<>();
         courses = new ArrayList<>();
+        scheduleDataReadFailed = false;
         selectedSemesterId = "";
         electricityBalance = Double.NaN;
         portraitGpa = Double.NaN;
@@ -4378,9 +4448,7 @@ public class MainActivity extends Activity {
         LinearLayout actions = new LinearLayout(this);
         Button select = action(selectedSemesterId.equals(semester.id) ? "当前学期" : "切换", false);
         select.setOnClickListener(v -> {
-            selectedSemesterId = semester.id;
-            ScheduleStorage.saveSelectedSemester(store, selectedSemesterId);
-            showTab(TAB_MANAGE);
+            if (selectSemester(semester.id)) showTab(TAB_MANAGE);
         });
         Button edit = action("编辑", false);
         edit.setOnClickListener(v -> showSemesterDialog(semester));
@@ -4544,6 +4612,10 @@ public class MainActivity extends Activity {
     }
 
     private void deleteSemester(ScheduleModels.Semester semester) {
+        List<ScheduleModels.Semester> previousSemesters = copySemesters(semesters);
+        List<ScheduleModels.Course> previousCourses = copyCourses(courses);
+        String previousSelectedSemesterId = selectedSemesterId;
+        boolean previousScheduleDataReadFailed = scheduleDataReadFailed;
         semesters.remove(semester);
         List<ScheduleModels.Course> remaining = new ArrayList<>();
         for (ScheduleModels.Course course : courses) {
@@ -4551,13 +4623,31 @@ public class MainActivity extends Activity {
         }
         courses = remaining;
         if (semester.id.equals(selectedSemesterId)) selectedSemesterId = "";
-        saveScheduleState();
+        if (!saveScheduleState()) {
+            semesters = previousSemesters;
+            courses = previousCourses;
+            selectedSemesterId = previousSelectedSemesterId;
+            scheduleDataReadFailed = previousScheduleDataReadFailed;
+            Toast.makeText(this, "本地课表数据版本暂不支持，未删除学期", Toast.LENGTH_LONG).show();
+            return;
+        }
         showTab(TAB_MANAGE);
     }
 
     private void deleteCourse(ScheduleModels.Course course) {
+        List<ScheduleModels.Semester> previousSemesters = copySemesters(semesters);
+        List<ScheduleModels.Course> previousCourses = copyCourses(courses);
+        String previousSelectedSemesterId = selectedSemesterId;
+        boolean previousScheduleDataReadFailed = scheduleDataReadFailed;
         courses.remove(course);
-        saveScheduleState();
+        if (!saveScheduleState()) {
+            semesters = previousSemesters;
+            courses = previousCourses;
+            selectedSemesterId = previousSelectedSemesterId;
+            scheduleDataReadFailed = previousScheduleDataReadFailed;
+            Toast.makeText(this, "本地课表数据版本暂不支持，未删除课程", Toast.LENGTH_LONG).show();
+            return;
+        }
         showTab(TAB_MANAGE);
     }
 
@@ -4814,6 +4904,22 @@ public class MainActivity extends Activity {
         targetCourses.addAll(kept);
     }
 
+    private List<ScheduleModels.Semester> copySemesters(List<ScheduleModels.Semester> source) {
+        List<ScheduleModels.Semester> copied = new ArrayList<>();
+        for (ScheduleModels.Semester semester : source) {
+            copied.add(ScheduleModels.Semester.from(semester.json()));
+        }
+        return copied;
+    }
+
+    private List<ScheduleModels.Course> copyCourses(List<ScheduleModels.Course> source) {
+        List<ScheduleModels.Course> copied = new ArrayList<>();
+        for (ScheduleModels.Course course : source) {
+            copied.add(ScheduleModels.Course.from(course.json()));
+        }
+        return copied;
+    }
+
     private int findSemesterIndexByName(List<ScheduleModels.Semester> values, String name) {
         for (int i = 0; i < values.size(); i++) {
             if (values.get(i).name.equals(name)) return i;
@@ -4936,9 +5042,15 @@ public class MainActivity extends Activity {
 
     private List<GradeRecord> loadGrades() {
         try {
-            JSONArray array = LocalDataStore.readArray(store, "grades");
+            LocalDataStore.ReadResult raw = LocalDataStore.readArrayResult(store, "grades");
+            if (!raw.success) return new ArrayList<>();
             List<GradeRecord> out = new ArrayList<>();
-            for (int i = 0; i < array.length(); i++) out.add(GradeRecord.from(array.getJSONObject(i)));
+            for (int i = 0; i < raw.items.length(); i++) {
+                JSONObject item = raw.items.optJSONObject(i);
+                if (item == null) return new ArrayList<>();
+                out.add(GradeRecord.from(item));
+            }
+            LocalDataStore.migrateIfLegacy(store, "grades", raw);
             return GradeRecord.keepHighest(out);
         } catch (Exception ignored) {
             return new ArrayList<>();
@@ -4949,11 +5061,8 @@ public class MainActivity extends Activity {
         try {
             JSONArray array = new JSONArray();
             for (GradeRecord grade : grades) array.put(grade.json());
-            if (!LocalDataStore.writeArray(store, "grades", array)) return false;
-            SharedPreferences.Editor editor = store.edit();
-            if (Double.isNaN(portraitGpa)) editor.remove(PORTRAIT_GPA);
-            else editor.putString(PORTRAIT_GPA, Double.toString(portraitGpa));
-            editor.apply();
+            if (!LocalDataStore.writeGradeState(
+                    store, "grades", array, PORTRAIT_GPA, portraitGpa)) return false;
             ScheduleWidgetUpdater.updateAll(this);
             return true;
         } catch (Exception ignored) {}

@@ -11,3 +11,6 @@
 *.apk
 !release-assets/*.apk
 *.iml
+__pycache__/
+*.py[cod]
+.build/

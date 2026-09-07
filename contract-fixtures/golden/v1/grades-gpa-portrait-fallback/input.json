@@ -1,0 +1,18 @@
+{
+  "gradeResponses": [
+    {
+      "semesterId2studentGrades": {
+        "term-fixture-2026": [
+          {
+            "published": true,
+            "course": {"nameZh": "离散数学", "credits": 3.0},
+            "gp": 3.3,
+            "gaGrade": "82",
+            "gradeDetail": "平时 80"
+          }
+        ]
+      }
+    }
+  ],
+  "gpaResponse": {}
+}

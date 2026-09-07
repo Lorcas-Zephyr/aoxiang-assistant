@@ -37,6 +37,114 @@ public class LocalDataStoreTest {
                 .toString().contains("\"schemaVersion\":1"));
     }
 
+    @Test public void readArrayMigratesLegacyBareArrayToTheVersionedEnvelope() {
+        MapBackedPreferences store = new MapBackedPreferences();
+        store.values.put("grades", "[{\"course\":\"课程A\"}]");
+
+        LocalDataStore.ReadResult result = LocalDataStore.readArrayResult(store, "grades");
+
+        assertTrue(result.success);
+        assertTrue(result.legacy);
+        assertEquals(1, result.items.length());
+        assertEquals("[{\"course\":\"课程A\"}]", store.values.get("grades"));
+        assertTrue(LocalDataStore.migrateIfLegacy(store, "grades", result));
+        assertTrue(store.values.get("grades").toString().contains("\"schemaVersion\":1"));
+        assertTrue(store.values.get("grades").toString().contains("\"items\""));
+    }
+
+    @Test public void malformedLegacyScheduleIsNotMigratedBeforeDomainValidation() {
+        MapBackedPreferences store = new MapBackedPreferences();
+        String original = "[{\"id\":\"ok\"},{\"id\":7}]";
+        store.values.put(ScheduleStorage.KEY_SEMESTERS, original);
+
+        ScheduleStorage.LoadResult<ScheduleModels.Semester> result =
+                ScheduleStorage.loadSemestersResult(store);
+
+        assertFalse(result.success);
+        assertEquals(original, store.values.get(ScheduleStorage.KEY_SEMESTERS));
+    }
+
+    @Test public void ensureCurrentLeavesMalformedLegacyScheduleUntouched() {
+        MapBackedPreferences store = new MapBackedPreferences();
+        String original = "[{\"id\":\"ok\"},{\"id\":7}]";
+        store.values.put(ScheduleStorage.KEY_SEMESTERS, original);
+
+        LocalDataStore.ensureCurrent(store);
+
+        assertEquals(original, store.values.get(ScheduleStorage.KEY_SEMESTERS));
+    }
+
+    @Test public void writeArrayReportsCommitFailureAndKeepsExistingValue() throws Exception {
+        MapBackedPreferences store = new MapBackedPreferences();
+        String original = "{\"schemaVersion\":1,\"items\":[]}";
+        store.values.put("grades", original);
+        store.commitResult = false;
+
+        assertFalse(LocalDataStore.writeArray(store, "grades",
+                new JSONArray().put(new org.json.JSONObject().put("course", "new"))));
+        assertEquals(original, store.values.get("grades"));
+    }
+
+    @Test public void gradeStateCommitFailureKeepsGradesAndGpaTogether() throws Exception {
+        MapBackedPreferences store = new MapBackedPreferences();
+        String oldGrades = "{\"schemaVersion\":1,\"items\":[{\"course\":\"old\"}]}";
+        store.values.put("grades", oldGrades);
+        store.values.put("portrait_gpa", "2.10");
+        store.commitResult = false;
+
+        assertFalse(LocalDataStore.writeGradeState(store, "grades",
+                new JSONArray().put(new org.json.JSONObject().put("course", "new")),
+                "portrait_gpa", 3.80));
+        assertEquals(oldGrades, store.values.get("grades"));
+        assertEquals("2.10", store.values.get("portrait_gpa"));
+    }
+
+    @Test public void gradeStateWritesGradesAndGpaWithOneCommit() throws Exception {
+        MapBackedPreferences store = new MapBackedPreferences();
+
+        assertTrue(LocalDataStore.writeGradeState(store, "grades",
+                new JSONArray().put(new org.json.JSONObject().put("course", "new")),
+                "portrait_gpa", 3.80));
+
+        assertTrue(store.values.get("grades").toString().contains("\"schemaVersion\":1"));
+        assertTrue(store.values.get("grades").toString().contains("\"course\":\"new\""));
+        assertEquals("3.8", store.values.get("portrait_gpa"));
+        assertEquals(1, store.commitCount);
+    }
+
+    @Test public void gradeStateRemovesMissingGpaInTheGradesCommit() throws Exception {
+        MapBackedPreferences store = new MapBackedPreferences();
+        store.values.put("portrait_gpa", "2.10");
+
+        assertTrue(LocalDataStore.writeGradeState(store, "grades",
+                new JSONArray().put(new org.json.JSONObject().put("course", "new")),
+                "portrait_gpa", Double.NaN));
+
+        assertFalse(store.values.containsKey("portrait_gpa"));
+        assertEquals(1, store.commitCount);
+    }
+
+    @Test public void scheduleStateReportsCommitFailureWithoutPartialState() {
+        MapBackedPreferences store = new MapBackedPreferences();
+        String oldSemesters = "{\"schemaVersion\":1,\"items\":[]}";
+        String oldCourses = "{\"schemaVersion\":1,\"items\":[]}";
+        store.values.put(ScheduleStorage.KEY_SEMESTERS, oldSemesters);
+        store.values.put(ScheduleStorage.KEY_COURSES, oldCourses);
+        store.values.put(ScheduleStorage.KEY_SELECTED_SEMESTER, "old-semester");
+        store.values.put(ScheduleStorage.KEY_THEME_COLOR, "#111111");
+        store.values.put(ScheduleStorage.KEY_DARK_MODE, false);
+        store.commitResult = false;
+
+        assertFalse(ScheduleStorage.saveScheduleAndSettings(
+                store, Collections.emptyList(), Collections.emptyList(),
+                "new-semester", "#222222", true));
+        assertEquals(oldSemesters, store.values.get(ScheduleStorage.KEY_SEMESTERS));
+        assertEquals(oldCourses, store.values.get(ScheduleStorage.KEY_COURSES));
+        assertEquals("old-semester", store.values.get(ScheduleStorage.KEY_SELECTED_SEMESTER));
+        assertEquals("#111111", store.values.get(ScheduleStorage.KEY_THEME_COLOR));
+        assertEquals(false, store.values.get(ScheduleStorage.KEY_DARK_MODE));
+    }
+
     @Test public void canWriteArrayRejectsUnexpectedPreferenceType() {
         MapBackedPreferences store = new MapBackedPreferences();
         store.values.put("grades", Collections.singleton("not-a-json-string"));
@@ -45,8 +153,32 @@ public class LocalDataStoreTest {
         assertEquals(Collections.singleton("not-a-json-string"), store.values.get("grades"));
     }
 
+    @Test public void canWriteArrayRejectsCurrentEnvelopeWithMalformedGradeRecord() {
+        MapBackedPreferences store = new MapBackedPreferences();
+        store.values.put("grades", "{\"schemaVersion\":1,\"items\":["
+                + "{\"course\":\"ok\"},{\"course\":7}]}" );
+
+        assertFalse(LocalDataStore.canWriteArray(store, "grades"));
+    }
+
+    @Test public void scheduleReadReportsMalformedCollectionInsteadOfReturningPartialData() {
+        MapBackedPreferences store = new MapBackedPreferences();
+        store.values.put(ScheduleStorage.KEY_SEMESTERS,
+                "{\"schemaVersion\":1,\"items\":[{\"id\":\"ok\"},{\"id\":7}]}");
+
+        ScheduleStorage.LoadResult<ScheduleModels.Semester> result =
+                ScheduleStorage.loadSemestersResult(store);
+
+        assertFalse(result.success);
+        assertTrue(result.items.isEmpty());
+        assertEquals("{\"schemaVersion\":1,\"items\":[{\"id\":\"ok\"},{\"id\":7}]}",
+                store.values.get(ScheduleStorage.KEY_SEMESTERS));
+    }
+
     private static final class MapBackedPreferences implements SharedPreferences {
         private final Map<String, Object> values = new HashMap<>();
+        private boolean commitResult = true;
+        private int commitCount;
 
         @Override public Map<String, ?> getAll() {
             return new HashMap<>(values);
@@ -146,6 +278,8 @@ public class LocalDataStoreTest {
                 }
 
                 @Override public boolean commit() {
+                    commitCount++;
+                    if (!commitResult) return false;
                     applyChanges();
                     return true;
                 }

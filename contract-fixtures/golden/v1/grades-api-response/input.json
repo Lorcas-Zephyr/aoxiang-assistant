@@ -1,0 +1,34 @@
+{
+  "gradeResponses": [
+    {
+      "semesterId2studentGrades": {
+        "term-fixture-2026": [
+          {
+            "published": true,
+            "course": {"nameZh": "软件工程", "credits": 3.0},
+            "gp": 4.0,
+            "gaGrade": "95",
+            "gradeDetail": "&lt;span&gt;平时成绩:88&lt;/span&gt;&lt;br&gt;&lt;span&gt;期末成绩:95&lt;/span&gt;"
+          },
+          {
+            "published": false,
+            "course": {"nameZh": "尚未公布课程", "credits": 2.0},
+            "gp": 3.0,
+            "gaGrade": "80",
+            "gradeDetail": "不应进入成绩列表"
+          },
+          {
+            "published": true,
+            "lessonNameZh": "课程名称回退",
+            "gp": null,
+            "gaGrade": null,
+            "gradeDetail": null
+          }
+        ]
+      }
+    }
+  ],
+  "gpaResponse": {
+    "data": {"cumulative_gpa": "3.76"}
+  }
+}

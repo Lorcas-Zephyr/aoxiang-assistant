@@ -36,6 +36,13 @@
 
 正式版本使用固定发布证书签名。升级时直接安装新版 APK 即可保留本地数据，无需先卸载旧版本。
 
+## iPhone/iPad 构建
+
+`iOS` 分支包含独立的 iPhone/iPad SwiftUI App 与 Widget。没有 Mac 时，可从 GitHub
+Actions 手动触发 **Build re-signable iOS IPA**，下载产物后在自己的平板签名工具中重新
+签名。该产物不含证书，不能直接安装；完整流程和 App Group 限制见
+[iPhone/iPad IPA 构建说明](docs/IOS_IPA_BUILD.md)。
+
 ## 登录与隐私
 
 - 教务账号和密码使用 Android Keystore 加密后保存在本机私有存储中。
@@ -82,6 +89,8 @@ app/src/main/java/cn/nwpu/campus/  Android 原生代码
 app/src/main/assets/api_collect.js  校方结构化数据采集脚本
 app/src/main/assets/auto_collect.js 页面兼容采集脚本
 app/src/test/                       单元测试
+contract-fixtures/golden/vN/        Android/iOS 共用的脱敏行为 fixture corpus（当前 v1）
+ios/                                iPhone/iPad App、Widget 和 Swift Package
 docs/API.md                         数据接口与采集协议
 docs/JWXT_API.md                   教务学生端接口盘点
 scripts/build.sh                    构建入口

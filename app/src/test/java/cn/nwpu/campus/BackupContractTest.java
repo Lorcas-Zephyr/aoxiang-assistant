@@ -224,6 +224,83 @@ public class BackupContractTest {
     }
 
     @Test(expected = org.json.JSONException.class)
+    public void rejectsUnknownAssessmentMethodInsteadOfFallingBackToNull() throws Exception {
+        JSONObject backup = new JSONObject()
+                .put("format", BackupContract.FORMAT)
+                .put("schemaVersion", BackupContract.CURRENT_SCHEMA_VERSION)
+                .put("courses", new org.json.JSONArray().put(new JSONObject()
+                        .put("id", "course-stable")
+                        .put("name", "课程")
+                        .put("semesterId", "semester-stable")
+                        .put("assessmentMethod", "未来方式")))
+                .put("settings", new JSONObject().put("semesters", new org.json.JSONArray()
+                        .put(new JSONObject().put("id", "semester-stable"))));
+
+        BackupContract.validateForImport(BackupContract.readDocument(backup));
+    }
+
+    @Test(expected = org.json.JSONException.class)
+    public void rejectsUnknownRepeatRuleInsteadOfFallingBackToAllWeeks() throws Exception {
+        JSONObject backup = new JSONObject()
+                .put("format", BackupContract.FORMAT)
+                .put("schemaVersion", BackupContract.CURRENT_SCHEMA_VERSION)
+                .put("courses", new org.json.JSONArray().put(new JSONObject()
+                        .put("id", "course-stable")
+                        .put("name", "课程")
+                        .put("semesterId", "semester-stable")
+                        .put("timeSlots", new org.json.JSONArray().put(new JSONObject()
+                                .put("repeatRule", "future-rule")))))
+                .put("settings", new JSONObject().put("semesters", new org.json.JSONArray()
+                        .put(new JSONObject().put("id", "semester-stable"))));
+
+        BackupContract.validateForImport(BackupContract.readDocument(backup));
+    }
+
+    @Test(expected = org.json.JSONException.class)
+    public void rejectsNonIntegerSemesterCountsInsteadOfDefaultingThem() throws Exception {
+        JSONObject backup = new JSONObject()
+                .put("format", BackupContract.FORMAT)
+                .put("schemaVersion", BackupContract.CURRENT_SCHEMA_VERSION)
+                .put("courses", new org.json.JSONArray())
+                .put("settings", new JSONObject().put("semesters", new org.json.JSONArray()
+                        .put(new JSONObject().put("id", "semester-stable")
+                                .put("weekCount", "16"))));
+
+        BackupContract.validateForImport(BackupContract.readDocument(backup));
+    }
+
+    @Test(expected = org.json.JSONException.class)
+    public void rejectsInvalidSectionTimeInsteadOfAcceptingAPlatformDefault() throws Exception {
+        JSONObject backup = new JSONObject()
+                .put("format", BackupContract.FORMAT)
+                .put("schemaVersion", BackupContract.CURRENT_SCHEMA_VERSION)
+                .put("courses", new org.json.JSONArray())
+                .put("settings", new JSONObject().put("semesters", new org.json.JSONArray()
+                        .put(new JSONObject().put("id", "semester-stable")
+                                .put("sectionTimes", new org.json.JSONArray().put(new JSONObject()
+                                        .put("start", "8:30").put("end", "09:15"))))));
+
+        BackupContract.validateForImport(BackupContract.readDocument(backup));
+    }
+
+    @Test(expected = org.json.JSONException.class)
+    public void rejectsOutOfRangeCourseDayInsteadOfDefaultingIt() throws Exception {
+        JSONObject backup = new JSONObject()
+                .put("format", BackupContract.FORMAT)
+                .put("schemaVersion", BackupContract.CURRENT_SCHEMA_VERSION)
+                .put("courses", new org.json.JSONArray().put(new JSONObject()
+                        .put("id", "course-stable")
+                        .put("name", "课程")
+                        .put("semesterId", "semester-stable")
+                        .put("timeSlots", new org.json.JSONArray().put(new JSONObject()
+                                .put("dayOfWeek", 8)))))
+                .put("settings", new JSONObject().put("semesters", new org.json.JSONArray()
+                        .put(new JSONObject().put("id", "semester-stable"))));
+
+        BackupContract.validateForImport(BackupContract.readDocument(backup));
+    }
+
+    @Test(expected = org.json.JSONException.class)
     public void rejectsBackupImportWhenSelectedSemesterDoesNotExist() throws Exception {
         JSONObject backup = new JSONObject()
                 .put("format", BackupContract.FORMAT)
@@ -235,6 +312,32 @@ public class BackupContractTest {
                         .put("selectedSemesterId", "semester-missing"));
 
         BackupContract.validateForImport(BackupContract.readDocument(backup));
+    }
+
+    @Test(expected = org.json.JSONException.class)
+    public void rejectsBackupImportWhenCourseSemesterDoesNotExist() throws Exception {
+        JSONObject backup = new JSONObject()
+                .put("format", BackupContract.FORMAT)
+                .put("schemaVersion", BackupContract.CURRENT_SCHEMA_VERSION)
+                .put("courses", new org.json.JSONArray().put(new JSONObject()
+                        .put("id", "course-stable")
+                        .put("name", "课程")
+                        .put("semesterId", "semester-missing")))
+                .put("settings", new JSONObject()
+                        .put("semesters", new org.json.JSONArray().put(new JSONObject()
+                                .put("id", "semester-stable"))));
+
+        BackupContract.validateForImport(BackupContract.readDocument(backup));
+    }
+
+    @Test(expected = IllegalArgumentException.class)
+    public void rejectsBackupExportWhenCourseSemesterDoesNotExist() {
+        ScheduleModels.Course course = new ScheduleModels.Course(
+                "course-stable", "课程", "semester-missing", Collections.emptyList());
+
+        BackupContract.createDocument(
+                Collections.singletonList(course), Collections.emptyList(), "", null, false,
+                LocalDate.of(2026, 1, 15));
     }
 
     @Test public void defaultExportDateUsesShanghaiBusinessCalendar() throws Exception {

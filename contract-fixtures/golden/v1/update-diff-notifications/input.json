@@ -1,0 +1,18 @@
+{
+  "gradeCase": {
+    "grades": true,
+    "before": [
+      {"key": "grade-math", "name": "示例数学", "signature": "score:80"},
+      {"key": "grade-english", "name": "示例英语", "signature": "score:82"}
+    ],
+    "after": [
+      {"key": "grade-math", "name": "示例数学", "signature": "score:90"},
+      {"key": "grade-physics", "name": "示例物理", "signature": "score:88"}
+    ]
+  },
+  "scheduleCase": {
+    "grades": false,
+    "before": [{"key": "course-a", "name": "示例课程", "signature": "周一1-2"}],
+    "after": [{"key": "course-a", "name": "示例课程", "signature": "周一3-4"}]
+  }
+}

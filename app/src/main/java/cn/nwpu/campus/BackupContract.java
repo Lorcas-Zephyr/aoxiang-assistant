@@ -47,6 +47,12 @@ public final class BackupContract {
             KEY_DARK_MODE,
             KEY_SELECTED_SEMESTER_ID
     ));
+    private static final Set<String> REPEAT_RULE_VALUES = new HashSet<>(Arrays.asList(
+            "", "仅单周", "仅双周"
+    ));
+    private static final Set<String> ASSESSMENT_METHOD_VALUES = new HashSet<>(Arrays.asList(
+            "考试", "考察", "PnP"
+    ));
     /** Key fragments that identify credentials or session state, regardless of nesting. */
     private static final List<String> SENSITIVE_KEY_FRAGMENTS = Arrays.asList(
             "password",
@@ -116,9 +122,11 @@ public final class BackupContract {
             // Export is a security boundary: reject any secret-bearing record before
             // the caller gets a file to write.
             rejectSensitiveKeys(backup);
+            validateForImport(readDocument(backup));
             return backup;
-        } catch (JSONException impossible) {
-            throw new IllegalStateException("Unable to encode backup", impossible);
+        } catch (JSONException invalid) {
+            throw new IllegalArgumentException(
+                    "Backup data violates the portable contract", invalid);
         }
     }
 
@@ -193,6 +201,7 @@ public final class BackupContract {
             if (semester == null) throw new JSONException("Backup contains an invalid semester");
             String id = requiredString(semester, "id", "semester");
             if (!semesterIds.add(id)) throw new JSONException("Duplicate semester id: " + id);
+            validateSemesterFields(semester);
         }
         Set<String> courseIds = new HashSet<>();
         for (int i = 0; i < data.courses.length(); i++) {
@@ -200,14 +209,22 @@ public final class BackupContract {
             if (course == null) throw new JSONException("Backup contains an invalid course");
             String id = requiredString(course, "id", "course");
             if (!courseIds.add(id)) throw new JSONException("Duplicate course id: " + id);
-            requiredString(course, "semesterId", "course");
-            validateOptionalString(course, "assessmentMethod", "course");
+            String semesterId = requiredString(course, "semesterId", "course");
+            if (!semesterIds.contains(semesterId)) {
+                throw new JSONException("Course references missing semester: " + semesterId);
+            }
+            validateCourseFields(course);
+            validateEnum(course, "assessmentMethod", "course", ASSESSMENT_METHOD_VALUES);
             JSONArray timeSlots = course.optJSONArray("timeSlots");
+            if (course.has("timeSlots") && !course.isNull("timeSlots") && timeSlots == null) {
+                throw new JSONException("Course timeSlots must be an array");
+            }
             if (timeSlots != null) {
                 for (int j = 0; j < timeSlots.length(); j++) {
                     JSONObject slot = timeSlots.optJSONObject(j);
                     if (slot == null) throw new JSONException("Backup contains an invalid time slot");
-                    validateOptionalString(slot, "repeatRule", "time slot");
+                    validateTimeSlotFields(slot);
+                    validateEnum(slot, "repeatRule", "time slot", REPEAT_RULE_VALUES);
                 }
             }
         }
@@ -234,6 +251,131 @@ public final class BackupContract {
         if (!object.has(key) || object.isNull(key)) return;
         if (!(object.opt(key) instanceof String)) {
             throw new JSONException("Non-string " + kind + " " + key);
+        }
+    }
+
+    private static void validateSemesterFields(JSONObject semester) throws JSONException {
+        validateOptionalString(semester, "name", "semester");
+        validateOptionalString(semester, "startDate", "semester");
+        validateOptionalString(semester, "endDate", "semester");
+        validateOptionalDate(semester, "startDate", "semester");
+        validateOptionalDate(semester, "endDate", "semester");
+        validateOptionalInteger(semester, "weekCount", "semester", 1);
+        validateOptionalInteger(semester, "sectionCount", "semester", 1);
+        if (semester.has("sectionTimes") && semester.isNull("sectionTimes")) {
+            throw new JSONException("Semester sectionTimes must be an array");
+        }
+        JSONArray sectionTimes = semester.optJSONArray("sectionTimes");
+        if (semester.has("sectionTimes") && sectionTimes == null) {
+            throw new JSONException("Semester sectionTimes must be an array");
+        }
+        if (sectionTimes == null) return;
+        for (int i = 0; i < sectionTimes.length(); i++) {
+            JSONObject time = sectionTimes.optJSONObject(i);
+            if (time == null) throw new JSONException("Backup contains an invalid section time");
+            validateRequiredTime(time, "start", "section time");
+            validateRequiredTime(time, "end", "section time");
+        }
+    }
+
+    private static void validateCourseFields(JSONObject course) throws JSONException {
+        validateOptionalString(course, "name", "course");
+        validateOptionalString(course, "code", "course");
+        validateOptionalString(course, "location", "course");
+        validateOptionalString(course, "teacher", "course");
+        validateOptionalString(course, "notes", "course");
+        validateOptionalString(course, "color", "course");
+        validateOptionalNumber(course, "credits", "course");
+    }
+
+    private static void validateTimeSlotFields(JSONObject slot) throws JSONException {
+        validateOptionalString(slot, "weekRange", "time slot");
+        validateOptionalString(slot, "teacher", "time slot");
+        validateOptionalString(slot, "location", "time slot");
+        if (slot.has("dayOfWeek") && !slot.isNull("dayOfWeek")) {
+            int day = integerValue(slot, "dayOfWeek", 0);
+            if (day < 1 || day > 7) {
+                throw new JSONException("Time slot dayOfWeek is out of range: " + day);
+            }
+        }
+        if (slot.has("classSections") && slot.isNull("classSections")) {
+            throw new JSONException("Time slot classSections must be an array");
+        }
+        JSONArray sections = slot.optJSONArray("classSections");
+        if (slot.has("classSections") && sections == null) {
+            throw new JSONException("Time slot classSections must be an array");
+        }
+        if (sections == null) return;
+        for (int i = 0; i < sections.length(); i++) {
+            Object raw = sections.opt(i);
+            if (!(raw instanceof Number)) {
+                throw new JSONException("Time slot classSections must contain integers");
+            }
+            double value = ((Number) raw).doubleValue();
+            if (Double.isNaN(value) || Double.isInfinite(value)
+                    || value != Math.rint(value) || value < 1 || value > Integer.MAX_VALUE) {
+                throw new JSONException("Invalid time slot class section");
+            }
+        }
+    }
+
+    private static void validateOptionalDate(JSONObject object, String key, String kind)
+            throws JSONException {
+        if (!object.has(key) || object.isNull(key)) return;
+        String value = object.optString(key, null);
+        if (value == null || !value.matches("\\d{4}-\\d{2}-\\d{2}")) {
+            throw new JSONException("Invalid " + kind + " " + key + ": " + value);
+        }
+        try {
+            LocalDate.parse(value);
+        } catch (Exception ignored) {
+            throw new JSONException("Invalid " + kind + " " + key + ": " + value);
+        }
+    }
+
+    private static void validateRequiredTime(JSONObject object, String key, String kind)
+            throws JSONException {
+        if (!object.has(key) || object.isNull(key) || !(object.opt(key) instanceof String)) {
+            throw new JSONException("Missing or invalid " + kind + " " + key);
+        }
+        String value = (String) object.opt(key);
+        if (!value.matches("\\d{2}:\\d{2}")) {
+            throw new JSONException("Invalid " + kind + " " + key + ": " + value);
+        }
+        try {
+            int hour = Integer.parseInt(value.substring(0, 2));
+            int minute = Integer.parseInt(value.substring(3, 5));
+            if (hour > 23 || minute > 59) throw new NumberFormatException();
+        } catch (Exception ignored) {
+            throw new JSONException("Invalid " + kind + " " + key + ": " + value);
+        }
+    }
+
+    private static void validateOptionalInteger(JSONObject object, String key, String kind,
+                                                int minimum) throws JSONException {
+        if (!object.has(key) || object.isNull(key)) return;
+        int value = integerValue(object, key, Integer.MIN_VALUE);
+        if (value < minimum) throw new JSONException("Invalid " + kind + " " + key + ": " + value);
+    }
+
+    private static void validateOptionalNumber(JSONObject object, String key, String kind)
+            throws JSONException {
+        if (!object.has(key) || object.isNull(key)) return;
+        Object raw = object.opt(key);
+        if (!(raw instanceof Number)) throw new JSONException("Non-number " + kind + " " + key);
+        double value = ((Number) raw).doubleValue();
+        if (Double.isNaN(value) || Double.isInfinite(value) || value < 0) {
+            throw new JSONException("Invalid " + kind + " " + key + ": " + value);
+        }
+    }
+
+    private static void validateEnum(JSONObject object, String key, String kind,
+                                     Set<String> allowed) throws JSONException {
+        validateOptionalString(object, key, kind);
+        if (!object.has(key) || object.isNull(key)) return;
+        String value = object.optString(key, null);
+        if (value == null || !allowed.contains(value)) {
+            throw new JSONException("Unsupported " + kind + " " + key + ": " + value);
         }
     }
 

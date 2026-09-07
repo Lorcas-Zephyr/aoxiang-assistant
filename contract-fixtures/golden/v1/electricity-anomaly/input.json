@@ -1,0 +1,6 @@
+{
+  "valid": {"map": {"showData": {"当前剩余电量": "18.52 度"}}},
+  "missing": {"map": {"showData": {"状态": "暂无数据"}}},
+  "negative": {"map": {"showData": {"剩余电量": "-1.00"}}},
+  "malformed": {"map": {"showData": {"电费余额": "N/A"}}}
+}

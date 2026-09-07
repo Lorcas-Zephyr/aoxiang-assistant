@@ -1,0 +1,99 @@
+{
+  "schemaVersion": 1,
+  "suite": "aoxiang-assistant.golden",
+  "businessTimeZone": "Asia/Shanghai",
+  "scenarios": [
+    {
+      "id": "grades-api-response",
+      "kind": "grades-api",
+      "input": "grades-api-response/input.json",
+      "expected": "grades-api-response/expected.json"
+    },
+    {
+      "id": "grades-component-html",
+      "kind": "grades-component-html",
+      "input": "grades-component-html/input.json",
+      "html": "grades-component-html/detail.html",
+      "expected": "grades-component-html/expected.json"
+    },
+    {
+      "id": "grades-gpa-portrait-fallback",
+      "kind": "grades-portrait-fallback",
+      "input": "grades-gpa-portrait-fallback/input.json",
+      "html": "grades-gpa-portrait-fallback/portrait.html",
+      "expected": "grades-gpa-portrait-fallback/expected.json"
+    },
+    {
+      "id": "grades-retake-same-name",
+      "kind": "grades-retake",
+      "input": "grades-retake-same-name/input.json",
+      "expected": "grades-retake-same-name/expected.json"
+    },
+    {
+      "id": "schedule-empty",
+      "kind": "schedule-empty",
+      "input": "schedule-empty/input.json",
+      "expected": "schedule-empty/expected.json"
+    },
+    {
+      "id": "schedule-mixed-repeat",
+      "kind": "schedule-repeat-rules",
+      "input": "schedule-mixed-repeat/input.json",
+      "expected": "schedule-mixed-repeat/expected.json"
+    },
+    {
+      "id": "schedule-non-contiguous",
+      "kind": "schedule-non-contiguous-weeks",
+      "input": "schedule-non-contiguous/input.json",
+      "expected": "schedule-non-contiguous/expected.json"
+    },
+    {
+      "id": "schedule-friendship-summer",
+      "kind": "schedule-friendship-summer",
+      "input": "schedule-friendship-summer/input.json",
+      "expected": "schedule-friendship-summer/expected.json"
+    },
+    {
+      "id": "schedule-friendship-winter",
+      "kind": "schedule-friendship-winter",
+      "input": "schedule-friendship-winter/input.json",
+      "expected": "schedule-friendship-winter/expected.json"
+    },
+    {
+      "id": "schedule-teachers-locations",
+      "kind": "schedule-teachers-locations",
+      "input": "schedule-teachers-locations/input.json",
+      "expected": "schedule-teachers-locations/expected.json"
+    },
+    {
+      "id": "schedule-online-filter",
+      "kind": "schedule-online-filter",
+      "input": "schedule-online-filter/input.json",
+      "expected": "schedule-online-filter/expected.json"
+    },
+    {
+      "id": "electricity-settlement",
+      "kind": "electricity-settlement",
+      "input": "electricity-settlement/input.json",
+      "expected": "electricity-settlement/expected.json"
+    },
+    {
+      "id": "electricity-anomaly",
+      "kind": "electricity-anomaly",
+      "input": "electricity-anomaly/input.json",
+      "expected": "electricity-anomaly/expected.json"
+    },
+    {
+      "id": "auth-states",
+      "kind": "authentication-states",
+      "input": "auth-states/input.json",
+      "expected": "auth-states/expected.json"
+    },
+    {
+      "id": "update-diff-notifications",
+      "kind": "update-diff-notifications",
+      "input": "update-diff-notifications/input.json",
+      "expected": "update-diff-notifications/expected.json"
+    }
+  ]
+}

@@ -18,43 +18,67 @@ public final class ScheduleStorage {
     public static final String KEY_DARK_MODE = "schedule_dark_mode";
 
     public static List<ScheduleModels.Semester> loadSemesters(SharedPreferences store) {
-        List<ScheduleModels.Semester> semesters = new ArrayList<>();
-        try {
-            JSONArray array = LocalDataStore.readArray(store, KEY_SEMESTERS);
-            for (int i = 0; i < array.length(); i++) {
-                JSONObject item = array.optJSONObject(i);
-                if (item != null) semesters.add(ScheduleModels.Semester.from(item));
-            }
-        } catch (Exception ignored) {}
-        return semesters;
+        return loadSemestersResult(store).items;
     }
 
-    public static void saveSemesters(SharedPreferences store, List<ScheduleModels.Semester> semesters) {
+    public static LoadResult<ScheduleModels.Semester> loadSemestersResult(
+            SharedPreferences store) {
+        LocalDataStore.ReadResult raw = LocalDataStore.readArrayResult(store, KEY_SEMESTERS);
+        if (!raw.success) return LoadResult.failure();
+        List<ScheduleModels.Semester> semesters = new ArrayList<>();
+        try {
+            for (int i = 0; i < raw.items.length(); i++) {
+                JSONObject item = raw.items.optJSONObject(i);
+                if (item == null) return LoadResult.failure();
+                semesters.add(ScheduleModels.Semester.from(item));
+            }
+            LocalDataStore.migrateIfLegacy(store, KEY_SEMESTERS, raw);
+            return LoadResult.success(semesters);
+        } catch (Exception ignored) {
+            return LoadResult.failure();
+        }
+    }
+
+    public static boolean saveSemesters(SharedPreferences store, List<ScheduleModels.Semester> semesters) {
         try {
             JSONArray array = new JSONArray();
             for (ScheduleModels.Semester semester : semesters) array.put(semester.json());
-            LocalDataStore.writeArray(store, KEY_SEMESTERS, array);
-        } catch (Exception ignored) {}
+            return LocalDataStore.writeArray(store, KEY_SEMESTERS, array);
+        } catch (Exception ignored) {
+            return false;
+        }
     }
 
     public static List<ScheduleModels.Course> loadCourses(SharedPreferences store) {
-        List<ScheduleModels.Course> courses = new ArrayList<>();
-        try {
-            JSONArray array = LocalDataStore.readArray(store, KEY_COURSES);
-            for (int i = 0; i < array.length(); i++) {
-                JSONObject item = array.optJSONObject(i);
-                if (item != null) courses.add(ScheduleModels.Course.from(item));
-            }
-        } catch (Exception ignored) {}
-        return courses;
+        return loadCoursesResult(store).items;
     }
 
-    public static void saveCourses(SharedPreferences store, List<ScheduleModels.Course> courses) {
+    public static LoadResult<ScheduleModels.Course> loadCoursesResult(
+            SharedPreferences store) {
+        LocalDataStore.ReadResult raw = LocalDataStore.readArrayResult(store, KEY_COURSES);
+        if (!raw.success) return LoadResult.failure();
+        List<ScheduleModels.Course> courses = new ArrayList<>();
+        try {
+            for (int i = 0; i < raw.items.length(); i++) {
+                JSONObject item = raw.items.optJSONObject(i);
+                if (item == null) return LoadResult.failure();
+                courses.add(ScheduleModels.Course.from(item));
+            }
+            LocalDataStore.migrateIfLegacy(store, KEY_COURSES, raw);
+            return LoadResult.success(courses);
+        } catch (Exception ignored) {
+            return LoadResult.failure();
+        }
+    }
+
+    public static boolean saveCourses(SharedPreferences store, List<ScheduleModels.Course> courses) {
         try {
             JSONArray array = new JSONArray();
             for (ScheduleModels.Course course : courses) array.put(course.json());
-            LocalDataStore.writeArray(store, KEY_COURSES, array);
-        } catch (Exception ignored) {}
+            return LocalDataStore.writeArray(store, KEY_COURSES, array);
+        } catch (Exception ignored) {
+            return false;
+        }
     }
 
     /** Save the two related collections together after both current values are verified. */
@@ -73,6 +97,29 @@ public final class ScheduleStorage {
         }
     }
 
+    /** Persist all schedule fields that form one user-visible edit as one commit. */
+    public static boolean saveScheduleAndSettings(SharedPreferences store,
+                                                  List<ScheduleModels.Semester> semesters,
+                                                  List<ScheduleModels.Course> courses,
+                                                  String selectedSemesterId,
+                                                  String themeColor,
+                                                  boolean darkMode) {
+        try {
+            JSONArray semesterArray = new JSONArray();
+            JSONArray courseArray = new JSONArray();
+            for (ScheduleModels.Semester semester : semesters) semesterArray.put(semester.json());
+            for (ScheduleModels.Course course : courses) courseArray.put(course.json());
+            return LocalDataStore.writeScheduleState(store,
+                    KEY_SEMESTERS, semesterArray,
+                    KEY_COURSES, courseArray,
+                    KEY_SELECTED_SEMESTER, selectedSemesterId,
+                    KEY_THEME_COLOR, themeColor,
+                    KEY_DARK_MODE, darkMode);
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
     /** Check that a paired schedule write cannot overwrite an unknown schema. */
     public static boolean canSaveSchedule(SharedPreferences store) {
         return LocalDataStore.canWriteArray(store, KEY_SEMESTERS)
@@ -83,8 +130,14 @@ public final class ScheduleStorage {
         return store.getString(KEY_SELECTED_SEMESTER, "");
     }
 
-    public static void saveSelectedSemester(SharedPreferences store, String semesterId) {
-        store.edit().putString(KEY_SELECTED_SEMESTER, semesterId == null ? "" : semesterId).apply();
+    public static boolean saveSelectedSemester(SharedPreferences store, String semesterId) {
+        try {
+            return store.edit()
+                    .putString(KEY_SELECTED_SEMESTER, semesterId == null ? "" : semesterId)
+                    .commit();
+        } catch (Exception ignored) {
+            return false;
+        }
     }
 
     public static String loadThemeColor(SharedPreferences store) {
@@ -95,10 +148,32 @@ public final class ScheduleStorage {
         return store.getBoolean(KEY_DARK_MODE, false);
     }
 
-    public static void saveTheme(SharedPreferences store, String color, boolean darkMode) {
-        store.edit()
-                .putString(KEY_THEME_COLOR, color)
-                .putBoolean(KEY_DARK_MODE, darkMode)
-                .apply();
+    public static boolean saveTheme(SharedPreferences store, String color, boolean darkMode) {
+        try {
+            return store.edit()
+                    .putString(KEY_THEME_COLOR, color)
+                    .putBoolean(KEY_DARK_MODE, darkMode)
+                    .commit();
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
+    public static final class LoadResult<T> {
+        public final List<T> items;
+        public final boolean success;
+
+        private LoadResult(List<T> items, boolean success) {
+            this.items = items;
+            this.success = success;
+        }
+
+        private static <T> LoadResult<T> success(List<T> items) {
+            return new LoadResult<>(items, true);
+        }
+
+        private static <T> LoadResult<T> failure() {
+            return new LoadResult<>(new ArrayList<>(), false);
+        }
     }
 }

@@ -86,6 +86,8 @@ public class BackgroundSyncService extends Service {
     @Override public void onCreate() {
         super.onCreate();
         store = getSharedPreferences(LocalDataStore.PREFERENCES_NAME, MODE_PRIVATE);
+        // Migrate only domain-valid legacy collections before a background write.
+        LocalDataStore.ensureCurrent(store);
         createChannels();
         startForeground(SERVICE_NOTIFICATION_ID, serviceNotification("正在准备自动更新"));
         PowerManager power = (PowerManager) getSystemService(POWER_SERVICE);
@@ -266,8 +268,9 @@ public class BackgroundSyncService extends Service {
                             JSONArray rows = PortalApiParsers.gradeRows(payload.optJSONArray("gradeResponses"));
                             double gpa = PortalApiParsers.gpa(payload.optJSONObject("gpaResponse"));
                             if (rows.length() > 0) {
-                                if (!Double.isNaN(gpa)) {
-                                    saveGrades(rows, gpa);
+                                double selectedGpa = PortalApiParsers.selectGpa(gpa, Double.NaN);
+                                if (!Double.isNaN(selectedGpa)) {
+                                    saveGrades(rows, selectedGpa);
                                 } else {
                                     // Keep the API grade rows and use the portrait page as the
                                     // fallback source when getMyGpa is empty for this account.
@@ -303,7 +306,8 @@ public class BackgroundSyncService extends Service {
                             }
                         } else if ("portrait_data".equals(phase) && "grades".equals(target)
                                 && collectedGradeRows[0] != null) {
-                            double gpa = payload.optDouble("gpa", Double.NaN);
+                            double gpa = PortalApiParsers.selectGpa(
+                                    Double.NaN, payload.optDouble("gpa", Double.NaN));
                             if (!Double.isNaN(gpa)) {
                                 saveGrades(collectedGradeRows[0], gpa);
                                 return;
@@ -365,13 +369,10 @@ public class BackgroundSyncService extends Service {
         List<String> changedCourses = UpdateDiff.changedNames(
                 gradeDiffItems(LocalDataStore.readArray(store, "grades")),
                 gradeDiffItems(updated));
-        if (!LocalDataStore.writeArray(store, "grades", updated)) {
+        if (!LocalDataStore.writeGradeState(store, "grades", updated, PORTRAIT_GPA, gpa)) {
             finishAttempt(false);
             return;
         }
-        SharedPreferences.Editor editor = store.edit();
-        if (!Double.isNaN(gpa)) editor.putString(PORTRAIT_GPA, Double.toString(gpa));
-        editor.apply();
         ScheduleWidgetUpdater.updateAll(this);
         DataUpdateSignal.publish(this, DataUpdateSignal.TARGET_GRADES);
         markCredentialsVerified();
@@ -387,8 +388,17 @@ public class BackgroundSyncService extends Service {
             return;
         }
         ScheduleImport.ParsedData parsed = ScheduleImport.parsePayload(payload);
-        List<ScheduleModels.Semester> semesters = ScheduleStorage.loadSemesters(store);
-        List<ScheduleModels.Course> courses = ScheduleStorage.loadCourses(store);
+        ScheduleStorage.LoadResult<ScheduleModels.Semester> semesterResult =
+                ScheduleStorage.loadSemestersResult(store);
+        ScheduleStorage.LoadResult<ScheduleModels.Course> courseResult =
+                ScheduleStorage.loadCoursesResult(store);
+        if (!semesterResult.success || !courseResult.success) {
+            // Never turn an unreadable collection into an empty/partial rewrite.
+            finishAttempt(false);
+            return;
+        }
+        List<ScheduleModels.Semester> semesters = semesterResult.items;
+        List<ScheduleModels.Course> courses = courseResult.items;
         List<UpdateDiff.Item> previousItems = UpdateDiff.scheduleItems(courses);
         int importedCount = 0;
         String firstImportedId = "";
@@ -452,11 +462,13 @@ public class BackgroundSyncService extends Service {
         if (importedCount > 0 || importedEmptySchedule) {
             List<String> changedCourses = UpdateDiff.changedNames(
                     previousItems, UpdateDiff.scheduleItems(courses));
-            if (!ScheduleStorage.saveSchedule(store, semesters, courses)) {
+            String selectedId = firstImportedId.isEmpty()
+                    ? ScheduleStorage.loadSelectedSemester(store) : firstImportedId;
+            if (!ScheduleStorage.saveScheduleAndSettings(store, semesters, courses, selectedId,
+                    ScheduleStorage.loadThemeColor(store), ScheduleStorage.loadDarkMode(store))) {
                 finishAttempt(false);
                 return;
             }
-            if (!firstImportedId.isEmpty()) ScheduleStorage.saveSelectedSemester(store, firstImportedId);
             ScheduleWidgetUpdater.updateAll(this);
             DataUpdateSignal.publish(this, DataUpdateSignal.TARGET_SCHEDULE);
             if (!changedCourses.isEmpty() && store.getBoolean("schedule_update_notification_enabled", true)) {

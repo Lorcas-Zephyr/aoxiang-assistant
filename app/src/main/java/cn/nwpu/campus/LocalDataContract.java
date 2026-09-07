@@ -4,6 +4,11 @@ import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
+import java.util.Arrays;
+import java.util.HashSet;
+import java.util.Iterator;
+import java.util.Set;
+
 /**
  * Versioned JSON primitives used by local storage.
  *
@@ -16,6 +21,9 @@ public final class LocalDataContract {
     public static final int CURRENT_SCHEMA_VERSION = 1;
     public static final String KEY_SCHEMA_VERSION = "schemaVersion";
     public static final String KEY_ITEMS = "items";
+    private static final Set<String> ENVELOPE_KEYS = new HashSet<>(Arrays.asList(
+            KEY_SCHEMA_VERSION, KEY_ITEMS
+    ));
 
     private LocalDataContract() {}
 
@@ -40,7 +48,18 @@ public final class LocalDataContract {
         }
 
         JSONObject envelope = new JSONObject(value);
-        int version = envelope.optInt(KEY_SCHEMA_VERSION, -1);
+        rejectUnknownKeys(envelope);
+        Object rawVersion = envelope.opt(KEY_SCHEMA_VERSION);
+        if (!(rawVersion instanceof Number)) {
+            throw new JSONException("Missing or invalid local data schemaVersion");
+        }
+        double numericVersion = ((Number) rawVersion).doubleValue();
+        if (Double.isNaN(numericVersion) || Double.isInfinite(numericVersion)
+                || numericVersion != Math.rint(numericVersion)
+                || numericVersion < Integer.MIN_VALUE || numericVersion > Integer.MAX_VALUE) {
+            throw new JSONException("Invalid local data schemaVersion");
+        }
+        int version = ((Number) rawVersion).intValue();
         if (version < CURRENT_SCHEMA_VERSION) {
             throw new JSONException("Missing or invalid local data schemaVersion");
         }
@@ -52,6 +71,16 @@ public final class LocalDataContract {
             throw new JSONException("Local data envelope is missing items");
         }
         return new DecodedArray(version, items, false);
+    }
+
+    private static void rejectUnknownKeys(JSONObject envelope) throws JSONException {
+        Iterator<String> keys = envelope.keys();
+        while (keys.hasNext()) {
+            String key = keys.next();
+            if (!ENVELOPE_KEYS.contains(key)) {
+                throw new JSONException("Unsupported local data envelope field: " + key);
+            }
+        }
     }
 
     /** True only when writing a current value cannot erase an unknown local shape. */

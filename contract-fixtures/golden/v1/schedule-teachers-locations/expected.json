@@ -1,0 +1,8 @@
+{
+  "courseCount": 1,
+  "teacher": "张三、李四、王五",
+  "location": "友谊校区 公字楼 A101\n长安校区 教西 B201",
+  "slotCount": 2,
+  "slotTeachers": ["张三、李四", "李四、王五"],
+  "slotLocations": ["友谊校区 公字楼 A101", "长安校区 教西 B201"]
+}

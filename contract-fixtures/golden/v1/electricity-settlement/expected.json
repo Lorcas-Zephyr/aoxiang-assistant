@@ -1,0 +1,11 @@
+{
+  "zone": "Asia/Shanghai",
+  "samples": [
+    {"id": "window-start", "settlement": true},
+    {"id": "window-last-minute", "settlement": true},
+    {"id": "window-end", "settlement": false},
+    {"id": "outside-window", "settlement": false}
+  ],
+  "deferExpected": "2026-08-17T01:00:00+08:00",
+  "overdueExpected": "2026-08-16T00:10:00+08:00"
+}

@@ -39,6 +39,12 @@ public class LocalDataContractTest {
         LocalDataContract.decodeArray("{\"schemaVersion\":99,\"items\":[]}");
     }
 
+    @Test(expected = org.json.JSONException.class)
+    public void rejectsUnknownEnvelopeFieldsBeforeARewriteCouldDropThem() throws Exception {
+        LocalDataContract.decodeArray(
+                "{\"schemaVersion\":1,\"items\":[],\"futureField\":\"must-survive\"}");
+    }
+
     @Test public void permitsReplacingOnlyRecognizedArrayShapes() {
         assertTrue(LocalDataContract.canSafelyReplace(""));
         assertTrue(LocalDataContract.canSafelyReplace("[]"));

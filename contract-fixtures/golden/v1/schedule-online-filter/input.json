@@ -1,0 +1,36 @@
+{
+  "semester": {
+    "id": "term-fixture-2026",
+    "nameZh": "2026 秋季示例学期",
+    "startDate": "2026-08-31"
+  },
+  "printData": {
+    "studentTableVm": {
+      "activities": [
+        {
+          "courseName": "线上专题课",
+          "courseCode": "ONLINE-001",
+          "weekday": 2,
+          "startUnit": 1,
+          "endUnit": 2,
+          "weekIndexes": [1, 2],
+          "campus": "线上",
+          "building": "虚拟教室",
+          "room": ""
+        },
+        {
+          "courseName": "线下数据结构",
+          "courseCode": "OFFLINE-001",
+          "weekday": 3,
+          "startUnit": 3,
+          "endUnit": 4,
+          "weekIndexes": [1, 2],
+          "campus": "长安校区",
+          "building": "教西",
+          "room": "B202",
+          "teachers": ["示例教师"]
+        }
+      ]
+    }
+  }
+}

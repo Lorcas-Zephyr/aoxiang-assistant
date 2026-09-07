@@ -1,0 +1,22 @@
+{
+  "semesterId": "term-fixture-2026",
+  "targetDataSemester": "term-fixture-2026",
+  "courses": [
+    {
+      "name": "实验课程",
+      "code": "LAB-101",
+      "dataSemester": "term-fixture-2026",
+      "teacher": "张三、李四",
+      "location": "友谊校区 公字楼 A101",
+      "scheduleText": "1~2周 星期一 1-2节"
+    },
+    {
+      "name": "实验课程",
+      "code": "LAB-101",
+      "dataSemester": "term-fixture-2026",
+      "teacher": "李四 / 王五",
+      "location": "长安校区 教西 B201",
+      "scheduleText": "3~4周 星期一 1-2节"
+    }
+  ]
+}

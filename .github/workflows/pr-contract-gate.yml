@@ -1,0 +1,46 @@
+name: Trusted PR contract declaration
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, edited, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: trusted-pr-contract-${{ github.repository }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  validate-pr-contract:
+    name: Validate PR contract declaration (trusted)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out base revision only
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+
+      - name: Collect changed file paths
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: >-
+          gh api --paginate
+          "repos/${GH_REPO}/pulls/${PR_NUMBER}/files?per_page=100"
+          --jq '.[].filename' > changed-files.txt
+
+      - name: Validate PR classification and evidence
+        run: >-
+          python scripts/validate_pr_contract.py
+          --event-file "$GITHUB_EVENT_PATH"
+          --changed-files-file changed-files.txt

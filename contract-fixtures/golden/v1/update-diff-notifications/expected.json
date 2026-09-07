@@ -1,0 +1,6 @@
+{
+  "gradeChangedNames": ["示例数学", "示例物理", "示例英语"],
+  "gradeNotification": "示例数学、示例物理等 3 门成绩有更新",
+  "scheduleChangedNames": ["示例课程"],
+  "scheduleNotification": "示例课程排课有更新"
+}

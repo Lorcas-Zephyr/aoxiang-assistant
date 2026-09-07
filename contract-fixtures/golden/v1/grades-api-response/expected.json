@@ -1,0 +1,11 @@
+{
+  "rawRows": [
+    ["软件工程", 3.0, 4.0, "95", "&lt;span&gt;平时成绩:88&lt;/span&gt;&lt;br&gt;&lt;span&gt;期末成绩:95&lt;/span&gt;"],
+    ["课程名称回退", 0.0, null, "", ""]
+  ],
+  "normalizedDetails": [
+    "平时成绩:88 期末成绩:95",
+    ""
+  ],
+  "gpa": 3.76
+}

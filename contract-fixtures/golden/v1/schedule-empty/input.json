@@ -1,0 +1,9 @@
+{
+  "semester": {
+    "id": "term-fixture-summer",
+    "nameZh": "2026 夏季示例学期",
+    "startDate": "2026-07-06",
+    "endDate": "2026-07-19"
+  },
+  "printData": {"studentTableVm": {"activities": []}}
+}

@@ -1,0 +1,18 @@
+{
+  "date": "2026-08-17",
+  "semester": {
+    "id": "term-fixture-summer",
+    "name": "夏季作息",
+    "startDate": "2026-08-17",
+    "endDate": "2026-12-20",
+    "weekCount": 18,
+    "sectionCount": 13
+  },
+  "slot": {
+    "weekRange": "1",
+    "repeatRule": "",
+    "dayOfWeek": 1,
+    "classSections": [7, 8],
+    "location": "友谊校区 公字楼 A101"
+  }
+}

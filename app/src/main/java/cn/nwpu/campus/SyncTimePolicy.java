@@ -5,10 +5,12 @@ import java.time.ZoneId;
 import java.time.ZonedDateTime;
 
 final class SyncTimePolicy {
+    static final ZoneId BUSINESS_ZONE = ZoneId.of("Asia/Shanghai");
+
     private SyncTimePolicy() {}
 
     static boolean isElectricitySettlementTime(long epochMillis) {
-        return isElectricitySettlementTime(epochMillis, ZoneId.systemDefault());
+        return isElectricitySettlementTime(epochMillis, BUSINESS_ZONE);
     }
 
     static boolean isElectricitySettlementTime(long epochMillis, ZoneId zone) {
@@ -16,7 +18,7 @@ final class SyncTimePolicy {
     }
 
     static long deferElectricityDueAt(long dueAt, long now) {
-        return deferElectricityDueAt(dueAt, now, ZoneId.systemDefault());
+        return deferElectricityDueAt(dueAt, now, BUSINESS_ZONE);
     }
 
     static long deferElectricityDueAt(long dueAt, long now, ZoneId zone) {

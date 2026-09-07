@@ -1,0 +1,6 @@
+{
+  "slots": [
+    {"weekRange": "4-6", "repeatRule": "仅双周", "dayOfWeek": 6, "classSections": [1, 2, 3, 4]},
+    {"weekRange": "7-9", "repeatRule": "仅单周", "dayOfWeek": 6, "classSections": [1, 2, 3, 4]}
+  ]
+}

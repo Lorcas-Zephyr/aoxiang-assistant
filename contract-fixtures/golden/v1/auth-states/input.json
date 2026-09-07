@@ -1,0 +1,32 @@
+{
+  "cases": [
+    {
+      "id": "login-success",
+      "target": "validate",
+      "phase": "credentials_valid",
+      "urls": [
+        "https://uis.nwpu.edu.cn/cas/login?service=fixture",
+        "https://jwxt.nwpu.edu.cn/student/home"
+      ]
+    },
+    {
+      "id": "credential-error",
+      "target": "grades",
+      "phase": "credentials_error",
+      "urls": []
+    },
+    {
+      "id": "sms-verification",
+      "target": "schedule",
+      "phase": "sms_required",
+      "urls": []
+    },
+    {
+      "id": "authentication-expired",
+      "target": "electricity",
+      "phase": "credentials_required",
+      "trigger": "session_expired",
+      "urls": []
+    }
+  ]
+}

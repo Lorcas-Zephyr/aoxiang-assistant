@@ -1,0 +1,123 @@
+{
+  "reportVersion": 1,
+  "fixtureSchemaVersions": [1],
+  "infrastructureCapabilities": [
+    { "id": "manifest-decoding", "status": "covered" },
+    { "id": "schema-version-gate", "status": "covered" },
+    { "id": "fixture-path-containment", "status": "covered" },
+    { "id": "fixture-reference-integrity", "status": "covered" },
+    { "id": "fixture-secret-scan", "status": "covered" }
+  ],
+  "fixtureKinds": [
+    {
+      "kind": "grades-api",
+      "scenarioKeys": ["v1/grades-api-response"],
+      "status": "pending",
+      "adapter": null,
+      "reason": "Swift grade API adapter is not implemented"
+    },
+    {
+      "kind": "grades-component-html",
+      "scenarioKeys": ["v1/grades-component-html"],
+      "status": "pending",
+      "adapter": null,
+      "reason": "Swift grade component HTML adapter is not implemented"
+    },
+    {
+      "kind": "grades-portrait-fallback",
+      "scenarioKeys": ["v1/grades-gpa-portrait-fallback"],
+      "status": "pending",
+      "adapter": null,
+      "reason": "Swift GPA portrait fallback adapter is not implemented"
+    },
+    {
+      "kind": "grades-retake",
+      "scenarioKeys": ["v1/grades-retake-same-name"],
+      "status": "pending",
+      "adapter": null,
+      "reason": "Swift retake deduplication adapter is not implemented"
+    },
+    {
+      "kind": "schedule-empty",
+      "scenarioKeys": ["v1/schedule-empty"],
+      "status": "pending",
+      "adapter": null,
+      "reason": "Swift empty schedule adapter is not implemented"
+    },
+    {
+      "kind": "schedule-repeat-rules",
+      "scenarioKeys": ["v1/schedule-mixed-repeat"],
+      "status": "pending",
+      "adapter": null,
+      "reason": "Swift repeat-rule adapter is not implemented"
+    },
+    {
+      "kind": "schedule-non-contiguous-weeks",
+      "scenarioKeys": ["v1/schedule-non-contiguous"],
+      "status": "pending",
+      "adapter": null,
+      "reason": "Swift discontinuous-week adapter is not implemented"
+    },
+    {
+      "kind": "schedule-friendship-summer",
+      "scenarioKeys": ["v1/schedule-friendship-summer"],
+      "status": "pending",
+      "adapter": null,
+      "reason": "Swift summer section-time adapter is not implemented"
+    },
+    {
+      "kind": "schedule-friendship-winter",
+      "scenarioKeys": ["v1/schedule-friendship-winter"],
+      "status": "pending",
+      "adapter": null,
+      "reason": "Swift winter section-time adapter is not implemented"
+    },
+    {
+      "kind": "schedule-teachers-locations",
+      "scenarioKeys": ["v1/schedule-teachers-locations"],
+      "status": "pending",
+      "adapter": null,
+      "reason": "Swift teacher and location adapter is not implemented"
+    },
+    {
+      "kind": "schedule-online-filter",
+      "scenarioKeys": ["v1/schedule-online-filter"],
+      "status": "pending",
+      "adapter": null,
+      "reason": "Swift online-course filter adapter is not implemented"
+    },
+    {
+      "kind": "electricity-settlement",
+      "scenarioKeys": ["v1/electricity-settlement"],
+      "status": "pending",
+      "adapter": null,
+      "reason": "Swift settlement-window adapter is not implemented"
+    },
+    {
+      "kind": "electricity-anomaly",
+      "scenarioKeys": ["v1/electricity-anomaly"],
+      "status": "pending",
+      "adapter": null,
+      "reason": "Swift electricity anomaly adapter is not implemented"
+    },
+    {
+      "kind": "authentication-states",
+      "scenarioKeys": ["v1/auth-states"],
+      "status": "pending",
+      "adapter": null,
+      "reason": "Swift authentication state adapter is not implemented"
+    },
+    {
+      "kind": "update-diff-notifications",
+      "scenarioKeys": ["v1/update-diff-notifications"],
+      "status": "pending",
+      "adapter": null,
+      "reason": "Swift diff and notification adapter is not implemented"
+    }
+  ],
+  "policy": {
+    "unknownFixtureKind": "fail",
+    "missingFixtureKind": "fail",
+    "coveredRequiresAdapter": true
+  }
+}

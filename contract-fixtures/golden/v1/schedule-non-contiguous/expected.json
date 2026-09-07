@@ -1,0 +1,7 @@
+{
+  "slots": [
+    {"weekRange": "2", "repeatRule": "", "dayOfWeek": 3, "classSections": [3, 4]},
+    {"weekRange": "4", "repeatRule": "", "dayOfWeek": 3, "classSections": [3, 4]},
+    {"weekRange": "7", "repeatRule": "", "dayOfWeek": 3, "classSections": [3, 4]}
+  ]
+}

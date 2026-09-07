@@ -59,6 +59,37 @@ final class PortalApiParsers {
         return findGpa(response, 0);
     }
 
+    /** Selects the current GPA source, preferring the API value and then portrait fallback. */
+    static double selectGpa(double apiGpa, double portraitGpa) {
+        if (isValidGpa(apiGpa)) return apiGpa;
+        if (isValidGpa(portraitGpa)) return portraitGpa;
+        return Double.NaN;
+    }
+
+    /** Parses the stable, text-visible GPA metric from a portrait HTML response. */
+    static double portraitGpa(String html) {
+        if (html == null || html.trim().isEmpty()) return Double.NaN;
+        String text = html.replaceAll("(?i)<br\\s*/?>", " ")
+                .replaceAll("(?s)<[^>]*>", " ")
+                .replace("&nbsp;", " ")
+                .replace("&quot;", "\"")
+                .replace("&#39;", "'")
+                .replace("&#x27;", "'")
+                .replace("&lt;", "<")
+                .replace("&gt;", ">")
+                .replace("&amp;", "&")
+                .replaceAll("\\s+", " ")
+                .trim();
+        java.util.regex.Matcher labeled = java.util.regex.Pattern.compile(
+                "(?i)(?:(?:累计|总)?平均(?:学分)?绩点|GPA)\\s*[：:]?\\s*(\\d(?:\\.\\d{1,4})?)")
+                .matcher(text);
+        if (labeled.find()) return parseGpa(labeled.group(1));
+        java.util.regex.Matcher personal = java.util.regex.Pattern.compile(
+                "(?i)(\\d(?:\\.\\d{1,4})?)\\s*个人\\s*GPA")
+                .matcher(text);
+        return personal.find() ? parseGpa(personal.group(1)) : Double.NaN;
+    }
+
     private static double findGpa(Object value, int depth) {
         if (value == null || depth > 6) return Double.NaN;
         if (value instanceof JSONObject) {
@@ -118,10 +149,14 @@ final class PortalApiParsers {
         if (!matcher.find()) return Double.NaN;
         try {
             double value = Double.parseDouble(matcher.group(1));
-            return value >= 0.0 && value <= 5.0 ? value : Double.NaN;
+            return isValidGpa(value) ? value : Double.NaN;
         } catch (Exception ignored) {
             return Double.NaN;
         }
+    }
+
+    private static boolean isValidGpa(double value) {
+        return !Double.isNaN(value) && !Double.isInfinite(value) && value >= 0.0 && value <= 5.0;
     }
 
     static JSONObject schedulePayload(JSONObject semester, JSONObject printData) {
