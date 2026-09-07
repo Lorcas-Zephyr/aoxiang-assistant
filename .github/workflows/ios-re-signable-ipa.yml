@@ -40,22 +40,25 @@ jobs:
 
       - name: Archive an unsigned device bundle and package IPA
         env:
-          IOS_RE_SIGNABLE_IPA_OUTPUT: ${{ runner.temp }}/AoxiangAssistant-re-signable.ipa
+          IOS_RE_SIGNABLE_IPA_OUTPUT_DIR: ${{ runner.temp }}/ios-artifacts
         run: bash scripts/build_ios_re_signable_ipa.sh
 
-      - name: Verify IPA bundle layout
+      - name: Verify both IPA bundle layouts
         env:
-          IPA_PATH: ${{ runner.temp }}/AoxiangAssistant-re-signable.ipa
+          IPA_DIR: ${{ runner.temp }}/ios-artifacts
         run: |
           set -euo pipefail
-          test -s "$IPA_PATH"
-          unzip -Z1 "$IPA_PATH" | grep -Fx 'Payload/AoxiangAssistant.app/Info.plist'
-          unzip -Z1 "$IPA_PATH" | grep -Fx 'Payload/AoxiangAssistant.app/PlugIns/AoxiangAssistantWidget.appex/Info.plist'
+          test -s "$IPA_DIR/AoxiangAssistant-sideload-re-signable.ipa"
+          test -s "$IPA_DIR/AoxiangAssistant-full-widget-re-signable.ipa"
+          unzip -Z1 "$IPA_DIR/AoxiangAssistant-sideload-re-signable.ipa" | grep -Fx 'Payload/AoxiangAssistant.app/Info.plist'
+          ! unzip -Z1 "$IPA_DIR/AoxiangAssistant-sideload-re-signable.ipa" | grep -F 'Payload/AoxiangAssistant.app/PlugIns/'
+          unzip -Z1 "$IPA_DIR/AoxiangAssistant-full-widget-re-signable.ipa" | grep -Fx 'Payload/AoxiangAssistant.app/Info.plist'
+          unzip -Z1 "$IPA_DIR/AoxiangAssistant-full-widget-re-signable.ipa" | grep -Fx 'Payload/AoxiangAssistant.app/PlugIns/AoxiangAssistantWidget.appex/Info.plist'
 
-      - name: Upload re-signable IPA
+      - name: Upload re-signable IPA variants
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: AoxiangAssistant-re-signable-${{ github.run_number }}
-          path: ${{ runner.temp }}/AoxiangAssistant-re-signable.ipa
+          name: AoxiangAssistant-ipa-variants-${{ github.run_number }}
+          path: ${{ runner.temp }}/ios-artifacts/*.ipa
           if-no-files-found: error
           retention-days: 7

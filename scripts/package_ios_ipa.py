@@ -22,16 +22,27 @@ class IPAPackagingError(ValueError):
     """The archive bundle cannot be safely packaged as a re-signable IPA."""
 
 
-def package_ipa(app_path: Path | str, output_path: Path | str) -> Path:
-    """Atomically package the Aoxiang app and Widget bundle into an IPA.
+IPA_VARIANTS = ("full", "sideload")
+
+
+def package_ipa(
+    app_path: Path | str,
+    output_path: Path | str,
+    *,
+    variant: str = "full",
+) -> Path:
+    """Atomically package an Aoxiang app bundle into an IPA.
 
     The result is intentionally unsigned. Existing output is left untouched
-    until the complete ZIP has been written and closed successfully.
+    until the complete ZIP has been written and closed successfully. The
+    default ``full`` variant retains the Widget extension; ``sideload`` omits
+    the complete PlugIns directory for self-signing tools that cannot sign
+    nested extensions.
     """
 
     app = Path(app_path)
     output = Path(output_path)
-    _validate_bundle(app, output)
+    _validate_bundle(app, output, variant)
 
     output.parent.mkdir(parents=True, exist_ok=True)
     descriptor, temporary_name = tempfile.mkstemp(
@@ -59,6 +70,8 @@ def package_ipa(app_path: Path | str, output_path: Path | str) -> Path:
                         f"refusing non-file bundle entry: {item.relative_to(app)}"
                     )
                 relative = item.relative_to(app)
+                if variant == "sideload" and relative.parts[0] == "PlugIns":
+                    continue
                 archive_name = PurePosixPath("Payload") / app.name / relative.as_posix()
                 archive.write(item, arcname=str(archive_name))
         os.replace(temporary, output)
@@ -68,7 +81,11 @@ def package_ipa(app_path: Path | str, output_path: Path | str) -> Path:
     return output
 
 
-def _validate_bundle(app: Path, output: Path) -> None:
+def _validate_bundle(app: Path, output: Path, variant: str) -> None:
+    if variant not in IPA_VARIANTS:
+        raise IPAPackagingError(
+            f"unsupported IPA variant {variant!r}; choose one of {', '.join(IPA_VARIANTS)}"
+        )
     if app.suffix != ".app":
         raise IPAPackagingError("app bundle must use the .app suffix")
     if not app.is_dir():
@@ -76,9 +93,10 @@ def _validate_bundle(app: Path, output: Path) -> None:
     if not (app / "Info.plist").is_file():
         raise IPAPackagingError("app bundle is missing Info.plist")
 
-    widget_info = app / "PlugIns" / "AoxiangAssistantWidget.appex" / "Info.plist"
-    if not widget_info.is_file():
-        raise IPAPackagingError("app bundle is missing the Aoxiang Widget extension")
+    if variant == "full":
+        widget_info = app / "PlugIns" / "AoxiangAssistantWidget.appex" / "Info.plist"
+        if not widget_info.is_file():
+            raise IPAPackagingError("app bundle is missing the Aoxiang Widget extension")
 
     try:
         output.resolve().relative_to(app.resolve())
@@ -97,14 +115,19 @@ def _sha256(path: Path) -> str:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Package an unsigned iOS App + Widget bundle for later re-signing."
+        description="Package an unsigned iOS app bundle for later re-signing."
     )
     parser.add_argument("--app-path", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
+    parser.add_argument("--variant", choices=IPA_VARIANTS, default="full")
     arguments = parser.parse_args()
 
     try:
-        output = package_ipa(arguments.app_path, arguments.output)
+        output = package_ipa(
+            arguments.app_path,
+            arguments.output,
+            variant=arguments.variant,
+        )
     except IPAPackagingError as error:
         parser.error(str(error))
     print(f"Created unsigned, re-signable IPA: {output}")

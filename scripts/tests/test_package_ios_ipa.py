@@ -54,6 +54,24 @@ class PackageIOSIPATest(unittest.TestCase):
         self.assertTrue(all(not name.startswith("/") for name in names))
         self.assertTrue(all(".." not in Path(name).parts for name in names))
 
+    def test_sideload_variant_packages_only_host_app_without_mutating_source(self):
+        app = self.make_app_bundle()
+        widget_info = (
+            app / "PlugIns" / "AoxiangAssistantWidget.appex" / "Info.plist"
+        )
+        output = self.root / "out" / "AoxiangAssistant-sideload-re-signable.ipa"
+
+        self.packager.package_ipa(app, output, variant="sideload")
+
+        self.assertTrue(widget_info.is_file(), "packaging must not edit the archive")
+        with zipfile.ZipFile(output) as archive:
+            names = set(archive.namelist())
+        self.assertIn("Payload/AoxiangAssistant.app/Info.plist", names)
+        self.assertIn("Payload/AoxiangAssistant.app/AoxiangAssistant", names)
+        self.assertFalse(
+            any(name.startswith("Payload/AoxiangAssistant.app/PlugIns/") for name in names)
+        )
+
     def test_invalid_bundle_does_not_replace_existing_ipa(self):
         broken_bundle = self.root / "Broken.app"
         broken_bundle.mkdir()

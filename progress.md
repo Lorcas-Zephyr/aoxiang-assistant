@@ -149,6 +149,24 @@
 - 已将 `task_plan.md` 切换为三阶段实施计划；当前尚未开始 iOS UI 或认证/后台代码，先盘点
   既有 Foundation-only Package、Android backup seam 和可复用 fixture 入口。
 
+## 2026-09-07 iPad install hardening and approved artwork
+
+- 用户确认目标设备为 iPadOS 26.6.1；截图只有通用 `Unable to Install` 提示，不能据此把问题归因
+  于系统版本。工程仍以 iOS 15.0 为最低部署目标，设备族为 iPhone/iPad（1,2），关闭 Mac Catalyst。
+- 用户指定新的无透明 PNG 作为唯一品牌图标源：
+  `ios/AoxiangAssistant/Branding/AoxiangAssistantIcon.png`，SHA-256 为
+  `19940c2923d80ff088b87c8fe54591da640b3649fe2dcc916b4bbe23c1592e87`。
+  Android 旧 `ic_launcher.xml` 不再作为 iOS 图标输入；Android 后续可独立同步同一 artwork。
+- 生成 `Assets.xcassets/AppIcon.appiconset` 的 18 个 iPhone/iPad/marketing RGB PNG，Xcode
+  App target 已设置 `ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon` 并正确引用资源组。
+- IPA 打包器新增 `full` 与 `sideload` 变体：两者来自同一 `iphoneos` archive；sideload 不嵌入
+  Widget，适合无法重签嵌套扩展或无 App Group 权限的普通自签工具；full-widget 保留 Widget
+  与 App Group，只有签名工具支持嵌套扩展时使用。
+- 手动 macOS workflow 和文档已改为一次运行上传两个 IPA，并分别验证无/有 Widget 入口；不接收
+  Apple ID、证书、私钥、provisioning profile、密码或会话。
+- 本机 Python/fixture 回归：55 tests 通过；fixture validator 通过 1 version/15 scenarios/32
+  files；`git diff --check` 通过。Swift/Xcode device archive 和真实 iPad 自签安装仍需远端/设备证据。
+
 ## 2026-09-07 regression hardening and iPad delivery path
 
 - 修正 `RecordingSnapshotWriter.restore` 测试替身：恢复操作现在精确还原原快照（或空状态），

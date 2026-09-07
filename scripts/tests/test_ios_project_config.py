@@ -1,10 +1,25 @@
 import re
 import unittest
+import json
 from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PROJECT_FILE = REPO_ROOT / "ios" / "AoxiangAssistant.xcodeproj" / "project.pbxproj"
+APP_ICON_SET = (
+    REPO_ROOT
+    / "ios"
+    / "AoxiangAssistant"
+    / "Assets.xcassets"
+    / "AppIcon.appiconset"
+)
+ICON_SOURCE_FILE = (
+    REPO_ROOT
+    / "ios"
+    / "AoxiangAssistant"
+    / "Branding"
+    / "AoxiangAssistantIcon.png"
+)
 IOS_ENTRYPOINT_FILE = REPO_ROOT / "ios" / "AoxiangAssistant" / "App" / "AoxiangAssistantEntryPoint.swift"
 IOS_OFFLINE_VIEWS_FILE = REPO_ROOT / "ios" / "AoxiangApp" / "Sources" / "AoxiangApp" / "OfflineViews.swift"
 IOS_AUTHENTICATION_VIEW_FILE = REPO_ROOT / "ios" / "AoxiangApp" / "Sources" / "AoxiangApp" / "VisibleAuthenticationWebView.swift"
@@ -92,6 +107,38 @@ class IOSProjectConfigurationTest(unittest.TestCase):
             self.assertIn('TARGETED_DEVICE_FAMILY = "1,2";', target)
             self.assertIn("SUPPORTS_MACCATALYST = NO;", target)
 
+    def test_ios_appicon_uses_the_approved_project_artwork(self):
+        contents_file = APP_ICON_SET / "Contents.json"
+        self.assertTrue(contents_file.is_file(), "iOS AppIcon asset catalog is required")
+        contents = json.loads(contents_file.read_text(encoding="utf-8"))
+        self.assertEqual({"images", "info"}, set(contents))
+        self.assertEqual(1, contents["info"]["version"])
+        self.assertEqual("xcode", contents["info"]["author"])
+        images = contents["images"]
+        self.assertTrue(
+            any(image.get("idiom") == "ios-marketing" and image.get("size") == "1024x1024" for image in images),
+            "App Store marketing icon must be declared",
+        )
+        self.assertTrue(
+            any(image.get("idiom") == "ipad" and image.get("size") == "83.5x83.5" for image in images),
+            "iPad Pro icon slot must be declared",
+        )
+        for image in images:
+            filename = image.get("filename")
+            if filename:
+                icon_file = APP_ICON_SET / filename
+                self.assertTrue(icon_file.is_file(), f"missing AppIcon image: {filename}")
+                self.assertEqual("png", icon_file.suffix.lower().lstrip("."))
+
+        self.assertTrue(ICON_SOURCE_FILE.is_file(), "approved icon source is required")
+        self.assertGreater(ICON_SOURCE_FILE.stat().st_size, 1000)
+        self.assertIn("ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;", self.project)
+        self.assertIn("Assets.xcassets in Resources", self.project)
+        app_group = self._object_in_section("PBXGroup", "A00100010000000000000082")
+        self.assertIn("Assets.xcassets", app_group)
+        app_group = self._object_in_section("PBXGroup", "A00100010000000000000084")
+        self.assertNotIn("Assets.xcassets", app_group)
+
     def test_swiftui_surfaces_are_ios_only(self):
         self.assertIn("#if os(iOS) && canImport(SwiftUI)", self.ios_offline_views)
         self.assertIn(
@@ -125,7 +172,9 @@ class IOSProjectConfigurationTest(unittest.TestCase):
         self.assertIn("runs-on: macos-latest", workflow)
         self.assertIn("bash scripts/build_ios_re_signable_ipa.sh", workflow)
         self.assertIn("actions/upload-artifact@", workflow)
-        self.assertIn("AoxiangAssistant-re-signable.ipa", workflow)
+        self.assertIn("AoxiangAssistant-sideload-re-signable.ipa", workflow)
+        self.assertIn("AoxiangAssistant-full-widget-re-signable.ipa", workflow)
+        self.assertIn("ios-artifacts", workflow)
         self.assertNotIn("security import", workflow)
         self.assertNotIn("APPLE_CERTIFICATE", workflow)
 
@@ -138,6 +187,8 @@ class IOSProjectConfigurationTest(unittest.TestCase):
         self.assertIn("CODE_SIGNING_REQUIRED=NO", script)
         self.assertIn("package_ios_ipa.py", script)
         self.assertIn("AoxiangAssistantWidget.appex", script)
+        self.assertIn("--variant sideload", script)
+        self.assertIn("--variant full", script)
         self.assertNotIn("security import", script)
         self.assertNotIn("provisioning profile", script.lower())
 

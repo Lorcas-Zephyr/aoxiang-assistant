@@ -5,20 +5,25 @@ app. A Mac is still required somewhere in the build path because Apple only
 ships the iPhone/iPad SDK and archive tools with Xcode. If you do not own a
 Mac, the manual GitHub Actions workflow provides that macOS build host.
 
-## Artifact Type
+## Artifact Types
 
 Run **Build re-signable iOS IPA** from the GitHub Actions page on the `iOS`
-branch. It produces an artifact containing:
+branch. It produces one artifact ZIP containing two IPA files:
 
 ```text
-AoxiangAssistant-re-signable.ipa
+AoxiangAssistant-sideload-re-signable.ipa
+AoxiangAssistant-full-widget-re-signable.ipa
 ```
 
-The artifact has the conventional `Payload/AoxiangAssistant.app` structure and
-includes `AoxiangAssistantWidget.appex`. It is deliberately **unsigned**. It
-cannot be installed as downloaded. Download it on the iPad, extract the GitHub
-artifact ZIP, then use your own trusted self-signing tool and signing identity
-to sign the host app and its embedded Widget before installation.
+Both use the conventional `Payload/AoxiangAssistant.app` structure and are
+deliberately **unsigned**. Neither can be installed as downloaded. Start with
+`AoxiangAssistant-sideload-re-signable.ipa` when using a normal iPad
+self-signing tool: it contains only the main app and does not require signing a
+nested extension or authorizing an App Group. The offline app remains usable,
+but Widget/background snapshot features are absent from this variant.
+
+Use `AoxiangAssistant-full-widget-re-signable.ipa` only when the signing tool
+can sign the host app and its embedded Widget and authorize the App Group.
 
 No Apple ID, certificate, private key, password, mobile device profile, or
 WebView session is stored in this repository or the workflow. The workflow
@@ -30,13 +35,14 @@ days.
 No personal Mac is required. From Safari on the iPad, open this repository on
 GitHub, switch to the `iOS` branch, open **Actions**, select **Build re-signable
 iOS IPA**, and run the workflow for that branch. When it finishes, download the
-artifact ZIP, extract `AoxiangAssistant-re-signable.ipa`, then use the signing
-tool already trusted on the iPad.
+artifact ZIP, extract both IPA files, and start with the `sideload` file in the
+signing tool already trusted on the iPad.
 
 Do not enter signing credentials, Apple ID details, certificates, profiles, or
 passwords into a GitHub issue, workflow input, repository secret, fixture, or
 source file. The signing tool must support nested extensions and sign both the
-host app and `AoxiangAssistantWidget.appex`; otherwise stop before installing.
+host app and `AoxiangAssistantWidget.appex` only for the `full-widget` file;
+otherwise use the `sideload` file.
 
 ## Signing Requirements
 
@@ -61,10 +67,11 @@ macOS product target.
 
 ## Build Verification
 
-The workflow first runs both Swift Package suites, then runs a device archive
-with `CODE_SIGNING_ALLOWED=NO` and verifies both bundle paths inside the IPA.
-It does not claim a signed device install succeeded. After self-signing,
-install the IPA on a test iPad and verify:
+The workflow first runs both Swift Package suites, then runs one device archive
+with `CODE_SIGNING_ALLOWED=NO`, packages both variants, and verifies that the
+sideload IPA has no `PlugIns` entry while the full IPA has the Widget entry. It
+does not claim a signed device install succeeded. After self-signing, install
+the sideload IPA on a test iPad and verify:
 
 1. Android schedule backup imports without asking for credentials.
 2. Home, grades, schedule and management views render local data and local

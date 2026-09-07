@@ -14,6 +14,7 @@
 		A00100010000000000000006 /* AoxiangCore in Frameworks */ = {isa = PBXBuildFile; productRef = A00100010000000000000123 /* AoxiangCore */; };
 		A00100010000000000000007 /* AoxiangCore in Frameworks */ = {isa = PBXBuildFile; productRef = A00100010000000000000124 /* AoxiangCore */; };
 		A00100010000000000000003 /* AoxiangAssistantWidget.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = A00100010000000000000022 /* AoxiangAssistantWidget.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		A00100010000000000000008 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A00100010000000000000018 /* Assets.xcassets */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -48,6 +49,7 @@
 		A00100010000000000000015 /* AoxiangAssistantWidget.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = AoxiangAssistantWidget.entitlements; sourceTree = "<group>"; };
 		A00100010000000000000016 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		A00100010000000000000017 /* AoxiangWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AoxiangWidget.swift; sourceTree = "<group>"; };
+		A00100010000000000000018 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		A00100010000000000000021 /* AoxiangAssistant.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = AoxiangAssistant.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		A00100010000000000000022 /* AoxiangAssistantWidget.appex */ = {isa = PBXFileReference; explicitFileType = wrapper.app-extension; includeInIndex = 0; path = AoxiangAssistantWidget.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
@@ -86,6 +88,7 @@
 			children = (
 				A00100010000000000000084 /* App */,
 				A00100010000000000000085 /* Widget */,
+				A00100010000000000000018 /* Assets.xcassets */,
 			);
 			path = AoxiangAssistant;
 			sourceTree = "<group>";
@@ -129,6 +132,7 @@
 			buildPhases = (
 				A00100010000000000000091 /* Sources */,
 				A00100010000000000000071 /* Frameworks */,
+				A00100010000000000000093 /* Resources */,
 				A00100010000000000000061 /* Embed App Extensions */,
 			);
 			buildRules = (
@@ -203,6 +207,14 @@
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
+		A00100010000000000000093 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A00100010000000000000008 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
@@ -278,7 +290,7 @@
 		A00100010000000000000112 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = "";
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = AoxiangAssistant/App/AoxiangAssistant.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
@@ -303,7 +315,7 @@
 		A00100010000000000000113 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = "";
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = AoxiangAssistant/App/AoxiangAssistant.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;

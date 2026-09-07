@@ -6,7 +6,7 @@ set -euo pipefail
 # IDs, passwords, or App Store credentials.
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 configuration="${IOS_CONFIGURATION:-Release}"
-output_ipa="${IOS_RE_SIGNABLE_IPA_OUTPUT:-$repo_root/dist/ios/AoxiangAssistant-re-signable.ipa}"
+output_dir="${IOS_RE_SIGNABLE_IPA_OUTPUT_DIR:-$repo_root/dist/ios}"
 temporary_root="$(mktemp -d "${TMPDIR:-/tmp}/aoxiang-device-archive.XXXXXX")"
 archive_path="$temporary_root/AoxiangAssistant.xcarchive"
 
@@ -35,4 +35,10 @@ test -f "$widget_path/Info.plist"
 
 python3 "$repo_root/scripts/package_ios_ipa.py" \
   --app-path "$app_path" \
-  --output "$output_ipa"
+  --variant sideload \
+  --output "$output_dir/AoxiangAssistant-sideload-re-signable.ipa"
+
+python3 "$repo_root/scripts/package_ios_ipa.py" \
+  --app-path "$app_path" \
+  --variant full \
+  --output "$output_dir/AoxiangAssistant-full-widget-re-signable.ipa"

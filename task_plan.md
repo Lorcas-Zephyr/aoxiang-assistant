@@ -406,3 +406,12 @@ iOS 迁移保留清晰的存储/备份 seam。
 - 本机验收：Swift Core 64 tests、Swift App 7 tests、Python 49 tests、Android 123 tests 均为
   0 failures/errors；fixture validator 通过 1 version/15 scenarios/32 referenced files；Android
   lint 为 0 errors/186 warnings；`git diff --check` 在本次文档更新前通过。
+
+## 2026-09-07 iPad install hardening and approved artwork
+
+- 图标唯一来源改为用户提供的无透明 PNG；Android 旧 vector 不参与 iOS 生成。
+- AppIcon 资源覆盖 iPhone/iPad 目标尺寸，Xcode 工程已启用 `AppIcon` catalog。
+- 同一 macOS `iphoneos` archive 现在生成 `AoxiangAssistant-sideload-re-signable.ipa` 和
+  `AoxiangAssistant-full-widget-re-signable.ipa`；前者移除嵌套 Widget，后者保留完整 Widget/App Group。
+- Python/fixture 回归 55 tests 通过；远端 Swift/Xcode archive、artifact 下载和真实 iPad 安装仍为
+  当前目标的未完成验证门。
