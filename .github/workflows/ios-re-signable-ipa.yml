@@ -1,6 +1,9 @@
 name: Build re-signable iOS IPA
 
 on:
+  push:
+    branches:
+      - iOS
   workflow_dispatch:
     inputs:
       source_ref:
@@ -40,7 +43,7 @@ jobs:
       - name: Check out source
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          ref: ${{ inputs.source_ref }}
+          ref: ${{ inputs.source_ref || github.sha }}
           persist-credentials: false
 
       - name: Set up Python
