@@ -134,6 +134,10 @@
   `callAsyncJavaScript(_:arguments:in:contentWorld:) async throws -> Any?`. The completion
   closure must be removed; portable Windows tests cannot see this because the WebKit branch is
   conditionally excluded there.
+- Xcode 26.6 run `34254206081` then reached the product build and found a stale template setting:
+  Debug `DEVELOPMENT_ASSET_PATHS` referenced a directory absent from the repository. Removing
+  that setting is lower-risk than adding a fake preview resource and keeps the shipping target's
+  asset surface explicit.
 - GitHub branch protection 仍需仓库管理员把三个平台 job 和 trusted PR declaration 设为 required check；仓库内 workflow
   和文档已经准备好，但本地文件不能替代远端规则配置。
 

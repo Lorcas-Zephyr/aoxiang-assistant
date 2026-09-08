@@ -215,6 +215,7 @@ class IOSProjectConfigurationTest(unittest.TestCase):
         self.assertIn("aoxiang-build-product-root", self.workflow)
         self.assertIn("Upload iOS build diagnostics", self.workflow)
         self.assertNotIn("retrying on iOS destination", self.workflow)
+        self.assertNotIn("AoxiangAssistant/Preview Content", self.project)
 
     def test_manual_macos_workflow_creates_a_re_signable_device_ipa(self):
         workflow = IPA_WORKFLOW_FILE.read_text(encoding="utf-8")

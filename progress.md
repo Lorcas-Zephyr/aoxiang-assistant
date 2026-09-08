@@ -27,6 +27,13 @@
   保留 MainActor、超时和 continuation 保护；下一提交必须重新通过 Simulator 与 device
   archive 两条 macOS 门禁后才可交付 IPA。
 
+## 2026-09-09 Simulator diagnosis
+
+- 新 readiness run `34254206081` 已验证 WebKit API 修复通过，但 Debug Xcode build 因
+  `DEVELOPMENT_ASSET_PATHS` 指向不存在的 `AoxiangAssistant/Preview Content` 失败。
+- 已移除这个无效模板路径；它不是产品资源，也不影响 Release device archive。加入配置回归
+  后，下一 run 必须同时证明 Simulator `.app` 和嵌套 Widget 都能生成。
+
 ## 2026-09-04
 
 - 创建 `iOS` 分支和本阶段 goal。
