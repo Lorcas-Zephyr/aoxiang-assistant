@@ -1,5 +1,23 @@
 # Progress
 
+## 2026-09-09 iOS collection build-gate repair
+
+- 复核确认当前 goal `01a06b40-b9a6-7af0-aeb2-c1a56e9c91d8` 仍为 active；没有重复创建
+  goal，所有工作仍在 `aoxiang-assistant` 的 `iOS` 分支。
+- 定位并修复真正的 Xcode 编译风险：`WKWebView.callAsyncJavaScript` 使用了重复的
+  `in` 参数标签，改为 iOS 15 API 的 `contentWorld: .page`；Windows Foundation-only
+  测试此前不会编译这段 WebKit 条件代码。
+- 教师对象数组现在按 `nameZh`/`name`/`teacherName` 等字段归一化，避免 `[object Object]`
+  或字典描述进入课表；新增 Swift 与 Python 回归。
+- readiness workflow 改为严格要求 Simulator 成功，使用独立 DerivedData 和成功路径
+  marker，并在失败时上传 xcodebuild 日志；device archive 不再静默替代 Simulator gate。
+- 本机回归：Swift Core 80、Swift App 23、Python 65（含 13 subtests）、golden
+  validator 15 scenarios/32 files、Android 单测/assemble/lint 均通过；lint 仍为 0 errors、
+  189 条既有 warnings，`git diff --check` 通过。
+- 待完成：提交/推送后等待新的 macOS readiness 与 re-signable IPA workflow，并检查
+  `sideload` IPA 同时保留主 App 与 Widget extension；签名、App Group 和 iPad 实测仍是
+  外部证据。
+
 ## 2026-09-04
 
 - 创建 `iOS` 分支和本阶段 goal。

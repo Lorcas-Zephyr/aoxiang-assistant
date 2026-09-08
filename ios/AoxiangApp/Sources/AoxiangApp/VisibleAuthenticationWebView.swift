@@ -376,7 +376,7 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
             Self.educationCollectionScript,
             arguments: [:],
             in: nil,
-            in: .page
+            contentWorld: .page
         ) { [weak self] result in
             Task { @MainActor in
                 guard let self else { return }
@@ -649,6 +649,18 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
           body.includes('会话已失效')) return 'needs_login';
         return '';
       };
+      const teacherValues = value => {
+        if (Array.isArray(value)) return value.flatMap(teacherValues);
+        if (value && typeof value === 'object') {
+          for (const key of ['nameZh', 'name', 'teacherName', 'teacher_name', 'teacher']) {
+            const values = teacherValues(value[key]);
+            if (values.length) return values;
+          }
+          return [];
+        }
+        const text = clean(value);
+        return text ? text.split(/[、\/,，]/).map(clean).filter(Boolean) : [];
+      };
       try {
         const sheetValue = await text('/student/for-std/grade/sheet/');
         if (sheetValue && sheetValue.__auth) return JSON.stringify({ phase: 'needs_login' });
@@ -769,7 +781,7 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
           index += 1;
         }
         const activities = print && print.studentTableVm && Array.isArray(print.studentTableVm.activities) ? print.studentTableVm.activities : [];
-        const sanitized = activities.map(activity => ({ name: clean(activity.courseName), code: clean(activity.courseCode), credits: Number(activity.credits || 0), weekday: Number(activity.weekday || 0), startUnit: Number(activity.startUnit || 0), endUnit: Number(activity.endUnit || 0), weekIndexes: Array.isArray(activity.weekIndexes) ? activity.weekIndexes.map(Number).filter(Number.isFinite) : [], teachers: Array.isArray(activity.teachers) ? activity.teachers.map(clean).filter(Boolean) : [], campus: clean(activity.campus), building: clean(activity.building), room: clean(activity.room) })).filter(activity => activity.name);
+        const sanitized = activities.map(activity => ({ name: clean(activity.courseName), code: clean(activity.courseCode), credits: Number(activity.credits || 0), weekday: Number(activity.weekday || 0), startUnit: Number(activity.startUnit || 0), endUnit: Number(activity.endUnit || 0), weekIndexes: Array.isArray(activity.weekIndexes) ? activity.weekIndexes.map(Number).filter(Number.isFinite) : [], teachers: teacherValues(activity.teachers), campus: clean(activity.campus), building: clean(activity.building), room: clean(activity.room) })).filter(activity => activity.name);
         return JSON.stringify({ phase: 'success', grades, gpa, schedule: { semester, activities: sanitized } });
       } catch (_) { return JSON.stringify({ phase: 'retryable' }); }
     })()

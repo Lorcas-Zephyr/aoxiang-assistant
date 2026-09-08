@@ -97,25 +97,56 @@ jobs:
 
       - name: Build the iPhone and iPad app with the iOS Simulator SDK
         working-directory: ios
-        run: >-
-          xcodebuild
-          -project AoxiangAssistant.xcodeproj
-          -scheme AoxiangAssistant
-          -configuration Debug
-          -sdk iphonesimulator
-          -destination 'generic/platform=iOS Simulator'
-          -derivedDataPath "$RUNNER_TEMP/aoxiang-assistant-derived-data"
-          CODE_SIGNING_ALLOWED=NO
-          CODE_SIGNING_REQUIRED=NO
-          build
+        run: |
+          set -euo pipefail
+
+          simulator_log_path="$RUNNER_TEMP/xcodebuild-iphonesimulator.log"
+          simulator_derived_data="$RUNNER_TEMP/aoxiang-assistant-derived-data-simulator"
+          : >"$simulator_log_path"
+
+          if ! xcodebuild \
+              -project AoxiangAssistant.xcodeproj \
+              -scheme AoxiangAssistant \
+              -configuration Debug \
+              -sdk iphonesimulator \
+              -destination 'generic/platform=iOS Simulator' \
+              -derivedDataPath "$simulator_derived_data" \
+              CODE_SIGNING_ALLOWED=NO \
+              CODE_SIGNING_REQUIRED=NO \
+              CODE_SIGN_IDENTITY="" \
+              AOXIANG_APP_BUNDLE_IDENTIFIER="cn.nwpu.aoxiangassistant" \
+              AOXIANG_WIDGET_BUNDLE_IDENTIFIER="cn.nwpu.aoxiangassistant.widget" \
+              AOXIANG_APP_GROUP_IDENTIFIER="group.cn.nwpu.aoxiang-assistant" \
+              ONLY_ACTIVE_ARCH=NO \
+              build \
+              >"$simulator_log_path" 2>&1; then
+            echo "iOS Simulator build failed; tail of log:"
+            tail -n 120 "$simulator_log_path"
+            exit 1
+          fi
+
+          printf '%s\n' "$simulator_derived_data" >"$RUNNER_TEMP/aoxiang-build-product-root"
 
       - name: Verify the app and Widget products were built
         working-directory: ios
         run: |
           set -euo pipefail
-          product_root="$RUNNER_TEMP/aoxiang-assistant-derived-data/Build/Products/Debug-iphonesimulator"
+          derived_data_root="$(cat "$RUNNER_TEMP/aoxiang-build-product-root")"
+          product_root="$derived_data_root/Build/Products/Debug-iphonesimulator"
+          test -d "$product_root"
           test -d "$product_root/AoxiangAssistant.app"
           test -d "$product_root/AoxiangAssistant.app/PlugIns/AoxiangAssistantWidget.appex"
+
+      - name: Upload iOS build diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: AoxiangAssistant-ios-readiness-logs-${{ github.run_number }}
+          path: |
+            ${{ runner.temp }}/xcodebuild-iphonesimulator.log
+            ${{ runner.temp }}/aoxiang-build-product-root
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Enforce complete iOS behavior coverage for release checks
         if: >-

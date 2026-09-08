@@ -525,3 +525,18 @@ iOS 迁移保留清晰的存储/备份 seam。
   explicit `sideload-host-only` fallback contains no extension.
 - [ ] Keep real signing/App Group provisioning and iPad login/collection/Widget behavior
   as device-side evidence. A successful unsigned archive cannot claim those external gates.
+
+## 2026-09-09 WebKit and CI gate repair
+
+- [x] Confirm the existing iOS repair goal remains active on the `iOS` branch; no duplicate
+  goal was created after the UI goal item was accidentally removed.
+- [x] Fix the WebKit-only `callAsyncJavaScript` invocation to use the iOS 15+
+  `contentWorld: .page` parameter. The previous duplicate `in` labels were invisible to
+  Windows Swift Package tests and could fail the real Xcode build before the visible
+  collector was shipped.
+- [x] Normalize teacher object responses by display-name fields in both the visible page
+  script and the Foundation parser; add regression coverage against dictionary descriptions.
+- [x] Make iOS readiness strict: Simulator build success is required, Simulator and device
+  DerivedData cannot be mixed, and failed xcodebuild logs are uploaded for diagnosis.
+- [ ] Push this repair and verify a fresh macOS Simulator readiness run plus a fresh
+  Widget-capable re-signable IPA artifact.

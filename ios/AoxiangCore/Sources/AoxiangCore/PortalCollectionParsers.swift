@@ -608,8 +608,20 @@ public enum PortalCollectionParsers {
             rawValues = array.compactMap { normalizedTeachers($0) }
         } else if let array = value as? NSArray {
             rawValues = array.compactMap { normalizedTeachers($0) }
+        } else if let object = value as? [String: Any] {
+            // The portal has returned both string teacher arrays and teacher
+            // objects. Prefer the documented display-name fields and never
+            // stringify the dictionary itself into the offline model.
+            let fields = ["nameZh", "name", "teacherName", "teacher_name", "teacher"]
+            rawValues = fields.lazy
+                .compactMap { object[$0] }
+                .compactMap { normalizedTeachers($0) }
+                .first
+                .map { [$0] } ?? []
+        } else if let string = value as? String {
+            rawValues = [string]
         } else {
-            rawValues = [string(value)]
+            rawValues = []
         }
 
         let values = rawValues.flatMap {

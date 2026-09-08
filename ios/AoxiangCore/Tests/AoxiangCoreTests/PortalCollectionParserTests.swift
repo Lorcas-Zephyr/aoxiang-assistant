@@ -196,6 +196,44 @@ final class PortalCollectionParserTests: XCTestCase {
         XCTAssertEqual(result.schedule.courses.first?.location, "长安 A 101")
     }
 
+    func testVisibleEducationNormalizesTeacherObjectsWithoutPersistingDictionaryDescription() throws {
+        let data = try JSONSerialization.data(withJSONObject: [
+            "phase": "success",
+            "grades": [],
+            "schedule": [
+                "semester": [
+                    "id": "term-teacher-object",
+                    "name": "2026 秋",
+                    "startDate": "2026-08-31",
+                    "endDate": "2027-01-10",
+                ],
+                "activities": [[
+                    "name": "编译原理",
+                    "code": "CS-201",
+                    "credits": 3,
+                    "weekday": 2,
+                    "startUnit": 3,
+                    "endUnit": 4,
+                    "weekIndexes": [1, 2],
+                    "teachers": [
+                        ["nameZh": "张老师"],
+                        ["teacherName": "李老师"],
+                        ["name": "张老师"],
+                    ],
+                    "campus": "长安",
+                    "building": "A",
+                    "room": "201",
+                ]],
+            ],
+        ])
+
+        let result = try PortalCollectionParsers.parseVisibleEducation(data)
+
+        XCTAssertEqual(result.schedule.courses.first?.teacher, "张老师、李老师")
+        XCTAssertFalse(result.schedule.courses.first?.teacher?.contains("[object Object]") == true)
+        XCTAssertFalse(result.schedule.courses.first?.teacher?.contains("nameZh") == true)
+    }
+
     private func fixtureData(_ relativePath: String) throws -> Data {
         try Data(contentsOf: fixtureRoot().appendingPathComponent(relativePath))
     }

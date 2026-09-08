@@ -118,6 +118,17 @@
   现已提升到 `golden/` corpus，并在 Python/Swift 两侧核对连续版本与 capability 声明。
 - `v1` 继续使用已审阅场景的严格清单；`v2+` 允许新增稳定 kebab-case 场景 kind，但每个
   `schemaVersion/id` 都必须由 Android 测试、Swift capability report 和对应 adapter 显式登记，避免扩展时静默漏测。
+
+## 2026-09-09 build-gate finding
+
+- Windows Swift Package tests intentionally exclude `WebKit`/`SwiftUI` conditional source;
+  they cannot catch an iOS SDK call-signature error. The visible collector had passed the
+  portable suites while using duplicate `in` labels for `callAsyncJavaScript`. Xcode's API
+  spelling is `in: nil, contentWorld: .page` (deployment target 15.0).
+- The readiness workflow previously reused one DerivedData directory for Simulator and
+  device fallback and selected whichever product directory happened to remain. That could
+  report a stale Simulator app after a failed build. Readiness now fails on Simulator error,
+  writes a successful product-root marker only after completion, and uploads the build log.
 - GitHub branch protection 仍需仓库管理员把三个平台 job 和 trusted PR declaration 设为 required check；仓库内 workflow
   和文档已经准备好，但本地文件不能替代远端规则配置。
 

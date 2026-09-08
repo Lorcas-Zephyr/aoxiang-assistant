@@ -52,6 +52,10 @@ class VisibleCollectionScriptTest(unittest.TestCase):
         self.assertIn("document.querySelector('#studentId')", source)
         self.assertIn("window.studentId", source)
         self.assertIn("JSON.parse(raw)", source)
+        self.assertIn("teacherValues", source)
+        self.assertIn("teacherName", source)
+        self.assertIn("nameZh", source)
+        self.assertNotIn("Array.isArray(activity.teachers) ? activity.teachers.map(clean)", source)
 
     def test_embedded_electricity_script_is_javascript_syntax_valid_and_supports_portal_variants(self):
         self.assert_embedded_script_is_syntax_valid(
