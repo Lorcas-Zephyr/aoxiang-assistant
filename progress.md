@@ -200,6 +200,18 @@
 - 本机 Python/fixture 回归：55 tests 通过；fixture validator 通过 1 version/15 scenarios/32
   files；`git diff --check` 通过。Swift/Xcode device archive 和真实 iPad 自签安装仍需远端/设备证据。
 
+## 2026-09-08 current iOS delivery evidence
+
+- 当前 `iOS` 分支提交 `3fda090db5ff175ce7277299e4138e82160676ce` 已推送；专用 IPA workflow
+  同时支持手动触发和 `iOS` 分支 push 触发，避免没有 `gh`/写入令牌时无法启动 macOS 构建。
+- GitHub Actions run `34174391367` 成功，`head_sha` 与当前提交一致；Swift Core/App 测试、
+  `iphoneos` device archive、两个 IPA 打包、sideload 无 `PlugIns`、full-widget 包含
+  `AoxiangAssistantWidget.appex` 的结构校验，以及 artifact 上传步骤全部成功。
+- artifact 名称为 `AoxiangAssistant-ipa-variants-4`，保留至 2026-09-15；下载需要登录
+  GitHub。当前没有 Apple 团队签名凭据，因此产物仍是 re-signable IPA，不是可直接安装的 IPA。
+- 未宣称 signed IPA 或真实 iPad 安装成功：full-widget 仍要求签名工具同时重签主 App/Widget，
+  并让 provisioning profile 授权相同 App Group；sideload 是当前兼容安装变体。
+
 ## 2026-09-07 regression hardening and iPad delivery path
 
 - 修正 `RecordingSnapshotWriter.restore` 测试替身：恢复操作现在精确还原原快照（或空状态），

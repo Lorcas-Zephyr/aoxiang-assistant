@@ -409,9 +409,11 @@ iOS 迁移保留清晰的存储/备份 seam。
 - [x] GPA API/portrait fallback, student ID discovery, allow-listed requests,
   online-course filtering, teacher/location normalization and electricity
   parsing remain covered by portable/App tests.
-- [ ] macOS `xcodebuild` device archive, signed full-widget IPA verification and
-  real iPad installation are still external evidence gates; Windows Swift tests
-  do not replace them.
+- [x] macOS `xcodebuild` device archive and re-signable IPA structure verification
+  completed in GitHub Actions run `34174391367` for commit `3fda090`.
+- [ ] Signed full-widget IPA verification and real iPad installation remain external
+  gates; the repository does not receive Apple signing credentials, and Windows Swift
+  tests do not replace device evidence.
 
 ### 2026-09-08 verification
 
@@ -423,6 +425,17 @@ iOS 迁移保留清晰的存储/备份 seam。
 - `git diff --check`: passed.
 - The collector's default date uses `OfflineDatePolicy.businessCalendar`
   (`Asia/Shanghai`) rather than UTC; tests can inject a deterministic date.
+
+### 2026-09-08 macOS archive evidence
+
+- GitHub Actions run `34174391367` completed successfully from the current `iOS` branch
+  commit. The job ran both Swift Package suites, archived with `-sdk iphoneos`, packaged
+  `AoxiangAssistant-sideload-re-signable.ipa` and
+  `AoxiangAssistant-full-widget-re-signable.ipa`, and passed the no-Widget/embedded-Widget
+  ZIP layout checks.
+- The artifact is downloadable from the run page after GitHub authentication. It is not
+  signed; installation still requires the user's own valid App IDs, App Group and nested
+  code signing.
 
 ## 2026-09-07 iPad-only delivery readiness
 
