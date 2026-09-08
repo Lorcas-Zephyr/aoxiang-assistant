@@ -129,6 +129,11 @@
   device fallback and selected whichever product directory happened to remain. That could
   report a stale Simulator app after a failed build. Readiness now fails on Simulator error,
   writes a successful product-root marker only after completion, and uploads the build log.
+- Xcode 26.6 run `34252603142` confirmed the first attempted `contentWorld: .page` repair was
+  still wrong at the call-site shape: the current SDK exposes only the async method
+  `callAsyncJavaScript(_:arguments:in:contentWorld:) async throws -> Any?`. The completion
+  closure must be removed; portable Windows tests cannot see this because the WebKit branch is
+  conditionally excluded there.
 - GitHub branch protection 仍需仓库管理员把三个平台 job 和 trusted PR declaration 设为 required check；仓库内 workflow
   和文档已经准备好，但本地文件不能替代远端规则配置。
 

@@ -372,42 +372,45 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
               url.host?.lowercased() == studentGradeURL.host?.lowercased(),
               isEducationCollectionPage(url.path) else { return }
         educationEvaluationInFlight = true
-        webView.callAsyncJavaScript(
-            Self.educationCollectionScript,
-            arguments: [:],
-            in: nil,
-            contentWorld: .page
-        ) { [weak self] result in
-            Task { @MainActor in
-                guard let self else { return }
+        Task { @MainActor [weak self, weak webView] in
+            guard let self, let webView else { return }
+            do {
+                // Xcode 26 imports this iOS 15 API as async throws; there is
+                // no completion-handler overload in the current SDK.
+                let value = try await webView.callAsyncJavaScript(
+                    Self.educationCollectionScript,
+                    arguments: [:],
+                    in: nil,
+                    contentWorld: .page
+                )
+                guard self.educationContinuation != nil else { return }
                 self.educationEvaluationInFlight = false
-                switch result {
-                case .failure:
-                    self.finishEducation(.failure(PortalCollectionFailure.retryable(.serverUnavailable)))
-                case .success(let value):
-                    guard let json = value as? String,
-                          let data = json.data(using: .utf8) else {
-                        self.finishEducation(.failure(PortalCollectionFailure.invalidResponse("visible education payload unavailable")))
-                        return
-                    }
-                    do {
-                        let root = try JSONSerialization.jsonObject(with: data) as? [String: Any]
-                        switch root?["phase"] as? String {
-                        case "needs_login":
-                            self.finishEducation(.failure(PortalCollectionFailure.authenticationRequired))
-                        case "needs_sms":
-                            self.finishEducation(.failure(PortalCollectionFailure.smsRequired))
-                        case "retryable":
-                            self.finishEducation(.failure(PortalCollectionFailure.retryable(.serverUnavailable)))
-                        default:
-                            self.finishEducation(.success(try PortalCollectionParsers.parseVisibleEducation(data)))
-                        }
-                    } catch let failure as PortalCollectionFailure {
-                        self.finishEducation(.failure(failure))
-                    } catch {
-                        self.finishEducation(.failure(PortalCollectionFailure.invalidResponse("visible education payload malformed")))
-                    }
+                guard let json = value as? String,
+                      let data = json.data(using: .utf8) else {
+                    self.finishEducation(.failure(PortalCollectionFailure.invalidResponse("visible education payload unavailable")))
+                    return
                 }
+                do {
+                    let root = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+                    switch root?["phase"] as? String {
+                    case "needs_login":
+                        self.finishEducation(.failure(PortalCollectionFailure.authenticationRequired))
+                    case "needs_sms":
+                        self.finishEducation(.failure(PortalCollectionFailure.smsRequired))
+                    case "retryable":
+                        self.finishEducation(.failure(PortalCollectionFailure.retryable(.serverUnavailable)))
+                    default:
+                        self.finishEducation(.success(try PortalCollectionParsers.parseVisibleEducation(data)))
+                    }
+                } catch let failure as PortalCollectionFailure {
+                    self.finishEducation(.failure(failure))
+                } catch {
+                    self.finishEducation(.failure(PortalCollectionFailure.invalidResponse("visible education payload malformed")))
+                }
+            } catch {
+                guard self.educationContinuation != nil else { return }
+                self.educationEvaluationInFlight = false
+                self.finishEducation(.failure(PortalCollectionFailure.retryable(.serverUnavailable)))
             }
         }
     }

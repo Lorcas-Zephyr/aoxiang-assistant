@@ -18,6 +18,15 @@
   `sideload` IPA 同时保留主 App 与 Widget extension；签名、App Group 和 iPad 实测仍是
   外部证据。
 
+## 2026-09-09 Xcode 26 diagnosis
+
+- 新提交的 readiness/IPA runs (`34252603142`/`34252603155`) 均执行到真实 Xcode 编译后
+  失败；GitHub 页面日志确认唯一编译错误是 `callAsyncJavaScript` 的 completion closure
+  不再被 Xcode 26 SDK 接受（`extra trailing closure passed in call`）。
+- 已将教育脚本调用改为 `try await webView.callAsyncJavaScript(..., contentWorld: .page)`，
+  保留 MainActor、超时和 continuation 保护；下一提交必须重新通过 Simulator 与 device
+  archive 两条 macOS 门禁后才可交付 IPA。
+
 ## 2026-09-04
 
 - 创建 `iOS` 分支和本阶段 goal。

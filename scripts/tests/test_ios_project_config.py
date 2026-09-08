@@ -163,8 +163,10 @@ class IOSProjectConfigurationTest(unittest.TestCase):
 
     def test_visible_collector_uses_same_origin_session_and_business_timezone(self):
         self.assertIn("callAsyncJavaScript", self.ios_authentication_view)
+        self.assertIn("try await webView.callAsyncJavaScript", self.ios_authentication_view)
         self.assertIn("contentWorld: .page", self.ios_authentication_view)
         self.assertNotIn("in: nil,\n            in: .page", self.ios_authentication_view)
+        self.assertNotIn("Self.educationCollectionScript,\n            arguments: [:],\n            in: nil,\n            contentWorld: .page\n        ) {", self.ios_authentication_view)
         self.assertIn("credentials: 'include'", self.ios_authentication_view)
         self.assertIn("cache: 'no-store'", self.ios_authentication_view)
         self.assertIn("timeZone: 'Asia/Shanghai'", self.ios_authentication_view)
