@@ -34,15 +34,18 @@ public struct PortalForegroundCollector {
     private let transport: PortalCollectionTransport
     private let electricityProvider: () async throws -> Double
     private let portraitProvider: (() async throws -> String?)?
+    private let visibleEducationProvider: (() async throws -> PortalVisibleEducationData)?
 
     public init(
         transport: PortalCollectionTransport,
         electricityProvider: @escaping () async throws -> Double,
-        portraitProvider: (() async throws -> String?)? = nil
+        portraitProvider: (() async throws -> String?)? = nil,
+        visibleEducationProvider: (() async throws -> PortalVisibleEducationData)? = nil
     ) {
         self.transport = transport
         self.electricityProvider = electricityProvider
         self.portraitProvider = portraitProvider
+        self.visibleEducationProvider = visibleEducationProvider
     }
 
     public func collect(
@@ -61,6 +64,49 @@ public struct PortalForegroundCollector {
             }
         }
         guard !isCancelled() else { throw PortalCollectionFailure.cancelled }
+
+        // Android performs education requests in the authenticated WebView.
+        // Prefer the same-origin path whenever the app supplies it; this keeps
+        // SSO cookies and redirects inside WebKit instead of reconstructing a
+        // fragile cross-domain URLSession session.
+        if let visibleEducationProvider {
+            do {
+                let education = try await visibleEducationProvider()
+                guard !isCancelled() else { throw PortalCollectionFailure.cancelled }
+                var portraitGPA = portraitHTML.flatMap(PortalCollectionParsers.parsePortraitGPA)
+                if education.gpa == nil, portraitGPA == nil, let portraitProvider {
+                    do {
+                        portraitGPA = try await portraitProvider().flatMap(PortalCollectionParsers.parsePortraitGPA)
+                    } catch let failure as PortalCollectionFailure {
+                        if case .invalidResponse = failure {
+                            portraitGPA = nil
+                        } else {
+                            throw failure
+                        }
+                    }
+                }
+                let electricity = try await electricityProvider()
+                guard electricity.isFinite, electricity >= 0, electricity < 100000 else {
+                    throw PortalCollectionFailure.invalidResponse("electricity balance invalid")
+                }
+                return PortalCollectedData(
+                    grades: PortalCollectionParsers.keepHighest(education.grades),
+                    gpa: PortalCollectionParsers.selectGPA(api: education.gpa, portrait: portraitGPA),
+                    schedule: education.schedule,
+                    electricityBalance: electricity
+                )
+            } catch let failure as PortalCollectionFailure {
+                switch failure {
+                case .retryable, .invalidResponse:
+                    // A visible page may be loading or expose a changed portal
+                    // shape. Keep the authenticated cookie store and fall back
+                    // to the allow-listed HTTP path before failing the run.
+                    break
+                case .authenticationRequired, .smsRequired, .cancelled:
+                    throw failure
+                }
+            }
+        }
 
         let gradeSheet = try await send(PortalEndpoints.gradeSheet())
         let sheetData = gradeSheet.0
@@ -95,6 +141,9 @@ public struct PortalForegroundCollector {
             }
         }
         guard !resolvedStudentID.isEmpty else {
+            if isAuthenticationHTML(sheetText) {
+                throw PortalCollectionFailure.authenticationRequired
+            }
             throw PortalCollectionFailure.invalidResponse("student identifier unavailable")
         }
 
@@ -120,7 +169,12 @@ public struct PortalForegroundCollector {
                 }
             }
         }
-        guard !gradeResponses.isEmpty else { throw PortalCollectionFailure.invalidResponse("grade response unavailable") }
+        guard !gradeResponses.isEmpty else {
+            if isAuthenticationHTML(sheetText) {
+                throw PortalCollectionFailure.authenticationRequired
+            }
+            throw PortalCollectionFailure.invalidResponse("grade response unavailable")
+        }
         var gradeEnvelope: [String: Any] = ["gradeResponses": gradeResponses]
         do {
             let gpaResponse = try await send(try PortalEndpoints.gpa(studentID: resolvedStudentID))
@@ -235,7 +289,23 @@ public struct PortalForegroundCollector {
     }
 
     private func send(_ request: StableHTTPCollectionRequest) async throws -> (Data, HTTPURLResponse) {
-        do { return try await transport.send(request) }
+        do {
+            let response = try await transport.send(request)
+            switch response.1.statusCode {
+            case 401, 403:
+                throw CollectionTransportError.authenticationRequired
+            case 408:
+                throw CollectionTransportError.retryable(.serverUnavailable)
+            case 429:
+                throw CollectionTransportError.retryable(.rateLimited)
+            case 500...599:
+                throw CollectionTransportError.retryable(.serverUnavailable)
+            case 200..<300:
+                return response
+            default:
+                throw CollectionTransportError.nonSuccessStatus(response.1.statusCode)
+            }
+        }
         catch let error as CollectionTransportError {
             if case .authenticationRequired = error { throw PortalCollectionFailure.authenticationRequired }
             if case .retryable(let reason) = error { throw PortalCollectionFailure.retryable(reason) }
@@ -253,6 +323,17 @@ public struct PortalForegroundCollector {
 
     private func jsonData(_ object: [String: Any]) throws -> Data {
         try JSONSerialization.data(withJSONObject: object, options: [])
+    }
+
+    private func isAuthenticationHTML(_ text: String) -> Bool {
+        let normalized = text.lowercased()
+        return normalized.contains("统一身份认证")
+            || normalized.contains("统一认证")
+            || normalized.contains("cas/login")
+            || normalized.contains("请输入账号")
+            || normalized.contains("请输入密码")
+            || normalized.contains("登录信息已失效")
+            || normalized.contains("会话已失效")
     }
 
     private func firstString(_ values: Any?...) -> String {

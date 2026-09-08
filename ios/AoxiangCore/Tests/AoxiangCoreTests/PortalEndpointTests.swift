@@ -12,6 +12,19 @@ final class PortalEndpointTests: XCTestCase {
         XCTAssertEqual(request.timeoutInterval, 12)
     }
 
+    func testPageRequestsMatchAndroidWebViewNegotiation() {
+        let gradeSheet = PortalEndpoints.gradeSheet()
+        // Foundation on Windows normalizes URL.path by dropping a terminal
+        // slash; absoluteString is the request representation sent to WebKit.
+        XCTAssertTrue(gradeSheet.url.absoluteString.hasSuffix("/student/for-std/grade/sheet/"))
+        XCTAssertTrue(gradeSheet.headers["Accept"]?.contains("text/html") == true)
+        XCTAssertEqual(gradeSheet.headers["Cache-Control"], "no-store")
+
+        let courseTable = PortalEndpoints.courseTable()
+        XCTAssertEqual(courseTable.url.path, "/student/for-std/course-table")
+        XCTAssertTrue(courseTable.headers["Accept"]?.contains("text/html") == true)
+    }
+
     func testEndpointIdentifiersRejectPathTraversalAndEmptyValues() {
         XCTAssertThrowsError(try PortalEndpoints.gpa(studentID: "../cookies")) { error in
             XCTAssertEqual(error as? PortalEndpointError, .invalidIdentifier)

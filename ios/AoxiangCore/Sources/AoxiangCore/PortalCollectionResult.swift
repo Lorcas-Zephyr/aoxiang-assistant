@@ -22,6 +22,25 @@ public struct PortalCollectedData: Equatable {
     }
 }
 
+/// Sanitized education data returned by the visible, same-origin WebView
+/// collector. Raw HTML, cookies, credentials and WebView state never cross
+/// this boundary; only values already accepted by the portable parsers do.
+public struct PortalVisibleEducationData: Equatable {
+    public let grades: [OfflineGrade]
+    public let gpa: Double?
+    public let schedule: PortalCollectionParsers.SchedulePayload
+
+    public init(
+        grades: [OfflineGrade],
+        gpa: Double? = nil,
+        schedule: PortalCollectionParsers.SchedulePayload
+    ) {
+        self.grades = grades
+        self.gpa = gpa
+        self.schedule = schedule
+    }
+}
+
 public enum PortalCollectionPhase: String, Codable, Equatable {
     case idle
     case collecting

@@ -23,7 +23,7 @@ public enum PortalEndpoints {
     public static let collectionTimeout: TimeInterval = 12
 
     public static func gradeSheet() -> StableHTTPCollectionRequest {
-        educationRequest(path: "/student/for-std/grade/sheet")
+        pageRequest(path: "/student/for-std/grade/sheet/")
     }
 
     public static func studentInfo() -> StableHTTPCollectionRequest {
@@ -45,7 +45,7 @@ public enum PortalEndpoints {
     }
 
     public static func courseTable() -> StableHTTPCollectionRequest {
-        educationRequest(path: "/student/for-std/course-table")
+        pageRequest(path: "/student/for-std/course-table")
     }
 
     public static func semester(id: String) throws -> StableHTTPCollectionRequest {
@@ -71,6 +71,25 @@ public enum PortalEndpoints {
         components.path = path
         components.queryItems = query.isEmpty ? nil : query
         return request(url: components.url!)
+    }
+
+    private static func pageRequest(path: String) -> StableHTTPCollectionRequest {
+        // Construct the page URL directly. URLComponents on the Windows
+        // Foundation host normalizes a terminal slash away, while the portal
+        // distinguishes the Android-compatible grade-sheet page route.
+        let url = URL(string: "https://\(educationHost)\(path)")!
+        return StableHTTPCollectionRequest(
+            url: url,
+            headers: [
+                // These are server-rendered bootstrap pages. The Android WebView
+                // requests them without an API JSON preference so SSO redirects
+                // and embedded semester/student metadata remain available.
+                "Accept": "text/html,application/xhtml+xml",
+                "Cache-Control": "no-store",
+                "Pragma": "no-cache",
+            ],
+            timeoutInterval: collectionTimeout
+        )
     }
 
     private static func request(url: URL) -> StableHTTPCollectionRequest {

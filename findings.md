@@ -161,6 +161,44 @@
   stable HTTP collector must record `needsUserAttention`/retry metadata and exit without motion or
   fake success; visible foreground login remains the recovery path.
 
+## Real-device repair audit (2026-09-08)
+
+- The supplied iPad screenshot contains `grade response unavailable`, which is
+  the stable-HTTP collector's explicit failure when every grade endpoint has
+  been rejected or redirected. It confirms the older IPA did not have a
+  working browser-session collection path.
+- The current visible WebView implementation had a separate blocking defect:
+  its course-table JavaScript assigned to `const index`, `const semester`, and
+  `const print`, so a successful grade response still ended as a retryable
+  collection failure before a candidate could be saved.
+- The reliable boundary is the visible, same-origin WebView: it owns SSO
+  cookies and returns only sanitized grade/schedule/electricity values. The
+  collector must still map 401/403 and login HTML to authentication recovery,
+  and must request portrait HTML when the GPA endpoint does not provide a
+  usable value.
+- A Widget-capable IPA must retain the nested `AoxiangAssistantWidget.appex`.
+  The current `sideload` and `full-widget` outputs retain that extension;
+  `sideload-host-only` deliberately removes it and can never show a Widget.
+  The earlier installed `sideload` artifact used the former host-only layout,
+  so it is not comparable to the current delivery artifact. A signer still
+  has to sign both bundles and authorize their common App Group. This is the
+  same technical category as an app such as Notability, not a Settings switch
+  that the app can create itself.
+
+## CAS and electricity collection hardening (2026-09-08)
+
+- The electricity bootstrap URL intentionally contains `/cas/login/`, so the
+  previous broad redirect matcher classified its first successful navigation
+  as an expired session before the YKT page could open. The new
+  `VisibleCollectionNavigationPolicy` permits only that exact HTTPS bootstrap
+  URL and only once per electricity collection. A later login redirect still
+  returns the explicit authentication-required state.
+- The visible electricity collector now retries a short same-page evaluation
+  while the YKT Vue data is loading, recognizes both Vue 2 and Vue 3 root
+  handles, dynamic balance labels, and the Android-compatible rendered text
+  formats. It remains bounded by the existing 20-second foreground timeout;
+  missing/invalid values never overwrite local data or the Widget snapshot.
+
 ## 2026-09-08 foreground collector audit
 
 - The production management view calls `beginCollection()` after the user

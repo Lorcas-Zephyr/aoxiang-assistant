@@ -45,11 +45,12 @@ class WorkflowDependencyPinTest(unittest.TestCase):
         content = workflow.read_text(encoding="utf-8")
         self.assertIn("source_ref:", content)
         self.assertIn("default: iOS", content)
-        self.assertIn("ref: ${{ inputs.source_ref }}", content)
+        self.assertIn("ref: ${{ inputs.source_ref || github.sha }}", content)
 
     def test_re_signable_ipa_workflow_verifies_sideload_and_widget_variants(self):
         content = (WORKFLOW_ROOT / "ios-re-signable-ipa.yml").read_text(encoding="utf-8")
         self.assertIn("AoxiangAssistant-sideload-re-signable.ipa", content)
+        self.assertIn("AoxiangAssistant-sideload-host-only-re-signable.ipa", content)
         self.assertIn("AoxiangAssistant-full-widget-re-signable.ipa", content)
         self.assertIn("PlugIns/AoxiangAssistantWidget.appex/Info.plist", content)
 

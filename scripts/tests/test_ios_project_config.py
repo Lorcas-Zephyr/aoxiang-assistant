@@ -63,6 +63,11 @@ class IOSProjectConfigurationTest(unittest.TestCase):
     def test_shared_scheme_builds_app_and_widget_targets(self):
         self.assertIn('BlueprintName = "AoxiangAssistant"', self.scheme)
         self.assertIn('BlueprintName = "AoxiangAssistantWidget"', self.scheme)
+        self.assertEqual(
+            self.scheme.count('buildForArchiving = "YES"'),
+            2,
+            "the host and nested Widget must both be archive products",
+        )
         identifiers = set(re.findall(r'BlueprintIdentifier = "(A0010001000000000000005[12])"', self.scheme))
         self.assertEqual(
             {"A00100010000000000000051", "A00100010000000000000052"},
@@ -156,6 +161,16 @@ class IOSProjectConfigurationTest(unittest.TestCase):
         )
         self.assertNotIn("NSViewRepresentable", self.ios_authentication_view)
 
+    def test_visible_collector_uses_same_origin_session_and_business_timezone(self):
+        self.assertIn("callAsyncJavaScript", self.ios_authentication_view)
+        self.assertIn("credentials: 'include'", self.ios_authentication_view)
+        self.assertIn("cache: 'no-store'", self.ios_authentication_view)
+        self.assertIn("timeZone: 'Asia/Shanghai'", self.ios_authentication_view)
+        self.assertIn("response.status === 401 || response.status === 403", self.ios_authentication_view)
+        self.assertIn("phase: 'needs_login'", self.ios_authentication_view)
+        self.assertIn("let index = ordered.findIndex", self.ios_authentication_view)
+        self.assertNotIn("const index = ordered.findIndex", self.ios_authentication_view)
+
     def test_widget_snapshot_requires_the_app_group_on_ios(self):
         self.assertIn("public static func sharedSnapshotURL", self.ios_shared_container)
         self.assertIn("#if os(iOS)", self.ios_shared_container)
@@ -201,6 +216,7 @@ class IOSProjectConfigurationTest(unittest.TestCase):
         self.assertIn("bash scripts/build_ios_re_signable_ipa.sh", workflow)
         self.assertIn("actions/upload-artifact@", workflow)
         self.assertIn("AoxiangAssistant-sideload-re-signable.ipa", workflow)
+        self.assertIn("AoxiangAssistant-sideload-host-only-re-signable.ipa", workflow)
         self.assertIn("AoxiangAssistant-full-widget-re-signable.ipa", workflow)
         self.assertIn("ios-artifacts", workflow)
         self.assertNotIn("security import", workflow)
@@ -216,6 +232,7 @@ class IOSProjectConfigurationTest(unittest.TestCase):
         self.assertIn("package_ios_ipa.py", script)
         self.assertIn("AoxiangAssistantWidget.appex", script)
         self.assertIn("--variant sideload", script)
+        self.assertIn("--variant sideload-host-only", script)
         self.assertIn("--variant full", script)
         self.assertNotIn("security import", script)
         self.assertNotIn("provisioning profile", script.lower())

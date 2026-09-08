@@ -192,10 +192,11 @@
   Android 旧 `ic_launcher.xml` 不再作为 iOS 图标输入；Android 后续可独立同步同一 artwork。
 - 生成 `Assets.xcassets/AppIcon.appiconset` 的 18 个 iPhone/iPad/marketing RGB PNG，Xcode
   App target 已设置 `ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon` 并正确引用资源组。
-- IPA 打包器新增 `full` 与 `sideload` 变体：两者来自同一 `iphoneos` archive；sideload 不嵌入
-  Widget，适合无法重签嵌套扩展或无 App Group 权限的普通自签工具；full-widget 保留 Widget
-  与 App Group，只有签名工具支持嵌套扩展时使用。
-- 手动 macOS workflow 和文档已改为一次运行上传两个 IPA，并分别验证无/有 Widget 入口；不接收
+- （历史记录，已由 2026-09-08 修正取代）当时 IPA 打包器把 `sideload` 当作 host-only，
+  因此不嵌入 Widget；现在推荐的 `sideload` 保留嵌套扩展，host-only 已改为显式的
+  `sideload-host-only` 变体。
+- 当时的 macOS workflow 一次上传两个 IPA 并分别验证无/有 Widget 入口；当前 workflow
+  上传三个变体并验证推荐 sideload/full-widget 含 Widget、host-only 不含 Widget；不接收
   Apple ID、证书、私钥、provisioning profile、密码或会话。
 - 本机 Python/fixture 回归：55 tests 通过；fixture validator 通过 1 version/15 scenarios/32
   files；`git diff --check` 通过。Swift/Xcode device archive 和真实 iPad 自签安装仍需远端/设备证据。
@@ -204,13 +205,53 @@
 
 - 当前 `iOS` 分支提交 `3fda090db5ff175ce7277299e4138e82160676ce` 已推送；专用 IPA workflow
   同时支持手动触发和 `iOS` 分支 push 触发，避免没有 `gh`/写入令牌时无法启动 macOS 构建。
-- GitHub Actions run `34174391367` 成功，`head_sha` 与当前提交一致；Swift Core/App 测试、
-  `iphoneos` device archive、两个 IPA 打包、sideload 无 `PlugIns`、full-widget 包含
-  `AoxiangAssistantWidget.appex` 的结构校验，以及 artifact 上传步骤全部成功。
+- GitHub Actions run `34174391367` 是修正前的历史证据：当时的 `sideload` 为 host-only，
+  `full-widget` 保留 `AoxiangAssistantWidget.appex`；当前未提交修正需要新的 workflow run。
 - artifact 名称为 `AoxiangAssistant-ipa-variants-4`，保留至 2026-09-15；下载需要登录
   GitHub。当前没有 Apple 团队签名凭据，因此产物仍是 re-signable IPA，不是可直接安装的 IPA。
 - 未宣称 signed IPA 或真实 iPad 安装成功：full-widget 仍要求签名工具同时重签主 App/Widget，
   并让 provisioning profile 授权相同 App Group；sideload 是当前兼容安装变体。
+
+## 2026-09-08 Widget-capable sideload correction and collection recovery
+
+- Earlier entries used the `sideload` name for a host-only IPA. That layout was
+  deliberately install-oriented and could not contain a Widget. Current
+  packaging keeps the nested Widget in `AoxiangAssistant-sideload-re-signable.ipa`;
+  the explicitly named `sideload-host-only` artifact is the only no-Widget
+  fallback. `full-widget` remains a compatibility alias for the same complete
+  extension layout.
+- Added a Foundation-testable navigation policy for the electricity CAS
+  bootstrap. It allows only the expected first YKT CAS hop, while a later CAS
+  login redirect still maps to authentication recovery.
+- The visible electricity collector now retries page evaluation while Vue data
+  loads and supports Vue 2/Vue 3 roots plus Android-compatible balance labels.
+  It is foreground-only and bounded; no password, Cookie, token, or SMS value
+  crosses into portable storage.
+- Management now has a snapshot-refresh action so an installed app reports a
+  real App Group write failure instead of leaving Widget state ambiguous.
+
+## 2026-09-08 recovery verification
+
+- 恢复检查确认旧 goal 仍是当前线程的 active goal；未创建重叠目标，所有改动仍在
+  `aoxiang-assistant` 的 `iOS` 分支，未触碰 Structify。
+- 本机回归已完成：Swift Core 79 tests、Swift App 22 tests、Python 65 tests、golden
+  corpus 1 version/15 scenarios/32 referenced files；Android 123 JVM tests、Debug
+  APK assemble 成功，lint 0 errors/189 existing warnings；`git diff --check` 通过。
+- 本次 Android 命令最初误用了不存在的 JDK 路径，随后改用已安装的
+  `C:\Program Files\Java\jdk-17` 重跑并通过；这不是产品代码失败。
+- 当前推荐的 `sideload` 保留 `PlugIns/AoxiangAssistantWidget.appex`；无 Widget 的包已
+  改名为显式 `sideload-host-only`，避免再次把可安装性降级误认为 Widget 支持。
+
+## 2026-09-08 goal recovery continuation
+
+- 用户界面中误删 goal 后，后端检查确认原目标仍为 active；没有创建重叠 goal，继续沿用
+  原目标及其验收历史。
+- 最新完整回归：Swift Core 79 tests、Swift App 23 tests、Python 65 tests、Android
+  123 JVM tests 均通过；golden validator 通过 1 version/15 scenarios/32 referenced
+  files；Android Debug APK 构建成功，lint 0 errors/189 existing warnings，`git diff
+  --check` 通过。
+- 当前剩余门禁是把未提交修复推送到 `iOS`，由新 macOS run 对该精确提交执行
+  `iphoneos` archive，并验证推荐 sideload 中同时存在主 App 和 Widget extension。
 
 ## 2026-09-07 regression hardening and iPad delivery path
 

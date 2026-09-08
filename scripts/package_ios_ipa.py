@@ -22,7 +22,17 @@ class IPAPackagingError(ValueError):
     """The archive bundle cannot be safely packaged as a re-signable IPA."""
 
 
-IPA_VARIANTS = ("full", "sideload")
+# ``sideload`` is the recommended Widget-capable artifact. The explicit
+# ``sideload-host-only`` variant remains available for tools that cannot sign
+# nested extensions. Older callers may keep using the two Widget aliases.
+IPA_VARIANTS = (
+    "full",
+    "sideload",
+    "sideload-host-only",
+    "sideload-with-widget",
+    "widget-sideload",
+)
+WIDGET_VARIANTS = frozenset(("full", "sideload", "sideload-with-widget", "widget-sideload"))
 
 
 def package_ipa(
@@ -35,9 +45,10 @@ def package_ipa(
 
     The result is intentionally unsigned. Existing output is left untouched
     until the complete ZIP has been written and closed successfully. The
-    default ``full`` variant retains the Widget extension; ``sideload`` omits
-    the complete PlugIns directory for self-signing tools that cannot sign
-    nested extensions.
+    default ``full`` variant and the recommended ``sideload`` variant retain
+    the Widget extension. ``sideload-host-only`` omits the complete PlugIns
+    directory for self-signing tools that cannot sign nested extensions.
+    ``sideload-with-widget`` and ``widget-sideload`` remain accepted aliases.
     """
 
     app = Path(app_path)
@@ -70,7 +81,7 @@ def package_ipa(
                         f"refusing non-file bundle entry: {item.relative_to(app)}"
                     )
                 relative = item.relative_to(app)
-                if variant == "sideload" and relative.parts[0] == "PlugIns":
+                if variant == "sideload-host-only" and relative.parts[0] == "PlugIns":
                     continue
                 archive_name = PurePosixPath("Payload") / app.name / relative.as_posix()
                 archive.write(item, arcname=str(archive_name))
@@ -93,7 +104,7 @@ def _validate_bundle(app: Path, output: Path, variant: str) -> None:
     if not (app / "Info.plist").is_file():
         raise IPAPackagingError("app bundle is missing Info.plist")
 
-    if variant == "full":
+    if variant in WIDGET_VARIANTS:
         widget_info = app / "PlugIns" / "AoxiangAssistantWidget.appex" / "Info.plist"
         if not widget_info.is_file():
             raise IPAPackagingError("app bundle is missing the Aoxiang Widget extension")

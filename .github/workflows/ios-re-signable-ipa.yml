@@ -64,17 +64,24 @@ jobs:
           IOS_APP_GROUP_IDENTIFIER: ${{ inputs.app_group_identifier }}
         run: bash scripts/build_ios_re_signable_ipa.sh
 
-      - name: Verify both IPA bundle layouts
+      - name: Verify IPA bundle layouts
         env:
           IPA_DIR: ${{ runner.temp }}/ios-artifacts
         run: |
           set -euo pipefail
           test -s "$IPA_DIR/AoxiangAssistant-sideload-re-signable.ipa"
+          test -s "$IPA_DIR/AoxiangAssistant-sideload-host-only-re-signable.ipa"
           test -s "$IPA_DIR/AoxiangAssistant-full-widget-re-signable.ipa"
           unzip -Z1 "$IPA_DIR/AoxiangAssistant-sideload-re-signable.ipa" | grep -Fx 'Payload/AoxiangAssistant.app/Info.plist'
-          ! unzip -Z1 "$IPA_DIR/AoxiangAssistant-sideload-re-signable.ipa" | grep -F 'Payload/AoxiangAssistant.app/PlugIns/'
+          unzip -Z1 "$IPA_DIR/AoxiangAssistant-sideload-re-signable.ipa" | grep -Fx 'Payload/AoxiangAssistant.app/PlugIns/AoxiangAssistantWidget.appex/Info.plist'
+          unzip -Z1 "$IPA_DIR/AoxiangAssistant-sideload-re-signable.ipa" | grep -Fx 'Payload/AoxiangAssistant.app/AoxiangAssistant'
+          unzip -Z1 "$IPA_DIR/AoxiangAssistant-sideload-re-signable.ipa" | grep -Fx 'Payload/AoxiangAssistant.app/PlugIns/AoxiangAssistantWidget.appex/AoxiangAssistantWidget'
+          unzip -Z1 "$IPA_DIR/AoxiangAssistant-sideload-host-only-re-signable.ipa" | grep -Fx 'Payload/AoxiangAssistant.app/Info.plist'
+          ! unzip -Z1 "$IPA_DIR/AoxiangAssistant-sideload-host-only-re-signable.ipa" | grep -F 'Payload/AoxiangAssistant.app/PlugIns/'
           unzip -Z1 "$IPA_DIR/AoxiangAssistant-full-widget-re-signable.ipa" | grep -Fx 'Payload/AoxiangAssistant.app/Info.plist'
           unzip -Z1 "$IPA_DIR/AoxiangAssistant-full-widget-re-signable.ipa" | grep -Fx 'Payload/AoxiangAssistant.app/PlugIns/AoxiangAssistantWidget.appex/Info.plist'
+          unzip -Z1 "$IPA_DIR/AoxiangAssistant-full-widget-re-signable.ipa" | grep -Fx 'Payload/AoxiangAssistant.app/AoxiangAssistant'
+          unzip -Z1 "$IPA_DIR/AoxiangAssistant-full-widget-re-signable.ipa" | grep -Fx 'Payload/AoxiangAssistant.app/PlugIns/AoxiangAssistantWidget.appex/AoxiangAssistantWidget'
 
       - name: Upload re-signable IPA variants
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

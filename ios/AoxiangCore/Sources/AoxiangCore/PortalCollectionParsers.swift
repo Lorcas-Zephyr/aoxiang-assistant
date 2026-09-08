@@ -152,6 +152,61 @@ public enum PortalCollectionParsers {
         return []
     }
 
+    /// Parses the small, sanitized payload returned by the visible education
+    /// WebView collector. The page script never sends cookies, credentials,
+    /// student identifiers or raw HTML; it sends the same domain fields that
+    /// the offline contract already validates.
+    public static func parseVisibleEducation(_ data: Data) throws -> PortalVisibleEducationData {
+        let root = try jsonObject(data)
+        let gradeData = try JSONSerialization.data(withJSONObject: [
+            "records": root["grades"] as? [Any] ?? [],
+        ], options: [])
+        var grades = try parseGradeAPIRecords(gradeData)
+        if grades.isEmpty, let responses = root["gradeResponses"] {
+            let responseData = try JSONSerialization.data(withJSONObject: ["gradeResponses": responses])
+            grades = try parseGradeAPIRecords(responseData)
+        }
+
+        let scheduleRoot = root["schedule"] as? [String: Any] ?? [:]
+        let semester = scheduleRoot["semester"] as? [String: Any] ?? [
+            "id": "current",
+            "name": "当前学期",
+            "startDate": "1970-01-01",
+            "endDate": "1970-01-01",
+        ]
+        let activities = (scheduleRoot["activities"] as? [[String: Any]] ?? []).map { activity in
+            var normalized: [String: Any] = [
+                "courseName": activity["name"] ?? activity["courseName"] ?? "",
+                "courseCode": activity["code"] ?? activity["courseCode"] ?? "",
+                "credits": activity["credits"] ?? 0,
+                "weekday": activity["weekday"] ?? 0,
+                "startUnit": activity["startUnit"] ?? 0,
+                "endUnit": activity["endUnit"] ?? 0,
+                "weekIndexes": activity["weekIndexes"] ?? [],
+                "teachers": activity["teachers"] ?? [],
+                "campus": activity["campus"] ?? "",
+                "building": activity["building"] ?? "",
+                "room": activity["room"] ?? "",
+            ]
+            if let location = activity["location"] { normalized["location"] = location }
+            return normalized
+        }
+        let printData: [String: Any] = [
+            "studentTableVm": ["activities": activities],
+        ]
+        let scheduleData = try JSONSerialization.data(withJSONObject: [
+            "semester": semester,
+            "printData": printData,
+        ], options: [])
+        let schedule = try parseSchedulePayload(scheduleData)
+        let gpa = root["gpa"].flatMap(parseGPA)
+        return PortalVisibleEducationData(
+            grades: keepHighest(grades),
+            gpa: gpa,
+            schedule: schedule
+        )
+    }
+
     public static func parsePortraitGPA(_ html: String) -> Double? {
         let text = decodeEntities(stripHTML(html))
             .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)

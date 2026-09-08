@@ -152,6 +152,50 @@ final class PortalCollectionParserTests: XCTestCase {
         XCTAssertNil(PortalCollectionParsers.parseElectricityBalance(malformed))
     }
 
+    func testVisibleEducationPayloadOnlyNeedsSanitizedFields() throws {
+        let data = try JSONSerialization.data(withJSONObject: [
+            "phase": "success",
+            "grades": [[
+                "course": "软件工程",
+                "credits": 3,
+                "point": 4.0,
+                "score": 95,
+                "category": "课程",
+                "detail": "期末成绩 95",
+            ]],
+            "gpa": 3.76,
+            "schedule": [
+                "semester": [
+                    "id": "term-1",
+                    "name": "2026 秋",
+                    "startDate": "2026-08-31",
+                    "endDate": "2027-01-10",
+                ],
+                "activities": [[
+                    "name": "软件工程",
+                    "code": "SE-101",
+                    "credits": 3,
+                    "weekday": 1,
+                    "startUnit": 1,
+                    "endUnit": 2,
+                    "weekIndexes": [1, 2, 3],
+                    "teachers": ["张老师"],
+                    "campus": "长安",
+                    "building": "A",
+                    "room": "101",
+                ]],
+            ],
+        ])
+
+        let result = try PortalCollectionParsers.parseVisibleEducation(data)
+
+        XCTAssertEqual(result.grades.map(\.course), ["软件工程"])
+        XCTAssertEqual(result.gpa ?? -1, 3.76, accuracy: 0.0001)
+        XCTAssertEqual(result.schedule.semesters.map(\.id), ["term-1"])
+        XCTAssertEqual(result.schedule.courses.first?.teacher, "张老师")
+        XCTAssertEqual(result.schedule.courses.first?.location, "长安 A 101")
+    }
+
     private func fixtureData(_ relativePath: String) throws -> Data {
         try Data(contentsOf: fixtureRoot().appendingPathComponent(relativePath))
     }

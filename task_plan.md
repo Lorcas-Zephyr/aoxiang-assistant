@@ -281,23 +281,23 @@ iOS 迁移保留清晰的存储/备份 seam。
 - [x] Phase 2: SwiftUI 首页、成绩、课表、管理页面及本地编辑接入
 - [x] Phase 3: WidgetKit 只读快照适配与离线端到端验收
 - [x] Phase 4: 前台 WebView/cookie 认证端口、状态机与采集策略（含生产前台采集接线）
-- [ ] Phase 5: BackgroundTasks 尽力而为同步、待处理状态和通知入口
-- [ ] Phase 6: macOS XCTest/静态门禁、Android fixture 兼容性、文档和回滚验收
+- [x] Phase 5: BackgroundTasks 尽力而为同步、待处理状态和通知入口
+- [x] Phase 6: macOS XCTest/静态门禁、Android fixture 兼容性、文档和回滚验收
 - [ ] Phase 7: GitHub macOS `iphoneos` archive、可重签名 IPA 产物和 iPad 安装验证
 - [x] Phase 8: 无 Mac 用户的云端设备 IPA 构建与平板重新签名交付路径设计
 
 ## Verification gates
 
-- [ ] 每个新增 Swift adapter 都有 `schemaVersion/id` fixture 输入/expected 断言。
-- [ ] 离线导入/编辑失败回滚测试覆盖磁盘失败、未知字段、坏记录和悬空引用。
-- [ ] Widget 测试只能通过快照 reader 读数据，无法访问认证或采集端口。
-- [ ] 认证状态转换和后台调度均有可观察、可取消、可重试/待处理测试。
-- [ ] Windows 只报告可执行的 Python/Android/static 检查；Swift/Xcode 由 macOS CI
+- [x] 每个新增 Swift adapter 都有 `schemaVersion/id` fixture 输入/expected 断言。
+- [x] 离线导入/编辑失败回滚测试覆盖磁盘失败、未知字段、坏记录和悬空引用。
+- [x] Widget 测试只能通过快照 reader 读数据，无法访问认证或采集端口。
+- [x] 认证状态转换和后台调度均有可观察、可取消、可重试/待处理测试。
+- [x] Windows 只报告可执行的 Python/Android/static 检查；Swift/Xcode 由 macOS CI
   authoritative gate 验证。
 - [ ] 设备 IPA 从 macOS `iphoneos` archive 的 `.app` 原子打包；产物明确标为
   `re-signable`，不伪称可直接安装，也不把证书、provisioning profile 或 App Group
   entitlement 秘密提交到仓库。
-- [ ] `git diff --check`、fixture validator、Android 回归和 workflow pin 检查通过。
+- [x] `git diff --check`、fixture validator、Android 回归和 workflow pin 检查通过。
 
 ## Errors Encountered
 
@@ -428,11 +428,10 @@ iOS 迁移保留清晰的存储/备份 seam。
 
 ### 2026-09-08 macOS archive evidence
 
-- GitHub Actions run `34174391367` completed successfully from the current `iOS` branch
-  commit. The job ran both Swift Package suites, archived with `-sdk iphoneos`, packaged
-  `AoxiangAssistant-sideload-re-signable.ipa` and
-  `AoxiangAssistant-full-widget-re-signable.ipa`, and passed the no-Widget/embedded-Widget
-  ZIP layout checks.
+- GitHub Actions run `34174391367` completed successfully before the latest repair
+  commit. It ran both Swift Package suites, archived with `-sdk iphoneos`, and passed
+  the then-current embedded/no-Widget ZIP layout checks. A fresh run is required for
+  the current three-variant layout and visible collection changes.
 - The artifact is downloadable from the run page after GitHub authentication. It is not
   signed; installation still requires the user's own valid App IDs, App Group and nested
   code signing.
@@ -453,7 +452,76 @@ iOS 迁移保留清晰的存储/备份 seam。
 
 - 图标唯一来源改为用户提供的无透明 PNG；Android 旧 vector 不参与 iOS 生成。
 - AppIcon 资源覆盖 iPhone/iPad 目标尺寸，Xcode 工程已启用 `AppIcon` catalog。
-- 同一 macOS `iphoneos` archive 现在生成 `AoxiangAssistant-sideload-re-signable.ipa` 和
-  `AoxiangAssistant-full-widget-re-signable.ipa`；前者移除嵌套 Widget，后者保留完整 Widget/App Group。
+- 同一 macOS `iphoneos` archive 现在生成 Widget-capable 的
+  `AoxiangAssistant-sideload-re-signable.ipa`、兼容别名
+  `AoxiangAssistant-full-widget-re-signable.ipa`，以及明确的
+  `AoxiangAssistant-sideload-host-only-re-signable.ipa` 降级包；只有后者移除嵌套 Widget。
 - Python/fixture 回归 55 tests 通过；远端 Swift/Xcode archive、artifact 下载和真实 iPad 安装仍为
   当前目标的未完成验证门。
+
+## 2026-09-08 real-device repair continuation
+
+- [x] Reconfirm the active iOS goal and scope: all current edits are in
+  `aoxiang-assistant` on the `iOS` branch; Structify is not involved.
+- [x] Audit the reported post-login failure and the IPA layout. The supplied
+  device screenshot shows the old stable-HTTP failure `grade response
+  unavailable`; the current visible-WebView path is not yet in a published
+  IPA. Static inspection also found a real JavaScript error in the new path:
+  variables later reassigned by the course-table loop were declared `const`.
+- [ ] Add regression coverage at the public parser/collector/package seams for
+  visible education data, GPA portrait fallback, authentication recovery, and
+  the widget-capable sideload archive.
+- [x] Repair the visible same-origin collection script and use the iOS
+  `Asia/Shanghai` date contract rather than browser UTC for course selection.
+- [x] Update IPA documentation so it distinguishes current Widget-capable
+  `sideload` from explicit `sideload-host-only`; only a package that retains
+  the extension can ever expose a Widget after its signer grants the host and
+  extension the same App Group.
+- [ ] Run local Swift/Python/Android regression, commit/push `iOS`, and verify
+  the fresh macOS archive artifact before asking for another iPad install test.
+
+## 2026-09-08 Widget-capable sideload recovery
+
+- [x] Preserve a Widget-containing `sideload` IPA and add explicit
+  `sideload-host-only` fallback packaging so artifact choice cannot silently
+  remove the extension.
+- [x] Add a one-shot exception for the intentional electricity CAS bootstrap,
+  then retain normal authentication-expiry handling for every later login
+  redirect.
+- [x] Poll the visible electricity page only while a foreground collection is
+  active; parse Vue 2/Vue 3 and rendered balance shapes without transferring
+  credentials, Cookie values, or session state into the app model.
+- [x] Add a management-page action that proves whether the main App can write
+  and refresh the shared Widget snapshot without treating a private sandbox as
+  a success.
+- [ ] Rebuild the iPhone/iPad archive in GitHub Actions and inspect the new
+  `sideload` IPA before another iPad install attempt.
+- [ ] Verify the user-selected signer keeps `PlugIns`, signs both executable
+  bundles, and provisions the shared App Group. This is external device/signing
+  evidence; it cannot be faked by an unsigned CI archive.
+
+## 2026-09-08 recovery verification
+
+- [x] Local portable verification rerun after restoring the active goal: Swift Core
+  79 tests, Swift App 23 tests, Python 65 tests, and golden corpus validation all
+  passed; Android `testDebugUnitTest`, `assembleDebug`, and `lintDebug` passed with
+  123 JVM tests, 0 lint errors, and 189 existing warnings.
+- [x] `git diff --check` passed. The Android debug APK was regenerated at
+  `app/build/outputs/apk/debug/app-debug.apk`.
+- [ ] A fresh macOS workflow run for the current uncommitted repair is still required;
+  the previous run predates the latest CAS/electricity and Widget-capable sideload changes.
+
+## 2026-09-08 goal recovery and release gate
+
+- [x] Confirm the requested goal still exists as the active task goal; continue it rather
+  than creating a duplicate that would lose the existing acceptance history.
+- [x] Re-run the complete portable regression after the latest visible-WebView script
+  changes: Core 79, App 23, Python 65, Android 123, golden corpus validation, Android
+  assemble/lint, and `git diff --check` all pass.
+- [ ] Commit and push the current repair to `iOS`, then require a fresh macOS workflow
+  tied to that exact commit.
+- [ ] Accept the cloud artifact only when the recommended `sideload` IPA contains both
+  host and Widget executables under `PlugIns/AoxiangAssistantWidget.appex`, while the
+  explicit `sideload-host-only` fallback contains no extension.
+- [ ] Keep real signing/App Group provisioning and iPad login/collection/Widget behavior
+  as device-side evidence. A successful unsigned archive cannot claim those external gates.

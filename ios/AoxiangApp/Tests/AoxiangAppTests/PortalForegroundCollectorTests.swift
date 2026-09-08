@@ -135,6 +135,97 @@ final class PortalForegroundCollectorTests: XCTestCase {
         XCTAssertEqual(result.gpa ?? -1, 3.41, accuracy: 0.0001)
     }
 
+    func testVisibleEducationRetryableFailureFallsBackToStableHTTPCollection() async throws {
+        let transport = makeTransport(gpa: .success(json(["gpa": 3.72])))
+        let visibleCalls = LockedCounter()
+        let collector = PortalForegroundCollector(
+            transport: transport,
+            electricityProvider: { 18 },
+            visibleEducationProvider: {
+                visibleCalls.increment()
+                throw PortalCollectionFailure.retryable(.serverUnavailable)
+            }
+        )
+
+        let result = try await collector.collect(state: .readyToCollect)
+
+        XCTAssertEqual(visibleCalls.value, 1)
+        XCTAssertEqual(result.grades.first?.course, "数学")
+        XCTAssertEqual(result.electricityBalance, 18, accuracy: 0.0001)
+        XCTAssertFalse(transport.requests.isEmpty)
+    }
+
+    func testVisibleEducationProviderRunsInsideAuthenticatedPathBeforeStableHTTP() async throws {
+        let transport = RecordingTransport(responses: [:])
+        let education = PortalVisibleEducationData(
+            grades: [OfflineGrade(id: "grade-1", course: "数学", credits: 3, point: 4, score: 95)],
+            gpa: 3.8,
+            schedule: PortalCollectionParsers.SchedulePayload(
+                semesters: [OfflineSemester(id: "term-1", startDate: "2026-01-01", endDate: "2026-07-01")],
+                courses: [OfflineCourse(id: "course-1", name: "数学", semesterId: "term-1")]
+            )
+        )
+        let educationCalls = LockedCounter()
+        let collector = PortalForegroundCollector(
+            transport: transport,
+            electricityProvider: { 18 },
+            visibleEducationProvider: {
+                educationCalls.increment()
+                return education
+            }
+        )
+
+        let result = try await collector.collect(state: .readyToCollect)
+
+        XCTAssertEqual(educationCalls.value, 1)
+        XCTAssertTrue(transport.requests.isEmpty)
+        XCTAssertEqual(result.grades.first?.course, "数学")
+        XCTAssertEqual(result.electricityBalance, 18)
+    }
+
+    func testVisibleEducationProviderUsesPortraitFallbackWhenItsGPAIsMissing() async throws {
+        let transport = RecordingTransport(responses: [:])
+        let portraitCalls = LockedCounter()
+        let education = PortalVisibleEducationData(
+            grades: [OfflineGrade(id: "grade-1", course: "数学", credits: 3, point: 4, score: 95)],
+            gpa: nil,
+            schedule: PortalCollectionParsers.SchedulePayload(
+                semesters: [OfflineSemester(id: "term-1", startDate: "2026-01-01", endDate: "2026-07-01")],
+                courses: []
+            )
+        )
+        let collector = PortalForegroundCollector(
+            transport: transport,
+            electricityProvider: { 18 },
+            portraitProvider: {
+                portraitCalls.increment()
+                return "<span>累计平均学分绩点：3.41</span>"
+            },
+            visibleEducationProvider: { education }
+        )
+
+        let result = try await collector.collect(state: .readyToCollect)
+
+        XCTAssertEqual(portraitCalls.value, 1)
+        XCTAssertEqual(result.gpa ?? -1, 3.41, accuracy: 0.0001)
+    }
+
+    func testLoginHTMLIsReportedAsAuthenticationRecovery() async {
+        let transport = RecordingTransport(responses: [
+            PortalEndpoints.gradeSheet().url.path: [.success(Data("<html>统一身份认证 CAS 登录信息已失效</html>".utf8))]
+        ])
+        let collector = PortalForegroundCollector(transport: transport) { 12 }
+
+        do {
+            _ = try await collector.collect(state: .readyToCollect)
+            XCTFail("expected authentication recovery")
+        } catch let error as PortalCollectionFailure {
+            XCTAssertEqual(error, .authenticationRequired)
+        } catch {
+            XCTFail("unexpected error: \(error)")
+        }
+    }
+
     func testCollectionAdvancesToNextSemesterWhenInitialScheduleHasEnded() async throws {
         let transport = makeTransport(
             gpa: .success(json(["gpa": 3.72])),
@@ -176,6 +267,23 @@ final class PortalForegroundCollectorTests: XCTestCase {
             XCTFail("unexpected error: \(error)")
         }
         XCTAssertEqual(electricityCalls.value, 0)
+    }
+
+    func testCollectionMapsAnUnthrownHTTP401ToAuthenticationRecovery() async {
+        let transport = StatusRecordingTransport(
+            data: Data("<html>登录信息已失效</html>".utf8),
+            statusCode: 401
+        )
+        let collector = PortalForegroundCollector(transport: transport) { 12 }
+
+        do {
+            _ = try await collector.collect(state: .readyToCollect)
+            XCTFail("expected authentication failure")
+        } catch let error as PortalCollectionFailure {
+            XCTAssertEqual(error, .authenticationRequired)
+        } catch {
+            XCTFail("unexpected error: \(error)")
+        }
     }
 
     func testCollectionRejectsInvalidElectricityWithoutReturningPartialData() async {
@@ -323,6 +431,28 @@ final class PortalForegroundCollectorTests: XCTestCase {
 
     private func json(_ object: [String: Any]) -> Data {
         try! JSONSerialization.data(withJSONObject: object, options: [])
+    }
+}
+
+private final class StatusRecordingTransport: PortalCollectionTransport, @unchecked Sendable {
+    private let data: Data
+    private let statusCode: Int
+
+    init(data: Data, statusCode: Int) {
+        self.data = data
+        self.statusCode = statusCode
+    }
+
+    func send(_ request: StableHTTPCollectionRequest) async throws -> (Data, HTTPURLResponse) {
+        (
+            data,
+            HTTPURLResponse(
+                url: request.url,
+                statusCode: statusCode,
+                httpVersion: "HTTP/1.1",
+                headerFields: nil
+            )!
+        )
     }
 }
 

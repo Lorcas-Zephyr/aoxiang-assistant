@@ -8,22 +8,32 @@ Mac, the manual GitHub Actions workflow provides that macOS build host.
 ## Artifact Types
 
 Run **Build re-signable iOS IPA** from the GitHub Actions page on the `iOS`
-branch. It produces one artifact ZIP containing two IPA files:
+branch. It produces one artifact ZIP containing three IPA files:
 
 ```text
 AoxiangAssistant-sideload-re-signable.ipa
+AoxiangAssistant-sideload-host-only-re-signable.ipa
 AoxiangAssistant-full-widget-re-signable.ipa
 ```
 
-Both use the conventional `Payload/AoxiangAssistant.app` structure and are
-deliberately **unsigned**. Neither can be installed as downloaded. Start with
-`AoxiangAssistant-sideload-re-signable.ipa` when using a normal iPad
-self-signing tool: it contains only the main app and does not require signing a
-nested extension or authorizing an App Group. The offline app remains usable,
-but Widget/background snapshot features are absent from this variant.
+All three use the conventional `Payload/AoxiangAssistant.app` structure and are
+deliberately **unsigned**. None can be installed as downloaded.
+`AoxiangAssistant-sideload-re-signable.ipa` is the recommended sideload
+variant: it keeps the nested Widget so a signer that supports extensions can
+install the app in the same way as other Widget-capable apps.
 
-Use `AoxiangAssistant-full-widget-re-signable.ipa` only when the signing tool
-can sign the host app and its embedded Widget and authorize the App Group.
+`AoxiangAssistant-sideload-host-only-re-signable.ipa` is the fallback for a
+signer that cannot process nested extensions. It removes `PlugIns/` and
+therefore cannot show a Widget. `AoxiangAssistant-full-widget-re-signable.ipa`
+uses the same complete Widget layout as the recommended `sideload` artifact;
+it remains for compatibility with earlier downloads. Both Widget-containing
+variants still require the host and extension to be re-signed together and to
+receive the same App Group entitlement.
+
+An older `sideload` artifact may have installed successfully while containing
+no `PlugIns/` directory. That was the former host-only layout and can never
+show a Widget. It is not evidence that the current Widget-containing
+`sideload` artifact has been installed with a compatible extension signer.
 
 No Apple ID, certificate, private key, password, mobile device profile, or
 WebView session is stored in this repository or the workflow. The workflow
@@ -42,14 +52,15 @@ or grant the capability by themselves.
 No personal Mac is required. From Safari on the iPad, open this repository on
 GitHub, switch to the `iOS` branch, open **Actions**, select **Build re-signable
 iOS IPA**, and run the workflow for that branch. When it finishes, download the
-artifact ZIP, extract both IPA files, and start with the `sideload` file in the
-signing tool already trusted on the iPad.
+artifact ZIP, extract the three IPA files, and choose
+`AoxiangAssistant-sideload-re-signable.ipa`. Use the `host-only` file only if
+that signer cannot sign nested extensions.
 
 Do not enter signing credentials, Apple ID details, certificates, profiles, or
 passwords into a GitHub issue, workflow input, repository secret, fixture, or
 source file. The signing tool must support nested extensions and sign both the
-host app and `AoxiangAssistantWidget.appex` only for the `full-widget` file;
-otherwise use the `sideload` file.
+host app and `AoxiangAssistantWidget.appex` for the recommended `sideload`
+file; otherwise use the explicit `sideload-host-only` file.
 
 ## Signing Requirements
 
@@ -60,12 +71,13 @@ then the host app. A tool that only signs the top-level app can produce an
 IPA-shaped file, but iPadOS will reject it or omit the extension.
 
 There is no iPad Settings switch that can add a missing extension or App Group.
-After signing, install the full-widget IPA, open the main app once so it writes
-a snapshot, and add 翱翔助手 from the Home Screen widget gallery. If the
+After signing, install a Widget-containing IPA, open the main app once so it
+writes a snapshot, and add 翱翔助手 from the Home Screen widget gallery. If the
 Widget does not appear, inspect the signed IPA rather than changing display
 settings.
 
-Your signing method must sign every executable bundle together:
+Your signing method must sign every executable bundle together for the
+recommended Widget-containing IPA:
 
 - `AoxiangAssistant.app`;
 - `AoxiangAssistant.app/PlugIns/AoxiangAssistantWidget.appex`.
@@ -84,6 +96,13 @@ Groups. A paid Apple Developer team with the matching App Group capability is
 needed for the full Widget experience. This is a signing limitation, not a
 macOS product target.
 
+Apps whose sideloaded Widgets work, such as an already packaged Notability
+build, have the same underlying requirements: the installed package retained
+the nested extension and its signing/provisioning chain authorized the host
+and extension together. This repository can prepare that layout, but it cannot
+create an App Group capability or a compatible provisioning profile on the
+iPad.
+
 ## Build Verification
 
 The repository includes scripts/verify_signed_ios_ipa.sh for a macOS shell
@@ -96,10 +115,11 @@ App Group before installation:
       group.example.aoxiang
 
 The workflow first runs both Swift Package suites, then runs one device archive
-with `CODE_SIGNING_ALLOWED=NO`, packages both variants, and verifies that the
-sideload IPA has no `PlugIns` entry while the full IPA has the Widget entry. It
+with `CODE_SIGNING_ALLOWED=NO`, packages all three variants, and verifies that
+the recommended sideload and full-widget IPAs have the Widget entry while the
+explicit host-only IPA has no `PlugIns` entry. It
 does not claim a signed device install succeeded. After self-signing, install
-the sideload IPA on a test iPad and verify:
+the chosen signed IPA on a test iPad and verify:
 
 1. Android schedule backup imports without asking for credentials.
 2. Home, grades, schedule and management views render local data and local

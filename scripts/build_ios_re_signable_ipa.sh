@@ -59,5 +59,10 @@ python3 "$repo_root/scripts/package_ios_ipa.py" \
 
 python3 "$repo_root/scripts/package_ios_ipa.py" \
   --app-path "$app_path" \
+  --variant sideload-host-only \
+  --output "$output_dir/AoxiangAssistant-sideload-host-only-re-signable.ipa"
+
+python3 "$repo_root/scripts/package_ios_ipa.py" \
+  --app-path "$app_path" \
   --variant full \
   --output "$output_dir/AoxiangAssistant-full-widget-re-signable.ipa"

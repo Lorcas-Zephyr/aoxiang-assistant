@@ -177,6 +177,7 @@ public struct ManagementScreen: View {
     @State private var showingAuthentication = false
     @State private var collectionTask: Task<Void, Never>?
     @State private var collectionStatus: String?
+    @State private var widgetStatus: String?
     @State private var isCollecting = false
     @StateObject private var authenticationModel: VisibleAuthenticationViewModel
 
@@ -222,6 +223,20 @@ public struct ManagementScreen: View {
                         exportDocument = BackupFileDocument(data: data)
                         showingExporter = true
                     } label: { Label("导出可移植备份", systemImage: "square.and.arrow.up") }
+                }
+                Section("小组件") {
+                    Button {
+                        widgetStatus = model.writeWidgetSnapshot()
+                            ? "小组件快照已刷新"
+                            : "小组件快照无法写入；本地数据保持不变"
+                    } label: {
+                        Label("刷新小组件快照", systemImage: "arrow.triangle.2.circlepath")
+                    }
+                    if let widgetStatus {
+                        Text(widgetStatus)
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
                 }
                 Section("学期") {
                     if model.state.semesters.isEmpty {
@@ -287,6 +302,10 @@ public struct ManagementScreen: View {
             collectionStatus = "请先完成统一认证"
             return
         }
+        // Keep collection progress visible in the management screen. The
+        // WebView remains the same object and keeps its cookie store after
+        // the authentication sheet is dismissed.
+        showingAuthentication = false
         isCollecting = true
         collectionStatus = "正在读取成绩、课表和电费…"
         let cookieStore = authenticationModel.webView.configuration.websiteDataStore.httpCookieStore
@@ -295,7 +314,8 @@ public struct ManagementScreen: View {
                 port: URLSessionHTTPCollectionAdapter(cookieStore: cookieStore)
             ),
             electricityProvider: { try await authenticationModel.collectElectricityBalance() },
-            portraitProvider: { try await authenticationModel.collectPortraitHTML() }
+            portraitProvider: { try await authenticationModel.collectPortraitHTML() },
+            visibleEducationProvider: { try await authenticationModel.collectEducationData() }
         )
         collectionTask?.cancel()
         collectionTask = Task { @MainActor in

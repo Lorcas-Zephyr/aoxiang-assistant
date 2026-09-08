@@ -54,7 +54,7 @@ class PackageIOSIPATest(unittest.TestCase):
         self.assertTrue(all(not name.startswith("/") for name in names))
         self.assertTrue(all(".." not in Path(name).parts for name in names))
 
-    def test_sideload_variant_packages_only_host_app_without_mutating_source(self):
+    def test_sideload_variant_retains_nested_widget_without_mutating_source(self):
         app = self.make_app_bundle()
         widget_info = (
             app / "PlugIns" / "AoxiangAssistantWidget.appex" / "Info.plist"
@@ -68,9 +68,51 @@ class PackageIOSIPATest(unittest.TestCase):
             names = set(archive.namelist())
         self.assertIn("Payload/AoxiangAssistant.app/Info.plist", names)
         self.assertIn("Payload/AoxiangAssistant.app/AoxiangAssistant", names)
+        self.assertIn(
+            "Payload/AoxiangAssistant.app/PlugIns/AoxiangAssistantWidget.appex/Info.plist",
+            names,
+        )
+        self.assertTrue(widget_info.is_file(), "packaging must not edit the archive")
+
+    def test_sideload_host_only_variant_omits_nested_widget(self):
+        app = self.make_app_bundle()
+        output = self.root / "out" / "AoxiangAssistant-sideload-host-only-re-signable.ipa"
+
+        self.packager.package_ipa(app, output, variant="sideload-host-only")
+
+        with zipfile.ZipFile(output) as archive:
+            names = set(archive.namelist())
+        self.assertIn("Payload/AoxiangAssistant.app/Info.plist", names)
         self.assertFalse(
             any(name.startswith("Payload/AoxiangAssistant.app/PlugIns/") for name in names)
         )
+
+    def test_sideload_with_widget_variant_retains_nested_widget(self):
+        output = self.root / "out" / "AoxiangAssistant-sideload-with-widget-re-signable.ipa"
+
+        self.packager.package_ipa(
+            self.make_app_bundle(), output, variant="sideload-with-widget"
+        )
+
+        with zipfile.ZipFile(output) as archive:
+            names = set(archive.namelist())
+        self.assertIn("Payload/AoxiangAssistant.app/Info.plist", names)
+        self.assertIn(
+            "Payload/AoxiangAssistant.app/PlugIns/AoxiangAssistantWidget.appex/Info.plist",
+            names,
+        )
+
+    def test_sideload_with_widget_requires_the_widget_extension(self):
+        app = self.root / "AoxiangAssistant.app"
+        app.mkdir()
+        (app / "Info.plist").write_text("fixture plist", encoding="utf-8")
+
+        with self.assertRaises(self.packager.IPAPackagingError):
+            self.packager.package_ipa(
+                app,
+                self.root / "out" / "missing-widget.ipa",
+                variant="sideload-with-widget",
+            )
 
     def test_invalid_bundle_does_not_replace_existing_ipa(self):
         broken_bundle = self.root / "Broken.app"
