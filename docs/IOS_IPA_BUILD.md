@@ -30,6 +30,13 @@ WebView session is stored in this repository or the workflow. The workflow
 uses a temporary macOS directory and uploads only the IPA artifact for seven
 days.
 
+The workflow also accepts three non-secret identifiers: the host App ID, the
+Widget App ID, and the App Group. Leave the defaults only when your signing
+team owns those exact identifiers. Otherwise enter the identifiers that already
+exist in your Apple Developer team; the archive stamps the same values into
+both target Info.plists and entitlements. These fields do not create an App ID
+or grant the capability by themselves.
+
 ## iPad-Only Workflow
 
 No personal Mac is required. From Safari on the iPad, open this repository on
@@ -45,6 +52,18 @@ host app and `AoxiangAssistantWidget.appex` only for the `full-widget` file;
 otherwise use the `sideload` file.
 
 ## Signing Requirements
+
+For the signer screen, keep the “删除 Plugins” switch disabled. The other
+iPad compatibility switches do not enable Widget support. The full package
+must be re-signed in this order: the nested Widget (and any nested framework),
+then the host app. A tool that only signs the top-level app can produce an
+IPA-shaped file, but iPadOS will reject it or omit the extension.
+
+There is no iPad Settings switch that can add a missing extension or App Group.
+After signing, install the full-widget IPA, open the main app once so it writes
+a snapshot, and add 翱翔助手 from the Home Screen widget gallery. If the
+Widget does not appear, inspect the signed IPA rather than changing display
+settings.
 
 Your signing method must sign every executable bundle together:
 
@@ -66,6 +85,15 @@ needed for the full Widget experience. This is a signing limitation, not a
 macOS product target.
 
 ## Build Verification
+
+The repository includes scripts/verify_signed_ios_ipa.sh for a macOS shell
+that checks the nested code signatures, provisioning profiles, Bundle IDs and
+App Group before installation:
+
+    bash scripts/verify_signed_ios_ipa.sh signed-full-widget.ipa \
+      com.example.aoxiang \
+      com.example.aoxiang.widget \
+      group.example.aoxiang
 
 The workflow first runs both Swift Package suites, then runs one device archive
 with `CODE_SIGNING_ALLOWED=NO`, packages both variants, and verifies that the

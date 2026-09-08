@@ -8,6 +8,21 @@ on:
         required: true
         default: iOS
         type: string
+      app_bundle_identifier:
+        description: Team-owned host App ID to stamp into the unsigned archive
+        required: true
+        default: cn.nwpu.aoxiangassistant
+        type: string
+      widget_bundle_identifier:
+        description: Team-owned Widget App ID to stamp into the unsigned archive
+        required: true
+        default: cn.nwpu.aoxiangassistant.widget
+        type: string
+      app_group_identifier:
+        description: Team-owned App Group shared by the host and Widget
+        required: true
+        default: group.cn.nwpu.aoxiang-assistant
+        type: string
 
 permissions:
   contents: read
@@ -41,6 +56,9 @@ jobs:
       - name: Archive an unsigned device bundle and package IPA
         env:
           IOS_RE_SIGNABLE_IPA_OUTPUT_DIR: ${{ runner.temp }}/ios-artifacts
+          IOS_APP_BUNDLE_IDENTIFIER: ${{ inputs.app_bundle_identifier }}
+          IOS_WIDGET_BUNDLE_IDENTIFIER: ${{ inputs.widget_bundle_identifier }}
+          IOS_APP_GROUP_IDENTIFIER: ${{ inputs.app_group_identifier }}
         run: bash scripts/build_ios_re_signable_ipa.sh
 
       - name: Verify both IPA bundle layouts

@@ -4,8 +4,24 @@ import Foundation
 /// The portable package keeps the path contract in one place; it does not
 /// expose credentials, cookies, authentication state, or network clients.
 public enum AoxiangSharedContainer {
-    public static let appGroupIdentifier = "group.cn.nwpu.aoxiang-assistant"
+    /// The source default is useful for the project's own provisioning setup.
+    /// Re-signers may use a team-owned App Group; the Xcode targets stamp that
+    /// value into both Info.plists so the binary and signed entitlement agree.
+    public static let defaultAppGroupIdentifier = "group.cn.nwpu.aoxiang-assistant"
     public static let snapshotFileName = "widget-snapshot.json"
+
+    public static var appGroupIdentifier: String {
+        guard let configured = Bundle.main.object(
+            forInfoDictionaryKey: "AoxiangAppGroupIdentifier"
+        ) as? String else {
+            return defaultAppGroupIdentifier
+        }
+        let value = configured.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard value.hasPrefix("group."), !value.contains("$(") else {
+            return defaultAppGroupIdentifier
+        }
+        return value
+    }
 
     /// Returns the App Group location exclusively. A missing entitlement,
     /// provisioning capability, or non-iOS host must be treated as unavailable

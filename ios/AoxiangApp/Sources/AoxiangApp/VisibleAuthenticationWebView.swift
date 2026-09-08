@@ -43,6 +43,12 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
     private let sessionStore: AuthenticationSessionStore
     private var lastInspectedURL: URL?
     private var stateDetectionInFlight = false
+    private var electricityContinuation: CheckedContinuation<Double, Error>?
+    private var electricityTimeoutTask: Task<Void, Never>?
+    private var portraitContinuation: CheckedContinuation<String?, Error>?
+    private var portraitTimeoutTask: Task<Void, Never>?
+    private let studentPortraitURL = URL(string: "https://jwxt.nwpu.edu.cn/student/for-std/student-portrait")!
+    private let electricityLoginURL = URL(string: "https://yktapp.nwpu.edu.cn/berserker-auth/cas/login/supwisdom?targetUrl=https%3A%2F%2Fyktapp.nwpu.edu.cn%2Fplat")!
 
     public init(
         loginURL: URL,
@@ -88,6 +94,72 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
         transition(.prepareToCollect)
     }
 
+    /// Records a collection-side authentication result without accepting any
+    /// credential or session value into the portable model.
+    public func recordCollectionFailure(_ failure: PortalCollectionFailure) {
+        switch failure {
+        case .authenticationRequired:
+            transition(.authenticationExpired)
+        case .smsRequired:
+            transition(.smsRequired)
+        case .retryable(let reason):
+            transition(.retryableFailure(RetryableAuthenticationFailure(
+                operation: .collection,
+                reason: reason
+            )))
+        case .invalidResponse, .cancelled:
+            lastError = failure.localizedDescription
+        }
+    }
+
+    /// Runs the electricity page in the same visible WebView/cookie store as
+    /// authentication. Tokens remain inside page JavaScript; only the parsed
+    /// non-sensitive balance crosses back to the app.
+    public func collectElectricityBalance() async throws -> Double {
+        guard state == .readyToCollect else {
+            throw PortalCollectionFailure.invalidResponse("collection not prepared")
+        }
+        guard electricityContinuation == nil, portraitContinuation == nil else {
+            throw PortalCollectionFailure.retryable(.invalidResponse)
+        }
+        return try await withCheckedThrowingContinuation { continuation in
+            electricityContinuation = continuation
+            electricityTimeoutTask?.cancel()
+            electricityTimeoutTask = Task { [weak self] in
+                try? await Task.sleep(nanoseconds: 20_000_000_000)
+                guard !Task.isCancelled else { return }
+                await MainActor.run {
+                    self?.finishElectricity(.failure(PortalCollectionFailure.retryable(.serverUnavailable)))
+                }
+            }
+            webView.load(URLRequest(url: electricityLoginURL))
+        }
+    }
+
+    /// Reads the student portrait through the visible WebView when the stable
+    /// GPA endpoint has no usable value. Only the returned HTML text crosses
+    /// into the collector; cookies, credentials and page state stay in WebKit.
+    public func collectPortraitHTML() async throws -> String? {
+        guard state == .readyToCollect else {
+            throw PortalCollectionFailure.invalidResponse("collection not prepared")
+        }
+        guard electricityContinuation == nil, portraitContinuation == nil else {
+            throw PortalCollectionFailure.retryable(.invalidResponse)
+        }
+        return try await withCheckedThrowingContinuation { continuation in
+            portraitContinuation = continuation
+            portraitTimeoutTask?.cancel()
+            portraitTimeoutTask = Task { [weak self] in
+                try? await Task.sleep(nanoseconds: 12_000_000_000)
+                guard !Task.isCancelled else { return }
+                await MainActor.run {
+                    self?.finishPortrait(.failure(PortalCollectionFailure.retryable(.serverUnavailable)))
+                }
+            }
+            webView.load(URLRequest(url: studentPortraitURL))
+        }
+    }
+
     /// Returns cookie names only. Values are deliberately inaccessible to the
     /// portable layer and are never serialized.
     public func sessionCookieNames(completion: @escaping ([String]) -> Void) {
@@ -122,6 +194,8 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
 
     public func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         detectAuthenticationState(in: webView)
+        handlePortraitNavigation(in: webView)
+        handleElectricityNavigation(in: webView)
     }
 
     public func webView(
@@ -134,6 +208,12 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
             operation: .login,
             reason: .networkUnavailable
         )))
+        if electricityContinuation != nil {
+            finishElectricity(.failure(PortalCollectionFailure.retryable(.networkUnavailable)))
+        }
+        if portraitContinuation != nil {
+            finishPortrait(.failure(PortalCollectionFailure.retryable(.networkUnavailable)))
+        }
     }
 
     public func webView(
@@ -146,6 +226,113 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
             operation: .login,
             reason: .networkUnavailable
         )))
+        if electricityContinuation != nil {
+            finishElectricity(.failure(PortalCollectionFailure.retryable(.networkUnavailable)))
+        }
+        if portraitContinuation != nil {
+            finishPortrait(.failure(PortalCollectionFailure.retryable(.networkUnavailable)))
+        }
+    }
+
+    private func handlePortraitNavigation(in webView: WKWebView) {
+        guard portraitContinuation != nil, let url = webView.url,
+              url.host?.lowercased() == studentPortraitURL.host?.lowercased(),
+              url.path.lowercased().hasPrefix(studentPortraitURL.path.lowercased()) else { return }
+        webView.evaluateJavaScript("document.documentElement ? document.documentElement.outerHTML : ''") { [weak self] value, error in
+            Task { @MainActor in
+                guard let self else { return }
+                if let error {
+                    self.finishPortrait(.failure(PortalCollectionFailure.invalidResponse(error.localizedDescription)))
+                } else {
+                    self.finishPortrait(.success(value as? String))
+                }
+            }
+        }
+    }
+
+    private func handleElectricityNavigation(in webView: WKWebView) {
+        guard electricityContinuation != nil, let url = webView.url,
+              url.host?.lowercased() == "yktapp.nwpu.edu.cn" else { return }
+        let path = url.path.lowercased()
+        if path.hasPrefix("/plat") {
+            webView.evaluateJavaScript("""
+            (() => {
+              const token = new URL(location.href).searchParams.get('synjones-auth') || sessionStorage.getItem('access_token') || '';
+              if (!token) return false;
+              location.replace(location.origin + '/jfdt/charge/feeitem/toAppitem?feeitemid=182&synjones-auth=' + encodeURIComponent(token) + '&appId=36&loginFrom=h5&type=app');
+              return true;
+            })()
+            """, completionHandler: nil)
+            return
+        }
+        guard path.hasPrefix("/jfdt/") else { return }
+        let script = """
+        (() => {
+          const labels = ['当前剩余电量','剩余电量','电费余额','剩余电费','剩余金额','电量余额'];
+          const parse = value => {
+            const match = String(value == null ? '' : value).match(/-?\\d+(?:\\.\\d+)?/);
+            if (!match) return null;
+            const number = Number.parseFloat(match[0]);
+            return Number.isFinite(number) && number >= 0 && number < 100000 ? number : null;
+          };
+          const inspect = value => {
+            if (!value || typeof value !== 'object') return null;
+            for (const label of labels) {
+              if (Object.prototype.hasOwnProperty.call(value, label)) {
+                const parsed = parse(value[label]);
+                if (parsed !== null) return parsed;
+              }
+            }
+            return null;
+          };
+          const root = document.querySelector('#app') && document.querySelector('#app').__vue__;
+          const queue = root ? [root] : [];
+          const seen = new Set();
+          while (queue.length && seen.size < 100) {
+            const component = queue.shift();
+            if (!component || seen.has(component)) continue;
+            seen.add(component);
+            const data = component.$data || {};
+            const candidates = [component.aboutEleric && component.aboutEleric.electricInfo, data.aboutEleric && data.aboutEleric.electricInfo, component.electricInfo, data.electricInfo];
+            for (const candidate of candidates) {
+              const parsed = inspect(candidate);
+              if (parsed !== null) return parsed;
+            }
+            (component.$children || []).forEach(child => queue.push(child));
+          }
+          const text = document.body ? document.body.innerText : '';
+          const match = text.match(/(?:当前剩余电量|剩余电量|电费余额|剩余电费|剩余金额|电量余额)\\s*[：:]?\\s*(?:¥|￥)?\\s*(-?\\d+(?:\\.\\d+)?)/);
+          return match ? parse(match[1]) : null;
+        })()
+        """
+        webView.evaluateJavaScript(script) { [weak self] value, error in
+            Task { @MainActor in
+                guard let self else { return }
+                if let error {
+                    self.finishElectricity(.failure(PortalCollectionFailure.invalidResponse(error.localizedDescription)))
+                    return
+                }
+                if let number = value as? NSNumber {
+                    self.finishElectricity(.success(number.doubleValue))
+                }
+            }
+        }
+    }
+
+    private func finishElectricity(_ result: Result<Double, Error>) {
+        electricityTimeoutTask?.cancel()
+        electricityTimeoutTask = nil
+        guard let continuation = electricityContinuation else { return }
+        electricityContinuation = nil
+        continuation.resume(with: result)
+    }
+
+    private func finishPortrait(_ result: Result<String?, Error>) {
+        portraitTimeoutTask?.cancel()
+        portraitTimeoutTask = nil
+        guard let continuation = portraitContinuation else { return }
+        portraitContinuation = nil
+        continuation.resume(with: result)
     }
 
     private func detectAuthenticationState(in webView: WKWebView) {
@@ -257,8 +444,15 @@ public struct VisibleAuthenticationWebView: UIViewRepresentable {
 
 public struct AuthenticationScreen: View {
     @ObservedObject public var model: VisibleAuthenticationViewModel
+    private let onPrepareToCollect: () -> Void
 
-    public init(model: VisibleAuthenticationViewModel) { self.model = model }
+    public init(
+        model: VisibleAuthenticationViewModel,
+        onPrepareToCollect: (() -> Void)? = nil
+    ) {
+        self.model = model
+        self.onPrepareToCollect = onPrepareToCollect ?? { model.prepareToCollect() }
+    }
 
     public var body: some View {
         VStack(spacing: 0) {
@@ -266,8 +460,10 @@ public struct AuthenticationScreen: View {
             HStack {
                 Text(statusText).font(.caption)
                 Spacer()
-                if model.state == .authenticated {
-                    Button("准备采集") { model.prepareToCollect() }
+                if model.state == .authenticated || model.state == .readyToCollect {
+                    Button(model.state == .readyToCollect ? "开始采集" : "准备采集") {
+                        onPrepareToCollect()
+                    }
                 }
                 Button("重新登录") { model.startInteractiveLogin() }
             }

@@ -21,8 +21,8 @@ public enum OfflineGradeService {
     }
 
     public static func selectedGPA(api: Double?, portrait: Double?) -> Double? {
-        if let api, api.isFinite, api >= 0 { return api }
-        if let portrait, portrait.isFinite, portrait >= 0 { return portrait }
+        if let api, api.isFinite, (0...5).contains(api) { return api }
+        if let portrait, portrait.isFinite, (0...5).contains(portrait) { return portrait }
         return nil
     }
 

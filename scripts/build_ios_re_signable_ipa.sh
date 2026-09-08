@@ -7,6 +7,22 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 configuration="${IOS_CONFIGURATION:-Release}"
 output_dir="${IOS_RE_SIGNABLE_IPA_OUTPUT_DIR:-$repo_root/dist/ios}"
+app_bundle_identifier="${IOS_APP_BUNDLE_IDENTIFIER:-cn.nwpu.aoxiangassistant}"
+widget_bundle_identifier="${IOS_WIDGET_BUNDLE_IDENTIFIER:-cn.nwpu.aoxiangassistant.widget}"
+app_group_identifier="${IOS_APP_GROUP_IDENTIFIER:-group.cn.nwpu.aoxiang-assistant}"
+
+if [[ ! "$app_bundle_identifier" =~ ^[A-Za-z0-9.-]+$ ]]; then
+  echo "invalid host bundle identifier: $app_bundle_identifier" >&2
+  exit 2
+fi
+if [[ ! "$widget_bundle_identifier" =~ ^[A-Za-z0-9.-]+$ ]]; then
+  echo "invalid Widget bundle identifier: $widget_bundle_identifier" >&2
+  exit 2
+fi
+if [[ ! "$app_group_identifier" =~ ^group\.[A-Za-z0-9.-]+$ ]]; then
+  echo "invalid App Group identifier: $app_group_identifier" >&2
+  exit 2
+fi
 temporary_root="$(mktemp -d "${TMPDIR:-/tmp}/aoxiang-device-archive.XXXXXX")"
 archive_path="$temporary_root/AoxiangAssistant.xcarchive"
 
@@ -26,6 +42,9 @@ xcodebuild \
   CODE_SIGNING_ALLOWED=NO \
   CODE_SIGNING_REQUIRED=NO \
   CODE_SIGN_IDENTITY="" \
+  AOXIANG_APP_BUNDLE_IDENTIFIER="$app_bundle_identifier" \
+  AOXIANG_WIDGET_BUNDLE_IDENTIFIER="$widget_bundle_identifier" \
+  AOXIANG_APP_GROUP_IDENTIFIER="$app_group_identifier" \
   archive
 
 app_path="$archive_path/Products/Applications/AoxiangAssistant.app"

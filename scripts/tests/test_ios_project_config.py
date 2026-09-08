@@ -25,6 +25,10 @@ IOS_OFFLINE_VIEWS_FILE = REPO_ROOT / "ios" / "AoxiangApp" / "Sources" / "Aoxiang
 IOS_AUTHENTICATION_VIEW_FILE = REPO_ROOT / "ios" / "AoxiangApp" / "Sources" / "AoxiangApp" / "VisibleAuthenticationWebView.swift"
 IOS_SHARED_CONTAINER_FILE = REPO_ROOT / "ios" / "AoxiangCore" / "Sources" / "AoxiangCore" / "SharedContainer.swift"
 IOS_WIDGET_FILE = REPO_ROOT / "ios" / "AoxiangAssistant" / "Widget" / "AoxiangWidget.swift"
+IOS_APP_ENTITLEMENTS_FILE = REPO_ROOT / "ios" / "AoxiangAssistant" / "App" / "AoxiangAssistant.entitlements"
+IOS_WIDGET_ENTITLEMENTS_FILE = REPO_ROOT / "ios" / "AoxiangAssistant" / "Widget" / "AoxiangAssistantWidget.entitlements"
+IOS_APP_INFO_FILE = REPO_ROOT / "ios" / "AoxiangAssistant" / "App" / "Info.plist"
+IOS_WIDGET_INFO_FILE = REPO_ROOT / "ios" / "AoxiangAssistant" / "Widget" / "Info.plist"
 SCHEME_FILE = (
     REPO_ROOT
     / "ios"
@@ -36,6 +40,7 @@ SCHEME_FILE = (
 WORKFLOW_FILE = REPO_ROOT / ".github" / "workflows" / "cross-platform-contract.yml"
 IPA_WORKFLOW_FILE = REPO_ROOT / ".github" / "workflows" / "ios-re-signable-ipa.yml"
 IPA_BUILD_SCRIPT = REPO_ROOT / "scripts" / "build_ios_re_signable_ipa.sh"
+SIGNED_IPA_VERIFY_SCRIPT = REPO_ROOT / "scripts" / "verify_signed_ios_ipa.sh"
 
 
 class IOSProjectConfigurationTest(unittest.TestCase):
@@ -47,6 +52,10 @@ class IOSProjectConfigurationTest(unittest.TestCase):
         cls.ios_authentication_view = IOS_AUTHENTICATION_VIEW_FILE.read_text(encoding="utf-8")
         cls.ios_shared_container = IOS_SHARED_CONTAINER_FILE.read_text(encoding="utf-8")
         cls.ios_widget = IOS_WIDGET_FILE.read_text(encoding="utf-8")
+        cls.ios_app_entitlements = IOS_APP_ENTITLEMENTS_FILE.read_text(encoding="utf-8")
+        cls.ios_widget_entitlements = IOS_WIDGET_ENTITLEMENTS_FILE.read_text(encoding="utf-8")
+        cls.ios_app_info = IOS_APP_INFO_FILE.read_text(encoding="utf-8")
+        cls.ios_widget_info = IOS_WIDGET_INFO_FILE.read_text(encoding="utf-8")
         cls.scheme = SCHEME_FILE.read_text(encoding="utf-8")
         cls.workflow = WORKFLOW_FILE.read_text(encoding="utf-8")
 
@@ -154,6 +163,25 @@ class IOSProjectConfigurationTest(unittest.TestCase):
         self.assertIn("sharedSnapshotURL", self.ios_widget)
         self.assertNotIn("snapshotURL()", self.ios_widget)
 
+    def test_signed_targets_can_use_the_signers_registered_identifiers(self):
+        self.assertIn("AOXIANG_APP_BUNDLE_IDENTIFIER", self.project)
+        self.assertIn("AOXIANG_WIDGET_BUNDLE_IDENTIFIER", self.project)
+        self.assertIn("AOXIANG_APP_GROUP_IDENTIFIER", self.project)
+        self.assertIn("$(AOXIANG_APP_GROUP_IDENTIFIER)", self.ios_app_entitlements)
+        self.assertIn("$(AOXIANG_APP_GROUP_IDENTIFIER)", self.ios_widget_entitlements)
+        self.assertIn("AoxiangAppGroupIdentifier", self.ios_app_info)
+        self.assertIn("AoxiangAppGroupIdentifier", self.ios_widget_info)
+
+    def test_manual_ipa_workflow_exposes_non_secret_signing_identity_inputs(self):
+        workflow = IPA_WORKFLOW_FILE.read_text(encoding="utf-8")
+        for input_name in (
+            "app_bundle_identifier",
+            "widget_bundle_identifier",
+            "app_group_identifier",
+        ):
+            self.assertIn(f"{input_name}:", workflow)
+            self.assertIn(f"inputs.{input_name}", workflow)
+
     def test_macos_ci_builds_shared_ios_scheme_without_signing(self):
         self.assertIn("runs-on: macos-latest", self.workflow)
         self.assertIn("xcodebuild", self.workflow)
@@ -191,6 +219,26 @@ class IOSProjectConfigurationTest(unittest.TestCase):
         self.assertIn("--variant full", script)
         self.assertNotIn("security import", script)
         self.assertNotIn("provisioning profile", script.lower())
+
+    def test_re_signable_ipa_builder_passes_team_owned_identifiers_to_xcodebuild(self):
+        script = IPA_BUILD_SCRIPT.read_text(encoding="utf-8")
+        for setting in (
+            "AOXIANG_APP_BUNDLE_IDENTIFIER",
+            "AOXIANG_WIDGET_BUNDLE_IDENTIFIER",
+            "AOXIANG_APP_GROUP_IDENTIFIER",
+        ):
+            self.assertIn(setting, script)
+
+    def test_signed_ipa_verifier_checks_nested_code_and_shared_entitlements(self):
+        script = SIGNED_IPA_VERIFY_SCRIPT.read_text(encoding="utf-8")
+        for required in (
+            "codesign --verify --deep --strict",
+            "AoxiangAssistantWidget.appex",
+            "embedded.mobileprovision",
+            "application-groups",
+            "security cms",
+        ):
+            self.assertIn(required, script)
 
     def _target_block(self, target_id):
         return self._object_in_section("PBXNativeTarget", target_id)

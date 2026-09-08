@@ -161,6 +161,54 @@
   stable HTTP collector must record `needsUserAttention`/retry metadata and exit without motion or
   fake success; visible foreground login remains the recovery path.
 
+## 2026-09-08 foreground collector audit
+
+- The production management view calls `beginCollection()` after the user
+  explicitly prepares the authenticated WebView session. Stable education
+  endpoints use `URLSessionHTTPCollectionAdapter` with the same
+  `WKHTTPCookieStore`; electricity and portrait HTML stay on the visible WebView
+  path.
+- `PortalForegroundCollector` returns only sanitized domain values. It does not
+  pass passwords, Cookie headers, SMS codes, raw WebView state, or raw response
+  bytes into `OfflineAppViewModel` or Widget snapshots.
+- A collection commit first validates/persists the candidate and then writes the
+  shared snapshot. Snapshot failure restores the prior snapshot and local state;
+  a missing App Group is an explicit unavailable state rather than a private
+  fallback.
+- The collector follows Android's semester policy and uses
+  `OfflineDatePolicy.businessCalendar` (`Asia/Shanghai`) for its implicit date.
+  This closes the date-boundary drift risk between collection and offline
+  schedule rendering.
+- Remaining evidence gap is operational, not a claimed pass: no Windows test
+  can prove `xcodebuild -sdk iphoneos`, nested Widget signing, App Group
+  provisioning, or installation on the user's iPad. The prior GitHub Actions
+  run `34139741539` succeeded for commit `721f447`, but a new run is needed after
+  the current collector changes.
+
+## Foreground collection gap audit (2026-09-08)
+
+- Android v2.2.2 starts a three-target sequence after unified authentication succeeds: `grades`,
+  `schedule`, then `electricity`. Each target uses a visible WebView JavaScript path when the portal
+  page is JavaScript-dependent; stable same-origin API responses are parsed before local commit.
+- Grade collection accepts published rows, removes unpublished rows, keeps the highest record for
+  same-name retakes, and selects GPA from the API before the portrait-page fallback. A missing GPA
+  must not discard otherwise valid grade rows.
+- Schedule collection preserves an empty semester, normalizes teacher/location/week/repeat data, and
+  filters online courses according to the existing Android parser contract.
+- Electricity collection accepts only finite non-negative values from the expected response shape;
+  missing, malformed, negative, or settlement-time responses remain an explicit non-success outcome.
+- `VisibleAuthenticationViewModel.prepareToCollect()` remains an explicit state transition, while
+  `ManagementScreen.beginCollection()` now owns the foreground driver after that gate. It injects the
+  same WebView cookie store into `URLSessionHTTPCollectionAdapter` and keeps portrait/electricity page
+  JavaScript on the visible WebView path.
+- The driver seam is now implemented: `PortalForegroundCollector` parses responses into a sanitized
+  `PortalCollectedData`, and `OfflineAppViewModel.applyPortalCollection` validates/persists the complete
+  candidate before publishing state or refreshing Widget timelines. Credentials, cookie values, SMS
+  codes, and WebView session state remain outside the candidate and snapshot types.
+- The remaining gap is device evidence and portal compatibility, not an absent app connection: Xcode
+  device archive, nested extension signing/App Group authorization, and a real post-login collection
+  run on iPad still need to be observed.
+
 ## iPad-only re-signable IPA constraints (2026-09-07)
 
 - iPhone/iPad builds still require Xcode's iPhoneOS SDK, but the Mac can be a GitHub-hosted

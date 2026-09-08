@@ -149,6 +149,39 @@
 - 已将 `task_plan.md` 切换为三阶段实施计划；当前尚未开始 iOS UI 或认证/后台代码，先盘点
   既有 Foundation-only Package、Android backup seam 和可复用 fixture 入口。
 
+## 2026-09-08 foreground collection continuation
+
+- Reviewed the current `iOS` worktree and confirmed all changes remain under
+  `aoxiang-assistant`; no Structify or data-structure-agent files were restored
+  or introduced.
+- Added Android-compatible course-table semester selection to the Swift
+  collector: valid dated candidates are ordered, the current/next/latest
+  candidate is selected, and an activity-derived end date causes a safe retry of
+  the next semester. Empty schedules keep the Android two-week minimum.
+- Added Core parser tests for selection, embedded semester discovery and empty
+  schedule end dates, plus an App transport test proving the next-semester
+  request chain.
+- Changed the collector's implicit date source from UTC to the shared
+  `Asia/Shanghai` business calendar so iPad locale/time-zone settings cannot
+  select a wrong semester around midnight.
+- Windows verification after the continuation: Core 77 tests and App 15 tests
+  passed; Python test suite 59 passed; golden validator passed; `git diff
+  --check` passed. Xcode/device archive and iPad installation remain unverified
+  until the GitHub macOS workflow is run.
+
+## 2026-09-08 foreground collection integration
+
+- 复核最新 Swift 变更后，先修复 `PortalCollectedData` 与 `SchedulePayload` 的 Equatable 契约，
+  Core 测试恢复为 73/73 通过；App 端修复 collector 对 `(Data, HTTPURLResponse)` 的错误访问及
+  状态门禁的可编译性，App 测试恢复为 7/7 通过。
+- `PortalForegroundCollector` 已补齐 student ID 的 HTML/API 回退、GPA 缺失时保留有效成绩、
+  学期补充请求失败时保留原对象，并已接入 `OfflineAppViewModel` 与管理页。
+- 管理页现在在可见认证 WebView 完成显式“准备采集”后，使用同一 `WKHTTPCookieStore` 执行
+  成绩/课表稳定 HTTP 请求和画像/GPA、电费页面兜底；完整结果原子写入本地 state 与 Widget
+  快照，任一提交失败都保持旧值。
+- 课表选择和隐式日期仍需以本轮 2026-09-08 的 77/15 Swift 回归为准；下一阶段重点是
+  macOS `xcodebuild`、嵌套 Widget 签名和真实 iPad 安装证据，不再把“准备采集未接线”当作当前状态。
+
 ## 2026-09-07 iPad install hardening and approved artwork
 
 - 用户确认目标设备为 iPadOS 26.6.1；截图只有通用 `Unable to Install` 提示，不能据此把问题归因

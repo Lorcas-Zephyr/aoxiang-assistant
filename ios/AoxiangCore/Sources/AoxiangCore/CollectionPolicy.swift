@@ -49,12 +49,20 @@ public struct StableHTTPCollectionRequest: Equatable {
     public let method: String
     public let headers: [String: String]
     public let body: Data?
+    public let timeoutInterval: TimeInterval
 
-    public init(url: URL, method: String = "GET", headers: [String: String] = [:], body: Data? = nil) {
+    public init(
+        url: URL,
+        method: String = "GET",
+        headers: [String: String] = [:],
+        body: Data? = nil,
+        timeoutInterval: TimeInterval = 12
+    ) {
         self.url = url
         self.method = method
         self.headers = headers
         self.body = body
+        self.timeoutInterval = timeoutInterval
     }
 }
 

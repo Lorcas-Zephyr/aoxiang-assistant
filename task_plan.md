@@ -277,14 +277,14 @@ iOS 迁移保留清晰的存储/备份 seam。
 
 ## Phases
 
-- [ ] Phase 1: Swift 离线 contract/import/storage/editor/snapshot seam 与 XCTest
-- [ ] Phase 2: SwiftUI 首页、成绩、课表、管理页面及本地编辑接入
-- [ ] Phase 3: WidgetKit 只读快照适配与离线端到端验收
-- [ ] Phase 4: 前台 WebView/cookie 认证端口、状态机与采集策略
+- [x] Phase 1: Swift 离线 contract/import/storage/editor/snapshot seam 与 XCTest
+- [x] Phase 2: SwiftUI 首页、成绩、课表、管理页面及本地编辑接入
+- [x] Phase 3: WidgetKit 只读快照适配与离线端到端验收
+- [x] Phase 4: 前台 WebView/cookie 认证端口、状态机与采集策略（含生产前台采集接线）
 - [ ] Phase 5: BackgroundTasks 尽力而为同步、待处理状态和通知入口
 - [ ] Phase 6: macOS XCTest/静态门禁、Android fixture 兼容性、文档和回滚验收
 - [ ] Phase 7: GitHub macOS `iphoneos` archive、可重签名 IPA 产物和 iPad 安装验证
-- [ ] Phase 7: 无 Mac 用户的云端设备 IPA 构建与平板重新签名交付路径
+- [x] Phase 8: 无 Mac 用户的云端设备 IPA 构建与平板重新签名交付路径设计
 
 ## Verification gates
 
@@ -333,7 +333,10 @@ iOS 迁移保留清晰的存储/备份 seam。
 
 ---
 
-# 第三、四、五阶段 iOS 实施计划
+# 历史计划副本（已由上方实施计划取代）
+
+> 本段保留用于追溯早期启动状态；当前阶段、验证结果和未完成门禁以上方的
+> “第三、四、五阶段 iOS 实施计划”及其 2026-09-08 continuation 为准。
 
 ## Goal
 
@@ -394,6 +397,32 @@ iOS 迁移保留清晰的存储/备份 seam。
 | Error | Attempt | Resolution |
 |---|---:|---|
 | Windows lacks iOS SDK/Xcode | 1 | 安装 Swift 6.3.3 与 C++ linker 后本机可运行 Foundation/XCTest；`iphoneos` archive 仍由 macOS CI 提供。 |
+
+## 2026-09-08 collection and widget continuation
+
+- [x] Foreground collector is wired through the visible authentication WebView's
+  cookie store and applies a complete result atomically to local state and the
+  shared Widget snapshot.
+- [x] Schedule selection mirrors Android: dated semesters are sorted,
+  current/next/latest is selected by the Asia/Shanghai business date, and an
+  ended activity-derived schedule advances to the next candidate.
+- [x] GPA API/portrait fallback, student ID discovery, allow-listed requests,
+  online-course filtering, teacher/location normalization and electricity
+  parsing remain covered by portable/App tests.
+- [ ] macOS `xcodebuild` device archive, signed full-widget IPA verification and
+  real iPad installation are still external evidence gates; Windows Swift tests
+  do not replace them.
+
+### 2026-09-08 verification
+
+- `swift test --package-path ios/AoxiangCore`: 77 tests, 0 failures/errors.
+- `swift test --package-path ios/AoxiangApp`: 15 tests, 0 failures/errors.
+- `python -m unittest discover -s scripts/tests -p 'test_*.py'`: 59 tests passed.
+- `python scripts/validate_golden_fixtures.py`: 1 version, 15 scenarios, 32
+  referenced files.
+- `git diff --check`: passed.
+- The collector's default date uses `OfflineDatePolicy.businessCalendar`
+  (`Asia/Shanghai`) rather than UTC; tests can inject a deterministic date.
 
 ## 2026-09-07 iPad-only delivery readiness
 

@@ -4,10 +4,12 @@ import AoxiangCore
 
 private final class LifecycleRecordingTask: IOSBackgroundTaskExecution {
     var expirationHandler: (() -> Void)?
+    var onCompleted: (() -> Void)?
     private(set) var completedResults: [Bool] = []
 
     func setTaskCompleted(success: Bool) {
         completedResults.append(success)
+        onCompleted?()
     }
 }
 
@@ -120,6 +122,7 @@ final class BackgroundTaskSchedulerTests: XCTestCase {
     func testTaskUsesInjectedRunnerAndCompletesWithOutcome() {
         let port = LifecycleSchedulingPort()
         let ran = expectation(description: "runner invoked")
+        let completed = expectation(description: "task completed")
         let runner = LifecycleRunner(
             result: .cancelled,
             onRun: { ran.fulfill() }
@@ -131,8 +134,9 @@ final class BackgroundTaskSchedulerTests: XCTestCase {
         XCTAssertTrue(scheduler.register().allRegistered)
 
         let task = LifecycleRecordingTask()
+        task.onCompleted = { completed.fulfill() }
         port.handler(for: refreshID)?(task)
-        wait(for: [ran], timeout: 1)
+        wait(for: [ran, completed], timeout: 1)
         XCTAssertEqual(task.completedResults, [false])
     }
 

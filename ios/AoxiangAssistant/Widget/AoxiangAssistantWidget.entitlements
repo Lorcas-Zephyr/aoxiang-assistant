@@ -4,7 +4,7 @@
 <dict>
     <key>com.apple.security.application-groups</key>
     <array>
-        <string>group.cn.nwpu.aoxiang-assistant</string>
+        <string>$(AOXIANG_APP_GROUP_IDENTIFIER)</string>
     </array>
 </dict>
 </plist>

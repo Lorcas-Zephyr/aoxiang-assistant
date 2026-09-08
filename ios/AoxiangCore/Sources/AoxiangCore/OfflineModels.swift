@@ -341,6 +341,16 @@ public struct OfflineAppState: Codable, Equatable {
     public var selectedSemesterId: String
     public var display: OfflineDisplaySettings
     public var grades: [OfflineGrade]
+    /// Latest GPA selected by the portal contract. This is private app state
+    /// and is deliberately excluded from the portable Android backup.
+    public var gpa: Double?
+    /// Latest locally collected electricity value. It is private app state and
+    /// deliberately excluded from the portable Android backup envelope.
+    public var electricityBalance: Double?
+
+    private enum CodingKeys: String, CodingKey {
+        case schemaVersion, courses, semesters, selectedSemesterId, display, grades, gpa, electricityBalance
+    }
 
     public init(
         schemaVersion: Int = currentSchemaVersion,
@@ -348,7 +358,9 @@ public struct OfflineAppState: Codable, Equatable {
         semesters: [OfflineSemester] = [],
         selectedSemesterId: String = "",
         display: OfflineDisplaySettings = OfflineDisplaySettings(),
-        grades: [OfflineGrade] = []
+        grades: [OfflineGrade] = [],
+        gpa: Double? = nil,
+        electricityBalance: Double? = nil
     ) {
         self.schemaVersion = schemaVersion
         self.courses = courses
@@ -356,6 +368,20 @@ public struct OfflineAppState: Codable, Equatable {
         self.selectedSemesterId = selectedSemesterId
         self.display = display
         self.grades = grades
+        self.gpa = gpa
+        self.electricityBalance = electricityBalance
+    }
+
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        schemaVersion = try values.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? Self.currentSchemaVersion
+        courses = try values.decodeIfPresent([OfflineCourse].self, forKey: .courses) ?? []
+        semesters = try values.decodeIfPresent([OfflineSemester].self, forKey: .semesters) ?? []
+        selectedSemesterId = try values.decodeIfPresent(String.self, forKey: .selectedSemesterId) ?? ""
+        display = try values.decodeIfPresent(OfflineDisplaySettings.self, forKey: .display) ?? OfflineDisplaySettings()
+        grades = try values.decodeIfPresent([OfflineGrade].self, forKey: .grades) ?? []
+        gpa = try values.decodeIfPresent(Double.self, forKey: .gpa)
+        electricityBalance = try values.decodeIfPresent(Double.self, forKey: .electricityBalance)
     }
 
     public func validated() throws -> OfflineAppState {
@@ -409,6 +435,13 @@ public struct OfflineAppState: Codable, Equatable {
             if let score = grade.score, !score.isFinite || score < 0 || score > 100 {
                 throw OfflineDataError.invalidField("grade.score")
             }
+        }
+        if let electricityBalance,
+           !electricityBalance.isFinite || electricityBalance < 0 || electricityBalance >= 100000 {
+            throw OfflineDataError.invalidField("electricityBalance")
+        }
+        if let gpa, !gpa.isFinite || !(0.0...5.0).contains(gpa) {
+            throw OfflineDataError.invalidField("gpa")
         }
         return self
     }

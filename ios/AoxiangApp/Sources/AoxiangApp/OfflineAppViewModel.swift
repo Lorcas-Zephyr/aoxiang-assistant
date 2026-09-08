@@ -1,6 +1,28 @@
 import Foundation
 import AoxiangCore
 
+#if os(iOS) && canImport(WidgetKit)
+import WidgetKit
+#endif
+
+public protocol WidgetTimelineReloader {
+    func reloadAllTimelines()
+}
+
+public struct NoopWidgetTimelineReloader: WidgetTimelineReloader {
+    public init() {}
+    public func reloadAllTimelines() {}
+}
+
+#if os(iOS) && canImport(WidgetKit)
+public struct WidgetKitTimelineReloader: WidgetTimelineReloader {
+    public init() {}
+    public func reloadAllTimelines() {
+        WidgetCenter.shared.reloadAllTimelines()
+    }
+}
+#endif
+
 #if canImport(SwiftUI)
 import SwiftUI
 
@@ -21,18 +43,21 @@ public final class OfflineAppViewModel: ObservableObject {
 
     public let authenticationStore: AuthenticationSessionStore
     private let controller: OfflineDataController
-    private let snapshotWriter: WidgetSnapshotWriter
+    private let snapshotWriter: ReversibleWidgetSnapshotStore
+    private let widgetTimelineReloader: WidgetTimelineReloader
 
     public init(
         controller: OfflineDataController,
-        snapshotWriter: WidgetSnapshotWriter,
+        snapshotWriter: ReversibleWidgetSnapshotStore,
         authenticationStore: AuthenticationSessionStore = AuthenticationSessionStore(),
+        widgetTimelineReloader: WidgetTimelineReloader = NoopWidgetTimelineReloader(),
         initialErrorMessage: String? = nil
     ) {
         self.controller = controller
         self.state = controller.state
         self.snapshotWriter = snapshotWriter
         self.authenticationStore = authenticationStore
+        self.widgetTimelineReloader = widgetTimelineReloader
         self.errorMessage = initialErrorMessage
     }
 
@@ -56,10 +81,16 @@ public final class OfflineAppViewModel: ObservableObject {
         if AoxiangSharedContainer.sharedSnapshotURL(fileManager: fileManager) == nil {
             initialErrors.append("小组件共享容器不可用；本地数据仍可使用，但小组件不会更新。")
         }
+        #if os(iOS) && canImport(WidgetKit)
+        let timelineReloader: WidgetTimelineReloader = WidgetKitTimelineReloader()
+        #else
+        let timelineReloader: WidgetTimelineReloader = NoopWidgetTimelineReloader()
+        #endif
         return OfflineAppViewModel(
             controller: controller,
             snapshotWriter: AoxiangSharedContainer.widgetSnapshotStore(fileManager: fileManager),
             authenticationStore: authenticationStore,
+            widgetTimelineReloader: timelineReloader,
             initialErrorMessage: initialErrors.isEmpty ? nil : initialErrors.joined(separator: "\n")
         )
     }
@@ -98,6 +129,52 @@ public final class OfflineAppViewModel: ObservableObject {
             writeWidgetSnapshot()
         } catch {
             errorMessage = error.localizedDescription
+        }
+    }
+
+    /// Applies a complete foreground collection result as one state change.
+    /// The controller validates and persists the candidate before this model
+    /// publishes it or refreshes the Widget timeline, so a failed collection
+    /// cannot expose a partially updated app or snapshot.
+    @discardableResult
+    public func applyPortalCollection(_ result: PortalCollectedData) -> Bool {
+        let previousState = state
+        do {
+            var candidate = state
+            candidate.grades = result.grades
+            if let gpa = result.gpa {
+                candidate.gpa = gpa
+            }
+            candidate.semesters = result.schedule.semesters
+            candidate.courses = result.schedule.courses
+            candidate.electricityBalance = result.electricityBalance
+            if !candidate.selectedSemesterId.isEmpty,
+               !candidate.semesters.contains(where: { $0.id == candidate.selectedSemesterId }) {
+                candidate.selectedSemesterId = candidate.semesters.first?.id ?? ""
+            } else if candidate.selectedSemesterId.isEmpty {
+                candidate.selectedSemesterId = candidate.semesters.first?.id ?? ""
+            }
+            // Read the old snapshot before publishing either side of this
+            // cross-file commit. A missing App Group therefore fails closed
+            // instead of reporting a successful collection with no Widget.
+            let previousSnapshot = try snapshotWriter.read()
+            _ = try controller.replace(candidate)
+            do {
+                try persistWidgetSnapshot(for: candidate)
+            } catch {
+                // Both stores are atomic individually; restore the old values
+                // if the second commit cannot complete.
+                try? snapshotWriter.restore(previousSnapshot)
+                _ = try? controller.replace(previousState)
+                state = controller.state
+                throw error
+            }
+            state = controller.state
+            errorMessage = nil
+            return true
+        } catch {
+            errorMessage = error.localizedDescription
+            return false
         }
     }
 
@@ -201,10 +278,11 @@ public final class OfflineAppViewModel: ObservableObject {
 
     public func clearError() { errorMessage = nil }
 
-    public func writeWidgetSnapshot(now: Date = Date()) {
+    @discardableResult
+    public func writeWidgetSnapshot(now: Date = Date()) -> Bool {
         do {
-            let snapshot = try WidgetSnapshotBuilder().makeSnapshot(from: state, now: now)
-            try snapshotWriter.write(snapshot)
+            try persistWidgetSnapshot(for: state, now: now)
+            return true
         } catch {
             if let offlineError = error as? OfflineDataError,
                offlineError == .sharedContainerUnavailable {
@@ -212,7 +290,14 @@ public final class OfflineAppViewModel: ObservableObject {
             } else {
                 errorMessage = error.localizedDescription
             }
+            return false
         }
+    }
+
+    private func persistWidgetSnapshot(for value: OfflineAppState, now: Date = Date()) throws {
+        let snapshot = try WidgetSnapshotBuilder().makeSnapshot(from: value, now: now)
+        try snapshotWriter.write(snapshot)
+        widgetTimelineReloader.reloadAllTimelines()
     }
 }
 #endif

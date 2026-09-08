@@ -77,6 +77,8 @@ public final class URLSessionHTTPCollectionAdapter: StableHTTPCollectionPort {
 
     public func send(_ request: StableHTTPCollectionRequest) async throws -> (Data, HTTPURLResponse) {
         var urlRequest = URLRequest(url: request.url)
+        urlRequest.timeoutInterval = request.timeoutInterval
+        urlRequest.cachePolicy = .reloadIgnoringLocalCacheData
         urlRequest.httpMethod = request.method
         urlRequest.httpBody = request.body
         for (key, value) in request.headers {

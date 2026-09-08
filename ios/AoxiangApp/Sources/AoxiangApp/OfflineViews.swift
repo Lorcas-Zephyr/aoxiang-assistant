@@ -175,6 +175,9 @@ public struct ManagementScreen: View {
     @State private var editingCourse: OfflineCourse?
     @State private var exportDocument = BackupFileDocument(data: Data())
     @State private var showingAuthentication = false
+    @State private var collectionTask: Task<Void, Never>?
+    @State private var collectionStatus: String?
+    @State private var isCollecting = false
     @StateObject private var authenticationModel: VisibleAuthenticationViewModel
 
     public init(model: OfflineAppViewModel) {
@@ -194,6 +197,22 @@ public struct ManagementScreen: View {
                         Text(authenticationStatusText)
                         Spacer()
                         Button("打开统一认证") { showingAuthentication = true }
+                    }
+                    if let collectionStatus {
+                        Text(collectionStatus)
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    if authenticationModel.state == .authenticated || authenticationModel.state == .readyToCollect {
+                        Button {
+                            beginCollection()
+                        } label: {
+                            Label(
+                                isCollecting ? "正在采集" : "开始采集",
+                                systemImage: isCollecting ? "hourglass" : "arrow.clockwise"
+                            )
+                        }
+                        .disabled(isCollecting)
                     }
                 }
                 Section("数据") {
@@ -251,7 +270,52 @@ public struct ManagementScreen: View {
             .sheet(isPresented: $showingAddCourse) { AddCourseSheet(model: model) }
             .sheet(item: $editingCourse) { course in EditCourseSheet(model: model, course: course) }
             .sheet(isPresented: $showingAuthentication) {
-                AuthenticationScreen(model: authenticationModel)
+                AuthenticationScreen(model: authenticationModel, onPrepareToCollect: beginCollection)
+            }
+            .onDisappear {
+                collectionTask?.cancel()
+            }
+        }
+    }
+
+    private func beginCollection() {
+        guard !isCollecting else { return }
+        if authenticationModel.state == .authenticated {
+            authenticationModel.prepareToCollect()
+        }
+        guard authenticationModel.state == .readyToCollect else {
+            collectionStatus = "请先完成统一认证"
+            return
+        }
+        isCollecting = true
+        collectionStatus = "正在读取成绩、课表和电费…"
+        let cookieStore = authenticationModel.webView.configuration.websiteDataStore.httpCookieStore
+        let collector = PortalForegroundCollector(
+            transport: PortalCollectionTransportAdapter(
+                port: URLSessionHTTPCollectionAdapter(cookieStore: cookieStore)
+            ),
+            electricityProvider: { try await authenticationModel.collectElectricityBalance() },
+            portraitProvider: { try await authenticationModel.collectPortraitHTML() }
+        )
+        collectionTask?.cancel()
+        collectionTask = Task { @MainActor in
+            defer {
+                isCollecting = false
+                collectionTask = nil
+            }
+            do {
+                let result = try await collector.collect(state: .readyToCollect)
+                guard !Task.isCancelled else { return }
+                if model.applyPortalCollection(result) {
+                    collectionStatus = "采集完成，已更新本地数据和小组件快照"
+                } else {
+                    collectionStatus = "采集结果未能保存；原有数据保持不变"
+                }
+            } catch let failure as PortalCollectionFailure {
+                authenticationModel.recordCollectionFailure(failure)
+                collectionStatus = failure.localizedDescription
+            } catch {
+                collectionStatus = error.localizedDescription
             }
         }
     }

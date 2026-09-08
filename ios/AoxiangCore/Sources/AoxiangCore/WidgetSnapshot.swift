@@ -202,12 +202,12 @@ public struct WidgetSnapshotBuilder {
         let scored = valid.grades.compactMap(\.score)
         let average = scored.isEmpty ? nil : scored.reduce(0, +) / Double(scored.count)
         let gpaValues = valid.grades.compactMap(\.point)
-        let gpa = gpaValues.isEmpty ? nil : gpaValues.reduce(0, +) / Double(gpaValues.count)
+        let computedGPA = gpaValues.isEmpty ? nil : gpaValues.reduce(0, +) / Double(gpaValues.count)
         return WidgetSnapshot(
             generatedAtEpochMilliseconds: Int64(now.timeIntervalSince1970 * 1000),
             selectedSemesterName: semester?.name,
             todayCourses: courses,
-            gradeSummary: WidgetGradeSummary(count: valid.grades.count, averageScore: average, gpa: gpa)
+            gradeSummary: WidgetGradeSummary(count: valid.grades.count, averageScore: average, gpa: valid.gpa ?? computedGPA)
         )
     }
 }

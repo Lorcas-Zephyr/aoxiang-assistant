@@ -36,6 +36,28 @@ final class OfflineDataTests: XCTestCase {
         XCTAssertTrue(imported.display.darkMode)
     }
 
+    func testPrivateGPAFieldIsBackwardCompatibleAndExcludedFromPortableBackup() throws {
+        let legacy = """
+        {"schemaVersion":1,"courses":[],"semesters":[],"selectedSemesterId":"","display":{"themeColor":"#2F80ED","darkMode":false},"grades":[],"electricityBalance":null}
+        """.data(using: .utf8)!
+        let decoded = try JSONDecoder().decode(OfflineAppState.self, from: legacy)
+        XCTAssertNil(decoded.gpa)
+
+        let state = OfflineAppState(
+            semesters: [OfflineSemester(id: "term-1", startDate: "2026-01-01", endDate: "2026-06-30")],
+            selectedSemesterId: "term-1",
+            gpa: 3.8,
+            electricityBalance: 12
+        )
+        let backup = try AndroidBackupExporter().exportData(from: state)
+        let object = try JSONSerialization.jsonObject(with: backup) as! [String: Any]
+        let text = String(data: backup, encoding: .utf8)!
+        XCTAssertNil(object["gpa"])
+        XCTAssertNil(object["electricityBalance"])
+        XCTAssertFalse(text.contains("3.8"))
+        XCTAssertFalse(text.contains("12"))
+    }
+
     func testAndroidScheduleBackupPreservesExistingPrivateGrades() throws {
         let privateGrade = OfflineGrade(
             id: "grade-1",
