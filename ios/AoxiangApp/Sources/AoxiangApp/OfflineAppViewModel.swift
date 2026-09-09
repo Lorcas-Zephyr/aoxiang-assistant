@@ -40,6 +40,7 @@ public final class OfflineAppViewModel: ObservableObject {
     @Published public var selectedTab: Tab = .home
     @Published public private(set) var errorMessage: String?
     @Published public private(set) var lastImportSucceeded = false
+    @Published public private(set) var lastPortalCollectionWarnings: [PortalCollectionWarning] = []
 
     public let authenticationStore: AuthenticationSessionStore
     private let controller: OfflineDataController
@@ -145,14 +146,18 @@ public final class OfflineAppViewModel: ObservableObject {
             if let gpa = result.gpa {
                 candidate.gpa = gpa
             }
-            candidate.semesters = result.schedule.semesters
-            candidate.courses = result.schedule.courses
-            candidate.electricityBalance = result.electricityBalance
-            if !candidate.selectedSemesterId.isEmpty,
-               !candidate.semesters.contains(where: { $0.id == candidate.selectedSemesterId }) {
-                candidate.selectedSemesterId = candidate.semesters.first?.id ?? ""
-            } else if candidate.selectedSemesterId.isEmpty {
-                candidate.selectedSemesterId = candidate.semesters.first?.id ?? ""
+            if result.scheduleAvailable {
+                candidate.semesters = result.schedule.semesters
+                candidate.courses = result.schedule.courses
+                if !candidate.selectedSemesterId.isEmpty,
+                   !candidate.semesters.contains(where: { $0.id == candidate.selectedSemesterId }) {
+                    candidate.selectedSemesterId = candidate.semesters.first?.id ?? ""
+                } else if candidate.selectedSemesterId.isEmpty {
+                    candidate.selectedSemesterId = candidate.semesters.first?.id ?? ""
+                }
+            }
+            if let electricityBalance = result.electricityBalance {
+                candidate.electricityBalance = electricityBalance
             }
             // Read the old snapshot before publishing either side of this
             // cross-file commit. A missing App Group therefore fails closed
@@ -170,6 +175,7 @@ public final class OfflineAppViewModel: ObservableObject {
                 throw error
             }
             state = controller.state
+            lastPortalCollectionWarnings = result.warnings
             errorMessage = nil
             return true
         } catch {

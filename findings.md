@@ -387,3 +387,32 @@
 - Background execution is best-effort only. A task that cannot prove a valid authenticated session or
   stable HTTP collector must record `needsUserAttention`/retry metadata and exit without motion or
   fake success; visible foreground login remains the recovery path.
+## 2026-09-09 iPad collection/widget repair
+
+- The user-visible failure was reproduced with `scripts/tests/test_visible_collection_runtime.py`:
+  a mounted成绩 table plus unavailable grade API returned `phase: retryable`, which then reached
+  `PortalForegroundCollector` as `采集数据无效：grade response unavailable`.
+- The visible WebView script previously required a successful grade-page reload, a student ID,
+  semester IDs and at least one grade API response before it could return any education data. That
+  made a rendered成绩 page unusable when the portal's JSON endpoint changed or timed out.
+- The script now waits briefly for the mounted table, extracts only normalized course/credit/point/
+  score/category/detail fields, and uses those rows when API responses are unavailable. API rows
+  remain preferred; credentials, cookies, raw HTML and student identifiers do not cross the WebView
+  result boundary. Grade-page and student-info request failures no longer abort a valid DOM fallback.
+- The Widget extension plist had an unnecessary `NSExtensionPrincipalClass` pointing at a SwiftUI
+  `WidgetBundle`. The field was removed and a configuration regression test now requires the standard
+  WidgetKit extension point without that override.
+- The Xcode App and Widget targets now use marketing version `1.0.1` and build `2` so a repaired IPA
+  cannot be confused with the earlier `1.0 (1)` artifact by a sideload installer.
+- The remaining Widget gate is external: the re-signed host and nested extension must retain the
+  `PlugIns` bundle and receive one authorized App Group. A Windows test cannot prove this entitlement
+  or iPadOS Widget gallery registration.
+
+## 2026-09-09 release handoff evidence
+
+- The current repair passes 7 deterministic Node tests for the embedded WebView education script and
+  30 Python tests for iOS configuration, IPA packaging, and collection visibility.
+- The old downloaded IPA is not evidence for the repair because it predates the DOM fallback,
+  Widget plist cleanup, and version bump. A new archive is required before another device test.
+- The recommended package remains `sideload`, not `sideload-host-only`: the former keeps the nested
+  Widget extension; the latter is intentionally a host-only diagnostic package.

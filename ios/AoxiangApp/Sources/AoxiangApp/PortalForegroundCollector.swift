@@ -85,15 +85,31 @@ public struct PortalForegroundCollector {
                         }
                     }
                 }
-                let electricity = try await electricityProvider()
-                guard electricity.isFinite, electricity >= 0, electricity < 100000 else {
-                    throw PortalCollectionFailure.invalidResponse("electricity balance invalid")
+                var electricity: Double?
+                var warnings: [PortalCollectionWarning] = []
+                do {
+                    let value = try await electricityProvider()
+                    guard value.isFinite, value >= 0, value < 100000 else {
+                        throw PortalCollectionFailure.invalidResponse("electricity balance invalid")
+                    }
+                    electricity = value
+                } catch let failure as PortalCollectionFailure {
+                    switch failure {
+                    case .cancelled:
+                        throw failure
+                    case .authenticationRequired, .smsRequired, .retryable, .invalidResponse:
+                        warnings.append(.electricityUnavailable)
+                    }
+                } catch {
+                    warnings.append(.electricityUnavailable)
                 }
                 return PortalCollectedData(
                     grades: PortalCollectionParsers.keepHighest(education.grades),
                     gpa: PortalCollectionParsers.selectGPA(api: education.gpa, portrait: portraitGPA),
                     schedule: education.schedule,
-                    electricityBalance: electricity
+                    electricityBalance: electricity,
+                    warnings: warnings,
+                    scheduleAvailable: education.scheduleAvailable
                 )
             } catch let failure as PortalCollectionFailure {
                 switch failure {
@@ -210,13 +226,38 @@ public struct PortalForegroundCollector {
         )
 
         guard !isCancelled() else { throw PortalCollectionFailure.cancelled }
-        let tableResponse = try await send(PortalEndpoints.courseTable())
+        let tableResponse: (Data, HTTPURLResponse)
+        do {
+            tableResponse = try await send(PortalEndpoints.courseTable())
+        } catch let failure as PortalCollectionFailure {
+            // Grades are already valid and independently useful when the
+            // course-table route is temporarily unavailable. Commit them with
+            // an empty schedule instead of masking the success with a generic
+            // grade error; the next foreground run can refresh the schedule.
+            switch failure {
+            case .authenticationRequired, .smsRequired, .cancelled:
+                throw failure
+            case .retryable, .invalidResponse:
+                return PortalCollectedData(
+                    grades: PortalCollectionParsers.keepHighest(parsedGrades.grades),
+                    gpa: selectedGPA,
+                    schedule: emptySchedulePayload(),
+                    electricityBalance: try await optionalElectricityBalance(),
+                    warnings: [.scheduleUnavailable],
+                    scheduleAvailable: false
+                )
+            }
+        }
         let tableData = tableResponse.0
         let tableText = String(decoding: tableData, as: UTF8.self)
         let tableObject = (try? jsonObject(tableData)) ?? [:]
         let semesterRecords = scheduleSemesterRecords(object: tableObject, html: tableText)
         guard !semesterRecords.isEmpty else {
-            throw PortalCollectionFailure.invalidResponse("semester unavailable")
+            return try await partialResult(
+                grades: parsedGrades.grades,
+                gpa: selectedGPA,
+                warnings: [.scheduleUnavailable]
+            )
         }
         // Semester boundaries are a campus-local wire contract, not the
         // device's or UTC calendar. Keep this aligned with offline schedule
@@ -225,7 +266,11 @@ public struct PortalForegroundCollector {
         guard let selection = PortalCollectionParsers.selectScheduleSemester(
             from: semesterRecords.map(\.candidate), today: collectionDate
         ) else {
-            throw PortalCollectionFailure.invalidResponse("dated semester unavailable")
+            return try await partialResult(
+                grades: parsedGrades.grades,
+                gpa: selectedGPA,
+                warnings: [.scheduleUnavailable]
+            )
         }
 
         var selectedRecordIndex = selection.initialIndex
@@ -238,7 +283,11 @@ public struct PortalForegroundCollector {
         }
         guard orderedRecords.count == selection.ordered.count,
               selectedRecordIndex < orderedRecords.count else {
-            throw PortalCollectionFailure.invalidResponse("semester unavailable")
+            return try await partialResult(
+                grades: parsedGrades.grades,
+                gpa: selectedGPA,
+                warnings: [.scheduleUnavailable]
+            )
         }
 
         var semesterObject: [String: Any]
@@ -253,15 +302,36 @@ public struct PortalForegroundCollector {
                     semesterObject = object
                 }
             } catch let failure as PortalCollectionFailure {
-                if case .invalidResponse = failure {
+                switch failure {
+                case .invalidResponse:
                     // Keep the course-table semester object when the enrichment endpoint is absent.
-                } else {
+                    break
+                case .authenticationRequired, .smsRequired, .cancelled:
                     throw failure
+                case .retryable:
+                    return try await partialResult(
+                        grades: parsedGrades.grades,
+                        gpa: selectedGPA,
+                        warnings: [.scheduleUnavailable]
+                    )
                 }
             }
-            printData = try await send(
-                try PortalEndpoints.printData(studentID: resolvedStudentID, semesterID: scheduleID)
-            ).0
+            do {
+                printData = try await send(
+                    try PortalEndpoints.printData(studentID: resolvedStudentID, semesterID: scheduleID)
+                ).0
+            } catch let failure as PortalCollectionFailure {
+                switch failure {
+                case .authenticationRequired, .smsRequired, .cancelled:
+                    throw failure
+                case .retryable, .invalidResponse:
+                    return try await partialResult(
+                        grades: parsedGrades.grades,
+                        gpa: selectedGPA,
+                        warnings: [.scheduleUnavailable]
+                    )
+                }
+            }
             let effectiveEnd = PortalCollectionParsers.effectiveScheduleEndDate(
                 startDate: firstString(semesterObject["startDate"], record.candidate.startDate),
                 printData: printData
@@ -271,20 +341,82 @@ public struct PortalForegroundCollector {
             }
             selectedRecordIndex += 1
         }
-        let schedule = try PortalCollectionParsers.parseSchedulePayload(try jsonData([
-            "semester": semesterObject,
-            "printData": try jsonObject(printData),
-        ]))
+        let schedule: PortalCollectionParsers.SchedulePayload
+        do {
+            schedule = try PortalCollectionParsers.parseSchedulePayload(try jsonData([
+                "semester": semesterObject,
+                "printData": try jsonObject(printData),
+            ]))
+        } catch {
+            return try await partialResult(
+                grades: parsedGrades.grades,
+                gpa: selectedGPA,
+                warnings: [.scheduleUnavailable]
+            )
+        }
 
-        let electricity = try await electricityProvider()
-        guard electricity.isFinite, electricity >= 0, electricity < 100000 else {
-            throw PortalCollectionFailure.invalidResponse("electricity balance invalid")
+        var electricity: Double?
+        var warnings: [PortalCollectionWarning] = []
+        do {
+            let value = try await electricityProvider()
+            guard value.isFinite, value >= 0, value < 100000 else {
+                throw PortalCollectionFailure.invalidResponse("electricity balance invalid")
+            }
+            electricity = value
+        } catch let failure as PortalCollectionFailure {
+            switch failure {
+            case .cancelled:
+                throw failure
+            case .authenticationRequired, .smsRequired, .retryable, .invalidResponse:
+                warnings.append(.electricityUnavailable)
+            }
+        } catch {
+            warnings.append(.electricityUnavailable)
         }
         return PortalCollectedData(
             grades: PortalCollectionParsers.keepHighest(parsedGrades.grades),
             gpa: selectedGPA,
             schedule: schedule,
-            electricityBalance: electricity
+            electricityBalance: electricity,
+            warnings: warnings
+        )
+    }
+
+    private func emptySchedulePayload() -> PortalCollectionParsers.SchedulePayload {
+        PortalCollectionParsers.SchedulePayload(
+            semesters: [OfflineSemester(id: "current", name: "当前学期", startDate: "1970-01-01", endDate: "1970-01-01")],
+            courses: []
+        )
+    }
+
+    private func optionalElectricityBalance() async throws -> Double? {
+        do {
+            let value = try await electricityProvider()
+            return value.isFinite && value >= 0 && value < 100000 ? value : nil
+        } catch let failure as PortalCollectionFailure {
+            switch failure {
+            case .cancelled:
+                throw failure
+            case .authenticationRequired, .smsRequired, .retryable, .invalidResponse:
+                return nil
+            }
+        } catch {
+            return nil
+        }
+    }
+
+    private func partialResult(
+        grades: [OfflineGrade],
+        gpa: Double?,
+        warnings: [PortalCollectionWarning]
+    ) async throws -> PortalCollectedData {
+        PortalCollectedData(
+            grades: PortalCollectionParsers.keepHighest(grades),
+            gpa: gpa,
+            schedule: emptySchedulePayload(),
+            electricityBalance: try await optionalElectricityBalance(),
+            warnings: warnings,
+            scheduleAvailable: false
         )
     }
 

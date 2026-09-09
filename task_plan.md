@@ -612,3 +612,23 @@ goal can close. Structify remains out of scope.
   macOS-only checks.
 - [x] Retry transitions are handled once by the shared collection callback.
 - [ ] Push this repair and inspect a fresh Widget-capable `sideload` IPA from GitHub Actions.
+## 2026-09-09 active device-validation repair
+
+- [x] Reproduce `grade response unavailable` with a deterministic visible-WebView Node harness.
+- [x] Add rendered成绩 table fallback when grade-page/API requests fail or return no usable rows.
+- [x] Remove the SwiftUI WidgetBundle `NSExtensionPrincipalClass` override and lock the plist rule.
+- [x] Bump the App and Widget to `1.0.1 (2)` to distinguish the repaired artifact from stale installs.
+- [x] Pass targeted runtime, syntax, configuration and golden-fixture checks.
+- [x] Run the full portable regression and push the repair to `iOS`.
+- [ ] Generate and inspect a fresh Widget-capable `sideload` IPA from macOS Actions.
+- [ ] Obtain user-side re-sign/App Group/install/collection/Widget evidence before closing the goal.
+
+## 2026-09-09 current release handoff
+
+- [x] The rendered-grade fallback is covered by seven Node/WebView harness cases, including
+  delayed DOM rendering, failed grade reload, unavailable grade API, unavailable schedule,
+  iframe tables, and missing student bootstrap.
+- [x] Python iOS project/packaging/visibility checks pass (30 tests); `git diff --check` passes.
+- [ ] A new macOS workflow run must be tied to the repair commit and its `sideload` IPA must be
+  inspected for `PlugIns/AoxiangAssistantWidget.appex`, version `1.0.1 (2)`, and matching App
+  Group placeholders before it is sent to the user.

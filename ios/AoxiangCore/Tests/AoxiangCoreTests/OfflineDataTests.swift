@@ -3,6 +3,36 @@ import XCTest
 @testable import AoxiangCore
 
 final class OfflineDataTests: XCTestCase {
+    func testAppGroupCandidatesPreferSignedEntitlementOverStalePlist() {
+        XCTAssertEqual(
+            AoxiangSharedContainer.appGroupCandidates(
+                configuredIdentifier: "group.old-team",
+                entitledIdentifiers: ["group.new-team"]
+            ),
+            ["group.new-team"]
+        )
+    }
+
+    func testAppGroupCandidatesFailClosedWhenSignedTargetDeclaresNoGroups() {
+        XCTAssertEqual(
+            AoxiangSharedContainer.appGroupCandidates(
+                configuredIdentifier: "group.old-team",
+                entitledIdentifiers: []
+            ),
+            []
+        )
+    }
+
+    func testAppGroupCandidatesUseConfiguredValueWhenEntitlementsCannotBeInspected() {
+        XCTAssertEqual(
+            AoxiangSharedContainer.appGroupCandidates(
+                configuredIdentifier: "group.team",
+                entitledIdentifiers: nil
+            ),
+            ["group.team", AoxiangSharedContainer.defaultAppGroupIdentifier]
+        )
+    }
+
     func testImportsLegacyAndroidBackupAndNormalizesToCurrentState() throws {
         let legacy = """
         {"version":"2.0","exportDate":"2026-01-15","courses":[{"id":"course-1","name":"软件工程","semesterId":"semester-1","timeSlots":[{"weekRange":"1-17","repeatRule":"","dayOfWeek":2,"classSections":[1,2]}]}],"settings":{"semesters":[{"id":"semester-1","name":"2026 春季","startDate":"2026-02-23","endDate":"2026-07-05","weekCount":18,"sectionCount":13,"sectionTimes":[{"start":"08:30","end":"09:15"}]}],"themeColor":"#2F80ED","darkMode":false}}

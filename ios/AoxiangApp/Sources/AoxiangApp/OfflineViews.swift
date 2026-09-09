@@ -379,7 +379,7 @@ public struct ManagementScreen: View {
                 let result = try await collector.collect(state: .readyToCollect)
                 guard !Task.isCancelled else { return }
                 if model.applyPortalCollection(result) {
-                    collectionStatus = "采集完成，已更新本地数据和小组件快照"
+                    collectionStatus = collectionStatus(for: result.warnings)
                     // Close only after both local state and the shared Widget
                     // snapshot have committed successfully.
                     showingAuthentication = false
@@ -393,6 +393,17 @@ public struct ManagementScreen: View {
                 collectionStatus = error.localizedDescription
             }
         }
+    }
+
+    private func collectionStatus(for warnings: [PortalCollectionWarning]) -> String {
+        guard !warnings.isEmpty else { return "采集完成，已更新本地数据和小组件快照" }
+        let parts = warnings.map { warning -> String in
+            switch warning {
+            case .electricityUnavailable: return "电费暂不可用"
+            case .scheduleUnavailable: return "课表暂不可用"
+            }
+        }
+        return "成绩已更新，小组件已刷新；" + parts.joined(separator: "、")
     }
 
     private var authenticationStatusText: String {

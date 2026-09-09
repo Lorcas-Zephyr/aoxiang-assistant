@@ -200,10 +200,12 @@ public enum PortalCollectionParsers {
         ], options: [])
         let schedule = try parseSchedulePayload(scheduleData)
         let gpa = root["gpa"].flatMap(parseGPA)
+        let scheduleAvailable = root["scheduleAvailable"] as? Bool ?? true
         return PortalVisibleEducationData(
             grades: keepHighest(grades),
             gpa: gpa,
-            schedule: schedule
+            schedule: schedule,
+            scheduleAvailable: scheduleAvailable
         )
     }
 

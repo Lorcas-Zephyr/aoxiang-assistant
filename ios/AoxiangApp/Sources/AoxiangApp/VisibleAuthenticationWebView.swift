@@ -604,24 +604,57 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
     private static let educationCollectionScript = #"""
     return (async () => {
       const timeoutMs = 12000;
-      const timed = async (url, options) => {
+      const visibleFallbackTimeoutMs = 5000;
+      // The native education continuation expires after 25 seconds. Keep the
+      // page-side work bounded below that value even when one portal request
+      // stops responding, so already-rendered grades can still be committed.
+      const collectionDeadline = Date.now() + 20000;
+      const documents = [];
+      const pageWindow = (typeof window !== 'undefined' && window && window.document)
+        ? window
+        : { document: (typeof document !== 'undefined' ? document : null) };
+      const collectDocuments = currentWindow => {
+        try {
+          const currentDocument = currentWindow && currentWindow.document;
+          if (!currentDocument || documents.includes(currentDocument)) return;
+          documents.push(currentDocument);
+          if (typeof currentDocument.querySelectorAll !== 'function') return;
+          const frames = [];
+          ['iframe', 'frame'].forEach(selector => {
+            try { frames.push(...Array.from(currentDocument.querySelectorAll(selector))); } catch (_) {}
+          });
+          frames.forEach(frame => {
+            try {
+              if (frame && frame.contentWindow && frame.contentDocument) {
+                collectDocuments(frame.contentWindow);
+              }
+            } catch (_) {
+              // Cross-origin frames are intentionally skipped.
+            }
+          });
+        } catch (_) {}
+      };
+      collectDocuments(pageWindow);
+      const timed = async (url, options, requestTimeoutMs = timeoutMs) => {
+        const remaining = collectionDeadline - Date.now();
+        if (remaining <= 0) throw new Error('collection deadline exceeded');
         const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), timeoutMs);
+        const timer = setTimeout(() => controller.abort(), Math.min(requestTimeoutMs, remaining));
         try {
           return await fetch(url, Object.assign({}, options || {}, {
             credentials: 'include', cache: 'no-store', signal: controller.signal
           }));
         } finally { clearTimeout(timer); }
       };
-      const text = async (url) => {
-        const response = await timed(url);
+      const text = async (url, requestTimeoutMs = timeoutMs) => {
+        const response = await timed(url, undefined, requestTimeoutMs);
         const body = await response.text();
         if (response.status === 401 || response.status === 403) return { __auth: true, body };
         if (!response.ok) throw new Error('HTTP ' + response.status);
         return body;
       };
-      const json = async (url) => {
-        const response = await timed(url, { headers: { Accept: 'application/json' } });
+      const json = async (url, requestTimeoutMs = timeoutMs) => {
+        const response = await timed(url, { headers: { Accept: 'application/json' } }, requestTimeoutMs);
         const body = await response.text();
         if (response.status === 401 || response.status === 403) return { __auth: true };
         if (!response.ok) throw new Error('HTTP ' + response.status);
@@ -629,9 +662,17 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
       };
       const clean = value => String(value == null ? '' : value).trim();
       const studentID = html => {
-        const input = document.querySelector('#studentId');
-        const liveValue = clean(window.studentId || (input && input.value) || '');
+        const liveValue = clean(window.studentId || '');
         if (liveValue) return liveValue;
+        for (const currentDocument of documents) {
+          try {
+            const input = currentDocument === document
+              ? document.querySelector('#studentId')
+              : currentDocument.querySelector('#studentId');
+            const value = clean(input && input.value || '');
+            if (value) return value;
+          } catch (_) {}
+        }
         const match = String(html || '').match(/id=["']studentId["'][^>]*value=["']([^"']+)["']/i) ||
           String(html || '').match(/value=["']([^"']+)["'][^>]*id=["']studentId["']/i) ||
           String(html || '').match(/(?:studentId|studentAssoc)\s*[=:]\s*["']([^"']+)["']/i);
@@ -708,33 +749,262 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
         const text = clean(value);
         return text ? text.split(/[、\/,，]/).map(clean).filter(Boolean) : [];
       };
+      const numeric = value => {
+        const match = clean(value).replace(/,/g, '').match(/[-+]?\d+(?:\.\d+)?/);
+        if (!match) return null;
+        const parsed = Number(match[0]);
+        return Number.isFinite(parsed) ? parsed : null;
+      };
+      const cellText = cell => clean(cell && (cell.innerText || cell.textContent || cell.value || ''));
+      const cellsFor = row => {
+        if (!row || typeof row.querySelectorAll !== 'function') return [];
+        const selectors = [
+          'td', 'th', '[role="gridcell"]', '[role="cell"]',
+          '[data-field]', '[data-label]', '.grade-cell', '.score-cell',
+          '.credit-cell', '.point-cell', '.detail-cell',
+          '.el-table__cell', '.ant-table-cell', '.vxe-body--column',
+          '.ivu-table-cell', '.cell'
+        ];
+        for (const selector of selectors) {
+          try {
+            const cells = Array.from(row.querySelectorAll(selector));
+            if (cells.length) return cells;
+          } catch (_) {}
+        }
+        try {
+          const direct = Array.from(row.children || []).filter(child =>
+            child && (!child.children || child.children.length === 0)
+          );
+          if (direct.length) return direct;
+        } catch (_) {}
+        return [];
+      };
+      const columnIndex = (headers, patterns, fallback) => {
+        const index = headers.findIndex(header => patterns.some(pattern => header.includes(pattern)));
+        return index >= 0 ? index : fallback;
+      };
+      const renderedGradeRows = () => {
+        collectDocuments(pageWindow);
+        const records = [];
+        const seenRecords = new Set();
+        const roots = [];
+        const rootSelectors = [
+          'table', '[role="table"]', '[role="grid"]', '.grade-table', '.grade-list',
+          '.el-table', '.ant-table', '.vxe-table', '.ivu-table'
+        ];
+        documents.forEach(currentDocument => {
+          if (!currentDocument || typeof currentDocument.querySelectorAll !== 'function') return;
+          rootSelectors.forEach(selector => {
+            try { roots.push(...Array.from(currentDocument.querySelectorAll(selector))); } catch (_) {}
+          });
+        });
+        const uniqueRoots = roots.filter((root, index) => roots.indexOf(root) === index);
+        const findFirst = (root, selectors) => {
+          if (!root || typeof root.querySelectorAll !== 'function') return null;
+          for (const selector of selectors) {
+            try {
+              const found = Array.from(root.querySelectorAll(selector));
+              if (found.length) return found[0];
+            } catch (_) {}
+          }
+          return null;
+        };
+        const findAll = (root, selectors) => {
+          if (!root || typeof root.querySelectorAll !== 'function') return [];
+          for (const selector of selectors) {
+            try {
+              const found = Array.from(root.querySelectorAll(selector));
+              if (found.length) return found;
+            } catch (_) {}
+          }
+          return [];
+        };
+        const namedValue = (row, selectors) => {
+          const element = findFirst(row, selectors);
+          return cellText(element);
+        };
+        const recordFromValues = (values, headers) => {
+          if (!values.length) return null;
+          const normalizedHeaders = headers.map(value => value.toLowerCase());
+          const courseIndex = columnIndex(normalizedHeaders, ['课程名称', '课程名', '课程', '科目', 'course', 'lesson'], 0);
+          const creditIndex = columnIndex(normalizedHeaders, ['学分', 'credit'], 1);
+          const pointIndex = columnIndex(normalizedHeaders, ['绩点', 'grade point', 'point', 'gp'], 2);
+          const scoreIndex = columnIndex(normalizedHeaders, ['成绩', '分数', 'score', 'grade'], 3);
+          const detailIndex = columnIndex(normalizedHeaders, ['成绩构成', '成绩详情', '详情', '备注', 'detail'], 4);
+          const categoryIndex = columnIndex(normalizedHeaders, ['课程类别', '课程性质', '类别', 'category'], -1);
+          const course = clean(values[courseIndex] || '');
+          const credits = numeric(values[creditIndex]);
+          const point = numeric(values[pointIndex]);
+          const scoreText = clean(values[scoreIndex] || '');
+          const score = numeric(scoreText);
+          const passFail = /^(P|NP|通过|不通过|优秀|良好|中等|及格|不及格)$/i.test(scoreText);
+          if (!course || credits === null || (!Number.isFinite(point) && !Number.isFinite(score) && !passFail)) return null;
+          return {
+            course,
+            credits,
+            point: Number.isFinite(point) ? point : null,
+            score: Number.isFinite(score) ? score : null,
+            category: clean(categoryIndex >= 0 ? values[categoryIndex] : '课程') || '课程',
+            detail: clean(detailIndex >= 0 ? values[detailIndex] : '')
+          };
+        };
+        uniqueRoots.forEach(table => {
+          if (!table || typeof table.querySelectorAll !== 'function') return;
+          const headerCells = findAll(table, [
+            'thead th', 'tr:first-child th', '[role="columnheader"]',
+            '.el-table__header-wrapper th', '.ant-table-thead th',
+            '.vxe-table--header-wrapper th', '.vxe-header--column',
+            '.grade-header [role="cell"]', '.grade-header th'
+          ]);
+          const headers = headerCells.map(cellText);
+          let sourceRows = findAll(table, [
+            'tbody tr', '[role="row"]',
+            '.el-table__body-wrapper tr', '.el-table__row',
+            '.ant-table-tbody tr', '.ant-table-row',
+            '.vxe-table--body-wrapper .vxe-body--row', '.ivu-table-tbody tr',
+            '.grade-row', '.grade-item', '.score-row',
+            'li[data-course], li.course-item, .course-item'
+          ]);
+          if (!sourceRows.length) sourceRows = findAll(table, ['tr']);
+          sourceRows.forEach(row => {
+            const values = cellsFor(row).map(cellText);
+            if (!values.length || values.every(value => !value)) return;
+            const record = recordFromValues(values, headers);
+            if (!record) return;
+            const key = [record.course, record.credits, record.point, record.score, record.category, record.detail].join('\u0001');
+            if (!seenRecords.has(key)) {
+              seenRecords.add(key);
+              records.push(record);
+            }
+          });
+          const namedRows = findAll(table, ['.grade-row', '.grade-item', '[data-grade-row]']);
+          namedRows.forEach(row => {
+            const course = namedValue(row, ['.course-name', '.course', '.lesson-name', '[data-field="course"]', '[data-field="courseName"]']);
+            const credits = numeric(namedValue(row, ['.credits', '.credit', '[data-field="credits"]', '[data-field="credit"]']));
+            const point = numeric(namedValue(row, ['.point', '.gp', '.grade-point', '[data-field="point"]', '[data-field="gp"]']));
+            const scoreText = namedValue(row, ['.score', '.grade', '[data-field="score"]', '[data-field="grade"]']);
+            const score = numeric(scoreText);
+            const passFail = /^(P|NP|通过|不通过|优秀|良好|中等|及格|不及格)$/i.test(scoreText);
+            if (!course || credits === null || (!Number.isFinite(point) && !Number.isFinite(score) && !passFail)) return;
+            const record = {
+              course,
+              credits,
+              point: Number.isFinite(point) ? point : null,
+              score: Number.isFinite(score) ? score : null,
+              category: namedValue(row, ['.category', '[data-field="category"]']) || '课程',
+              detail: namedValue(row, ['.detail', '.grade-detail', '[data-field="detail"]'])
+            };
+            const key = [record.course, record.credits, record.point, record.score, record.category, record.detail].join('\u0001');
+            if (!seenRecords.has(key)) {
+              seenRecords.add(key);
+              records.push(record);
+            }
+          });
+        });
+        return records;
+      };
+      const waitForRenderedGradeRows = async () => {
+        let rows = renderedGradeRows();
+        for (let attempt = 0; attempt < 14 && !rows.length; attempt += 1) {
+          await new Promise(resolve => setTimeout(resolve, 250));
+          rows = renderedGradeRows();
+        }
+        return rows;
+      };
+      const visibleDocumentHTML = () => documents.map(currentDocument => {
+        try {
+          return currentDocument.documentElement && currentDocument.documentElement.outerHTML
+            || currentDocument.body && currentDocument.body.innerHTML || '';
+        } catch (_) { return ''; }
+      }).filter(Boolean).join('\n');
       try {
-        const sheetValue = await text('/student/for-std/grade/sheet/');
-        if (sheetValue && sheetValue.__auth) return JSON.stringify({ phase: 'needs_login' });
+        // Inspect the already-mounted page first. This keeps a loaded table
+        // useful even when a second request to the same route is slow or down.
+        const renderedGrades = await waitForRenderedGradeRows();
+        let sheetValue = '';
+        if (renderedGrades.length) {
+          // Avoid any network request before checking the visible bootstrap.
+          // A page-rendered table with no identifiers is complete on its own.
+          sheetValue = visibleDocumentHTML();
+        } else {
+          try {
+            sheetValue = await text('/student/for-std/grade/sheet/');
+          } catch (_) {
+            sheetValue = visibleDocumentHTML();
+          }
+        }
+        if (sheetValue && sheetValue.__auth && !renderedGrades.length) return JSON.stringify({ phase: 'needs_login' });
         const sheet = String(sheetValue || '');
         const sheetAuth = authenticationPhase(sheet);
-        if (sheetAuth) return JSON.stringify({ phase: sheetAuth });
+        if (sheetAuth && !renderedGrades.length) return JSON.stringify({ phase: sheetAuth });
+        // The grade page can be fully rendered while its JSON endpoints are
+        // unavailable or have changed. Capture only normalized table cells so
+        // the visible page remains a safe, useful fallback.
         let id = studentID(sheet) || scheduleStudentId();
         let terms = semesters(sheet);
+        const gradeOnlyResult = semester => JSON.stringify({
+          phase: 'success',
+          grades: renderedGrades,
+          gpa: null,
+          schedule: {
+            semester: semester || { id: 'current', name: '当前学期', startDate: '1970-01-01', endDate: '1970-01-01' },
+            activities: []
+          },
+          scheduleAvailable: false
+        });
+        if (renderedGrades.length && !id && !terms.length) {
+          try {
+            const scheduleHTML = await text('/student/for-std/course-table', visibleFallbackTimeoutMs);
+            const discovered = semesters(String(scheduleHTML || ''));
+            if (discovered.length) {
+              const dated = discovered.filter(term => /^\d{4}-\d{2}-\d{2}$/.test(String(term.startDate || '')))
+                .sort((left, right) => String(left.startDate).localeCompare(String(right.startDate)));
+              const selected = dated[dated.length - 1] || discovered[0];
+              return gradeOnlyResult({
+                id: semesterID(selected),
+                name: clean(selected.name || selected.nameZh || selected.code || semesterID(selected)),
+                startDate: String(selected.startDate || '1970-01-01'),
+                endDate: String(selected.endDate || selected.startDate || '1970-01-01')
+              });
+            }
+          } catch (_) {}
+          return gradeOnlyResult(null);
+        }
         if (!id) {
-          const info = await json('/student/for-std/student-portrait/getStdInfo');
-          if (info && info.__auth) return JSON.stringify({ phase: 'needs_login' });
+          let info = null;
+          try {
+            info = await json(
+              '/student/for-std/student-portrait/getStdInfo',
+              renderedGrades.length ? visibleFallbackTimeoutMs : timeoutMs
+            );
+          } catch (_) {
+            info = null;
+          }
+          if (info && info.__auth && !renderedGrades.length) return JSON.stringify({ phase: 'needs_login' });
           if (info && info.__html) {
             const phase = authenticationPhase(info.__html);
-            return JSON.stringify({ phase: phase || 'retryable' });
+            if (phase && !renderedGrades.length) return JSON.stringify({ phase });
           }
           id = clean(info && info.student && (info.student.id || info.student.studentId) ||
             info && (info.studentId || info.studentAssoc) ||
             info && info.data && (info.data.id || info.data.studentId) || '');
         }
-        if (!id || !terms.length) return JSON.stringify({ phase: 'retryable' });
+        // A page-rendered table is already a complete, sanitized grade result.
+        // If opaque discovery still fails, return it immediately instead of
+        // waiting on every optional endpoint and hitting the native watchdog.
+        if (renderedGrades.length && !id) {
+          return gradeOnlyResult(terms.length ? terms[terms.length - 1] : null);
+        }
         const responses = [];
         let batchAuthenticationPhase = '';
-        for (let offset = 0; offset < terms.length; offset += 4) {
+        for (let offset = 0; id && offset < terms.length; offset += 4) {
           const batch = terms.slice(offset, offset + 4);
           const values = await Promise.all(batch.map(async term => {
             try {
-              const value = await json('/student/for-std/grade/sheet/info/' + encodeURIComponent(id) + '?semester=' + encodeURIComponent(semesterID(term)));
+              const value = await json(
+                '/student/for-std/grade/sheet/info/' + encodeURIComponent(id) + '?semester=' + encodeURIComponent(semesterID(term)),
+                renderedGrades.length ? visibleFallbackTimeoutMs : timeoutMs
+              );
               if (value && value.__auth) {
                 batchAuthenticationPhase = 'needs_login';
                 return null;
@@ -750,11 +1020,10 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
             } catch (_) { return null; }
           }));
           values.filter(Boolean).forEach(value => responses.push(value));
-          if (batchAuthenticationPhase) return JSON.stringify({ phase: batchAuthenticationPhase });
+          if (batchAuthenticationPhase && !renderedGrades.length) return JSON.stringify({ phase: batchAuthenticationPhase });
         }
         const responsePhase = responses.find(value => value && value.__phase);
-        if (responsePhase) return JSON.stringify({ phase: responsePhase.__phase });
-        if (!responses.length) return JSON.stringify({ phase: 'retryable' });
+        if (responsePhase && !renderedGrades.length) return JSON.stringify({ phase: responsePhase.__phase });
         const grades = [];
         responses.forEach(response => {
           const map = response && response.semesterId2studentGrades || {};
@@ -766,15 +1035,48 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
             grades.push({ course: name, credits: Number(course.credits || row.credits || 0), point: row.gp == null ? null : Number(row.gp), score: row.gaGrade == null ? null : Number(row.gaGrade), category: clean(row.category || '课程'), detail: clean(row.gradeDetail || '') });
           }));
         });
+        const effectiveGrades = grades.length ? grades : renderedGrades;
+        if (!effectiveGrades.length) return JSON.stringify({ phase: 'retryable' });
         let gpa = null;
-        try { const value = await json('/student/for-std/student-portrait/getMyGpa?studentAssoc=' + encodeURIComponent(id)); gpa = value && !value.__auth ? value : null; } catch (_) {}
-        const tableValue = await text('/student/for-std/course-table');
-        if (tableValue && tableValue.__auth) return JSON.stringify({ phase: 'needs_login' });
+        if (id) {
+          try {
+            const value = await json(
+              '/student/for-std/student-portrait/getMyGpa?studentAssoc=' + encodeURIComponent(id),
+              renderedGrades.length ? visibleFallbackTimeoutMs : timeoutMs
+            );
+            gpa = value && !value.__auth ? value : null;
+          } catch (_) {}
+        }
+        // Grades are independently useful. A changed or unavailable schedule
+        // endpoint must not turn a successfully rendered grade page into the
+        // generic "grade response unavailable" error in the HTTP fallback.
+        const fallbackEducation = () => JSON.stringify({
+          phase: 'success',
+          grades: effectiveGrades,
+          gpa,
+          schedule: {
+            semester: { id: 'current', name: '当前学期', startDate: '1970-01-01', endDate: '1970-01-01' },
+            activities: []
+          },
+          scheduleAvailable: false
+        });
+        let tableValue = '';
+        try {
+          tableValue = await text(
+            '/student/for-std/course-table',
+            renderedGrades.length ? visibleFallbackTimeoutMs : timeoutMs
+          );
+        } catch (_) {
+          return fallbackEducation();
+        }
+        if (tableValue && tableValue.__auth) {
+          return effectiveGrades.length ? fallbackEducation() : JSON.stringify({ phase: 'needs_login' });
+        }
         const tableHTML = String(tableValue || '');
         const tableAuth = authenticationPhase(tableHTML);
-        if (tableAuth) return JSON.stringify({ phase: tableAuth });
+        if (tableAuth) return fallbackEducation();
         const tableTerms = semesters(tableHTML);
-        if (!tableTerms.length) return JSON.stringify({ phase: 'retryable' });
+        if (!tableTerms.length) return fallbackEducation();
         const businessToday = () => {
           try {
             const parts = new Intl.DateTimeFormat('en-US', {
@@ -790,7 +1092,7 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
         const ordered = tableTerms.filter(term => term && semesterID(term) && /^\d{4}-\d{2}-\d{2}$/.test(String(term.startDate || ''))).sort((a, b) => String(a.startDate).localeCompare(String(b.startDate)));
         let index = ordered.findIndex(term => String(term.startDate) <= today && (!term.endDate || String(term.endDate) >= today));
         if (index < 0) { index = ordered.findIndex(term => String(term.startDate) > today); if (index < 0) index = ordered.length - 1; }
-        if (!ordered.length) return JSON.stringify({ phase: 'retryable' });
+        if (!ordered.length) return fallbackEducation();
         const effectiveEnd = (semester, print) => {
           const start = String(semester && semester.startDate || '');
           if (!/^\d{4}-\d{2}-\d{2}$/.test(start)) return '';
@@ -813,15 +1115,24 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
           const target = ordered[index];
           semester = target;
           try {
-            const value = await json('/student/ws/semester/get/' + encodeURIComponent(semesterID(target)));
+            const value = await json(
+              '/student/ws/semester/get/' + encodeURIComponent(semesterID(target)),
+              renderedGrades.length ? visibleFallbackTimeoutMs : timeoutMs
+            );
             if (value && value.__auth) return JSON.stringify({ phase: 'needs_login' });
             if (value && !value.__html) semester = value;
           } catch (_) {}
-          print = await json('/student/for-std/course-table/semester/' + encodeURIComponent(semesterID(target)) + '/print-data/' + encodeURIComponent(id));
-          if (print && print.__auth) return JSON.stringify({ phase: 'needs_login' });
+          try {
+            print = await json(
+              '/student/for-std/course-table/semester/' + encodeURIComponent(semesterID(target)) + '/print-data/' + encodeURIComponent(id),
+              renderedGrades.length ? visibleFallbackTimeoutMs : timeoutMs
+            );
+          } catch (_) {
+            return fallbackEducation();
+          }
+          if (print && print.__auth) return fallbackEducation();
           if (print && print.__html) {
-            const phase = authenticationPhase(print.__html);
-            return JSON.stringify({ phase: phase || 'retryable' });
+            return fallbackEducation();
           }
           const last = effectiveEnd(semester, print);
           if (!last || today <= last || index >= ordered.length - 1) break;
@@ -829,7 +1140,7 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
         }
         const activities = print && print.studentTableVm && Array.isArray(print.studentTableVm.activities) ? print.studentTableVm.activities : [];
         const sanitized = activities.map(activity => ({ name: clean(activity.courseName), code: clean(activity.courseCode), credits: Number(activity.credits || 0), weekday: Number(activity.weekday || 0), startUnit: Number(activity.startUnit || 0), endUnit: Number(activity.endUnit || 0), weekIndexes: Array.isArray(activity.weekIndexes) ? activity.weekIndexes.map(Number).filter(Number.isFinite) : [], teachers: teacherValues(activity.teachers), campus: clean(activity.campus), building: clean(activity.building), room: clean(activity.room) })).filter(activity => activity.name);
-        return JSON.stringify({ phase: 'success', grades, gpa, schedule: { semester, activities: sanitized } });
+        return JSON.stringify({ phase: 'success', grades: effectiveGrades, gpa, schedule: { semester, activities: sanitized } });
       } catch (_) { return JSON.stringify({ phase: 'retryable' }); }
     })()
     """#

@@ -121,6 +121,21 @@ class IOSProjectConfigurationTest(unittest.TestCase):
             self.assertIn('TARGETED_DEVICE_FAMILY = "1,2";', target)
             self.assertIn("SUPPORTS_MACCATALYST = NO;", target)
 
+    def test_device_validation_build_has_a_new_installable_version(self):
+        self.assertIn("CURRENT_PROJECT_VERSION = 2;", self.project)
+        self.assertIn("MARKETING_VERSION = 1.0.1;", self.project)
+        for info in (self.ios_app_info, self.ios_widget_info):
+            self.assertIn(
+                "<string>$(MARKETING_VERSION)</string>",
+                info,
+                "bundle marketing version must come from Xcode build settings",
+            )
+            self.assertIn(
+                "<string>$(CURRENT_PROJECT_VERSION)</string>",
+                info,
+                "bundle build version must come from Xcode build settings",
+            )
+
     def test_ios_appicon_uses_the_approved_project_artwork(self):
         contents_file = APP_ICON_SET / "Contents.json"
         self.assertTrue(contents_file.is_file(), "iOS AppIcon asset catalog is required")
@@ -184,6 +199,15 @@ class IOSProjectConfigurationTest(unittest.TestCase):
         self.assertIn("sharedSnapshotURL", self.ios_widget)
         self.assertIn("electricityBalance", self.ios_widget)
         self.assertNotIn("snapshotURL()", self.ios_widget)
+
+    def test_widget_extension_uses_swiftui_widget_bundle_entrypoint(self):
+        """WidgetKit discovers the @main WidgetBundle without an Obj-C principal class."""
+        extension_block = self.ios_widget_info.split("<key>NSExtension</key>", 1)[1]
+        self.assertNotIn(
+            "NSExtensionPrincipalClass",
+            extension_block,
+            "a SwiftUI WidgetBundle must not be overridden by an Obj-C principal class",
+        )
 
     def test_management_surface_exposes_shared_container_and_collection_recovery(self):
         self.assertIn("sharedContainerAvailable", self.ios_offline_views)

@@ -404,3 +404,24 @@
   范围包含离线主 App、前台认证/采集和尽力而为后台同步。
 - 已将 `task_plan.md` 切换为三阶段实施计划；当前尚未开始 iOS UI 或认证/后台代码，先盘点
   既有 Foundation-only Package、Android backup seam 和可复用 fixture 入口。
+## 2026-09-09 iPad collection/widget repair
+
+- Reproduced the reported grade failure with the Node WebView harness: rendered table + unavailable
+  grade API previously returned `retryable` and surfaced `grade response unavailable`.
+- Added a red-capable DOM fallback test and implemented a bounded wait plus normalized table parsing;
+  API data remains preferred and no sensitive session material is returned.
+- Added coverage for a failed grade-page reload, removed the SwiftUI WidgetBundle principal-class
+  override from the Widget plist, and bumped App/Widget to `1.0.1 (2)`.
+- Targeted runtime, script-syntax, project-configuration and golden-fixture checks pass. Full Swift/
+  Xcode archive and user-side App Group/Widget installation remain pending until the fresh CI artifact.
+
+## 2026-09-09 current release handoff
+
+- Re-ran the visible education Node harness: 7 tests passed, including the exact failure shape
+  reported by the user (the grade page is mounted while grade/schedule endpoints are unavailable).
+- Re-ran iOS project configuration, IPA packaging, and collection-visibility checks: 30 tests passed;
+  `git diff --check` passed.
+- The current workspace changes are ready to commit on branch `iOS`. The old local artifact
+  `dist/ios/cloud-run-34299633874` remains stale (`1.0 (1)`) and must not be used for validation.
+- Next authoritative step is a fresh macOS archive for the new commit; only the resulting
+  `AoxiangAssistant-sideload-re-signable.ipa` should be re-signed and installed.

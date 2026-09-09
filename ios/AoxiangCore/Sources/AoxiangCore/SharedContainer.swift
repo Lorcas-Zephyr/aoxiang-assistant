@@ -1,5 +1,9 @@
 import Foundation
 
+#if os(iOS) && canImport(Security)
+import Security
+#endif
+
 /// Shared file location used by the main iOS app and its Widget extension.
 /// The portable package keeps the path contract in one place; it does not
 /// expose credentials, cookies, authentication state, or network clients.
@@ -10,17 +14,49 @@ public enum AoxiangSharedContainer {
     public static let defaultAppGroupIdentifier = "group.cn.nwpu.aoxiang-assistant"
     public static let snapshotFileName = "widget-snapshot.json"
 
+    /// The bundle value is a build-time hint. A re-signer may update the
+    /// application-groups entitlement without rewriting this plist, so the
+    /// signed entitlement is preferred whenever it is readable.
     public static var appGroupIdentifier: String {
-        guard let configured = Bundle.main.object(
-            forInfoDictionaryKey: "AoxiangAppGroupIdentifier"
-        ) as? String else {
-            return defaultAppGroupIdentifier
+        let configured = configuredAppGroupIdentifier()
+        let entitled = signedAppGroupIdentifiers()
+        return appGroupCandidates(
+            configuredIdentifier: configured,
+            entitledIdentifiers: entitled
+        ).first ?? configured ?? defaultAppGroupIdentifier
+    }
+
+    /// Orders possible group identifiers without touching the filesystem.
+    /// `nil` means that entitlements could not be inspected (for example on a
+    /// host test), while an empty array means the signed target declares no
+    /// groups and must fail closed instead of guessing one.
+    static func appGroupCandidates(
+        configuredIdentifier: String?,
+        entitledIdentifiers: [String]?
+    ) -> [String] {
+        let configured = configuredIdentifier.flatMap(normalizeGroupIdentifier)
+        let entitled = entitledIdentifiers?.compactMap(normalizeGroupIdentifier) ?? []
+        var candidates: [String] = []
+
+        func append(_ value: String?) {
+            guard let value, !candidates.contains(value) else { return }
+            candidates.append(value)
         }
-        let value = configured.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard value.hasPrefix("group."), !value.contains("$(") else {
-            return defaultAppGroupIdentifier
+
+        if let entitledIdentifiers {
+            // When the signed entitlement is available, a stale plist value
+            // is deliberately ignored unless the signer actually authorized
+            // it. This is what lets common sideloaders use their team-owned
+            // App Group without requiring a plist rewrite.
+            if let configured, entitled.contains(configured) {
+                append(configured)
+            }
+            entitled.forEach { append($0) }
+        } else {
+            append(configured)
+            append(defaultAppGroupIdentifier)
         }
-        return value
+        return candidates
     }
 
     /// Returns the App Group location exclusively. A missing entitlement,
@@ -30,9 +66,17 @@ public enum AoxiangSharedContainer {
         fileManager: FileManager = .default
     ) -> URL? {
         #if os(iOS)
-        return fileManager.containerURL(
-            forSecurityApplicationGroupIdentifier: appGroupIdentifier
-        )?.appendingPathComponent(snapshotFileName)
+        for identifier in appGroupCandidates(
+            configuredIdentifier: configuredAppGroupIdentifier(),
+            entitledIdentifiers: signedAppGroupIdentifiers()
+        ) {
+            if let container = fileManager.containerURL(
+                forSecurityApplicationGroupIdentifier: identifier
+            ) {
+                return container.appendingPathComponent(snapshotFileName)
+            }
+        }
+        return nil
         #else
         return nil
         #endif
@@ -48,6 +92,38 @@ public enum AoxiangSharedContainer {
             return UnavailableWidgetSnapshotStore()
         }
         return FileWidgetSnapshotStore(fileURL: fileURL, fileManager: fileManager)
+    }
+
+    private static func configuredAppGroupIdentifier() -> String? {
+        guard let configured = Bundle.main.object(
+            forInfoDictionaryKey: "AoxiangAppGroupIdentifier"
+        ) as? String else {
+            return nil
+        }
+        return normalizeGroupIdentifier(configured)
+    }
+
+    private static func normalizeGroupIdentifier(_ value: String) -> String? {
+        let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard normalized.hasPrefix("group."), !normalized.contains("$(") else {
+            return nil
+        }
+        return normalized
+    }
+
+    private static func signedAppGroupIdentifiers() -> [String]? {
+        #if os(iOS) && canImport(Security)
+        guard let task = SecTaskCreateFromSelf(nil) else { return nil }
+        let raw = SecTaskCopyValueForEntitlement(
+            task,
+            "com.apple.security.application-groups" as CFString,
+            nil
+        )
+        guard let values = raw as? [String] else { return [] }
+        return values
+        #else
+        return nil
+        #endif
     }
 }
 

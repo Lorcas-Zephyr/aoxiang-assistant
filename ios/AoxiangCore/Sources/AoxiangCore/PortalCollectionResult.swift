@@ -1,5 +1,10 @@
 import Foundation
 
+public enum PortalCollectionWarning: String, Equatable {
+    case electricityUnavailable
+    case scheduleUnavailable
+}
+
 /// A complete, sanitized foreground collection candidate. It contains only
 /// domain values and can therefore cross the App/Core boundary without
 /// carrying credentials, cookies, WebView state or raw responses.
@@ -7,18 +12,30 @@ public struct PortalCollectedData: Equatable {
     public let grades: [OfflineGrade]
     public let gpa: Double?
     public let schedule: PortalCollectionParsers.SchedulePayload
-    public let electricityBalance: Double
+    /// `false` means the education response contained valid grades but the
+    /// schedule endpoint was unavailable. Callers must preserve the existing
+    /// local schedule in that case.
+    public let scheduleAvailable: Bool
+    /// The latest balance when the electricity page was readable. It is
+    /// optional so a successful grades/schedule collection can still be
+    /// committed when the separate electricity portal is unavailable.
+    public let electricityBalance: Double?
+    public let warnings: [PortalCollectionWarning]
 
     public init(
         grades: [OfflineGrade],
         gpa: Double? = nil,
         schedule: PortalCollectionParsers.SchedulePayload,
-        electricityBalance: Double
+        electricityBalance: Double? = nil,
+        warnings: [PortalCollectionWarning] = [],
+        scheduleAvailable: Bool = true
     ) {
         self.grades = grades
         self.gpa = gpa
         self.schedule = schedule
         self.electricityBalance = electricityBalance
+        self.warnings = warnings
+        self.scheduleAvailable = scheduleAvailable
     }
 }
 
@@ -29,15 +46,18 @@ public struct PortalVisibleEducationData: Equatable {
     public let grades: [OfflineGrade]
     public let gpa: Double?
     public let schedule: PortalCollectionParsers.SchedulePayload
+    public let scheduleAvailable: Bool
 
     public init(
         grades: [OfflineGrade],
         gpa: Double? = nil,
-        schedule: PortalCollectionParsers.SchedulePayload
+        schedule: PortalCollectionParsers.SchedulePayload,
+        scheduleAvailable: Bool = true
     ) {
         self.grades = grades
         self.gpa = gpa
         self.schedule = schedule
+        self.scheduleAvailable = scheduleAvailable
     }
 }
 

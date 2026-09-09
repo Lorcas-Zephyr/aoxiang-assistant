@@ -137,5 +137,38 @@ final class OfflineViewModelTests: XCTestCase {
         XCTAssertEqual(model.state, oldState)
         XCTAssertEqual(store.value, oldState)
     }
+
+    func testPartialPortalCollectionPreservesUnavailableScheduleAndElectricity() throws {
+        let oldState = OfflineAppState(
+            semesters: [OfflineSemester(id: "old", startDate: "2026-01-01", endDate: "2026-06-30")],
+            selectedSemesterId: "old",
+            courses: [OfflineCourse(id: "old-course", name: "旧课", semesterId: "old")],
+            grades: [OfflineGrade(id: "old-grade", course: "旧课", credits: 1, score: 60)],
+            electricityBalance: 7
+        )
+        let controller = try OfflineDataController(store: InMemoryOfflineStateStore(value: oldState))
+        let writer = FileWidgetSnapshotStore(
+            fileURL: FileManager.default.temporaryDirectory.appendingPathComponent("portal-partial-\(UUID().uuidString).json")
+        )
+        let model = OfflineAppViewModel(controller: controller, snapshotWriter: writer)
+        let result = PortalCollectedData(
+            grades: [OfflineGrade(id: "new-grade", course: "新课", credits: 3, score: 95)],
+            gpa: 3.9,
+            schedule: PortalCollectionParsers.SchedulePayload(
+                semesters: [OfflineSemester(id: "current", startDate: "1970-01-01", endDate: "1970-01-01")],
+                courses: []
+            ),
+            electricityBalance: nil,
+            warnings: [.scheduleUnavailable, .electricityUnavailable],
+            scheduleAvailable: false
+        )
+
+        XCTAssertTrue(model.applyPortalCollection(result))
+        XCTAssertEqual(model.state.grades.map(\.id), ["new-grade"])
+        XCTAssertEqual(model.state.semesters.map(\.id), ["old"])
+        XCTAssertEqual(model.state.courses.map(\.id), ["old-course"])
+        XCTAssertEqual(model.state.electricityBalance, 7)
+        XCTAssertEqual(model.lastPortalCollectionWarnings, [.scheduleUnavailable, .electricityUnavailable])
+    }
 }
 #endif
