@@ -425,3 +425,17 @@
   `dist/ios/cloud-run-34299633874` remains stale (`1.0 (1)`) and must not be used for validation.
 - Next authoritative step is a fresh macOS archive for the new commit; only the resulting
   `AoxiangAssistant-sideload-re-signable.ipa` should be re-signed and installed.
+
+## 2026-09-09 repair verification before fresh archive
+
+- Re-ran `python -m unittest discover -s scripts/tests -p "test_*.py" -v`: 77 tests passed.
+- Re-ran the visible WebView Node harness: 7 tests passed. The harness now proves a rendered
+ 成绩 table is retained when the grade API, grade-page reload, schedule endpoint or student
+  bootstrap is unavailable.
+- Re-ran `python scripts/validate_golden_fixtures.py`: 1 version, 15 scenarios and 32 referenced
+  files validated. `git diff --check` passed.
+- The pending source diff adds empty-grade guards in `PortalForegroundCollector` and fixes only
+  Swift test compilation seams; no credentials, cookies, SMS codes or raw session values are
+  introduced.
+- The old `dist/ios/cloud-run-34299633874` artifact remains stale (`1.0 (1)`) and must not be
+  installed. A fresh macOS archive for the repair commit is required before another iPad test.

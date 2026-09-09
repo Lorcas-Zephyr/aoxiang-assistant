@@ -632,3 +632,20 @@ goal can close. Structify remains out of scope.
 - [ ] A new macOS workflow run must be tied to the repair commit and its `sideload` IPA must be
   inspected for `PlugIns/AoxiangAssistantWidget.appex`, version `1.0.1 (2)`, and matching App
   Group placeholders before it is sent to the user.
+
+## 2026-09-09 repair commit and fresh IPA gate
+
+- [x] Re-ran the visible education runtime harness: 7 tests passed, including rendered grade
+  tables with unavailable grade/schedule endpoints, delayed rendering, iframe tables and missing
+  student bootstrap.
+- [x] Re-ran the complete portable Python suite: 77 tests passed; golden validation covers 1
+  version, 15 scenarios and 32 referenced files; `git diff --check` passed.
+- [x] Added a fail-closed Swift collector guard so an empty visible/API grade result cannot replace
+  existing grades or be reported as a successful collection.
+- [x] Fixed the Swift app test compile seam (initializer argument order and warning type inference).
+- [ ] Commit and push this repair to `iOS`, then wait for macOS Swift tests and the `iphoneos`
+  archive workflow for the exact commit.
+- [ ] Inspect and deliver only the fresh `AoxiangAssistant-sideload-re-signable.ipa`; verify the
+  nested Widget, version `1.0.1 (2)`, and matching App Group placeholders before device testing.
+- [ ] User-side re-sign, installation, foreground collection and Widget gallery/rendering evidence
+  remain external gates; do not close the goal before those observations are recorded.

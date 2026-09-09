@@ -140,9 +140,9 @@ final class OfflineViewModelTests: XCTestCase {
 
     func testPartialPortalCollectionPreservesUnavailableScheduleAndElectricity() throws {
         let oldState = OfflineAppState(
+            courses: [OfflineCourse(id: "old-course", name: "旧课", semesterId: "old")],
             semesters: [OfflineSemester(id: "old", startDate: "2026-01-01", endDate: "2026-06-30")],
             selectedSemesterId: "old",
-            courses: [OfflineCourse(id: "old-course", name: "旧课", semesterId: "old")],
             grades: [OfflineGrade(id: "old-grade", course: "旧课", credits: 1, score: 60)],
             electricityBalance: 7
         )
@@ -168,7 +168,8 @@ final class OfflineViewModelTests: XCTestCase {
         XCTAssertEqual(model.state.semesters.map(\.id), ["old"])
         XCTAssertEqual(model.state.courses.map(\.id), ["old-course"])
         XCTAssertEqual(model.state.electricityBalance, 7)
-        XCTAssertEqual(model.lastPortalCollectionWarnings, [.scheduleUnavailable, .electricityUnavailable])
+        let expectedWarnings: [PortalCollectionWarning] = [.scheduleUnavailable, .electricityUnavailable]
+        XCTAssertEqual(model.lastPortalCollectionWarnings, expectedWarnings)
     }
 }
 #endif

@@ -73,6 +73,14 @@ public struct PortalForegroundCollector {
             do {
                 let education = try await visibleEducationProvider()
                 guard !isCancelled() else { throw PortalCollectionFailure.cancelled }
+                // A page can finish loading while its client-side grade list is
+                // still empty or its DOM shape is not recognized. Do not treat
+                // that as a successful empty collection: fall through to the
+                // allow-listed response path so existing grades cannot be
+                // replaced by an empty list.
+                guard !education.grades.isEmpty else {
+                    throw PortalCollectionFailure.invalidResponse("grade rows unavailable")
+                }
                 var portraitGPA = portraitHTML.flatMap(PortalCollectionParsers.parsePortraitGPA)
                 if education.gpa == nil, portraitGPA == nil, let portraitProvider {
                     do {
@@ -205,6 +213,9 @@ public struct PortalForegroundCollector {
             }
         }
         let parsedGrades = try PortalCollectionParsers.parseGradeAPI(try jsonData(gradeEnvelope))
+        guard !parsedGrades.grades.isEmpty else {
+            throw PortalCollectionFailure.invalidResponse("grade rows unavailable")
+        }
         var portraitGPA = portraitHTML.flatMap(PortalCollectionParsers.parsePortraitGPA)
         if parsedGrades.apiGPA == nil, portraitGPA == nil, let portraitProvider {
             do {

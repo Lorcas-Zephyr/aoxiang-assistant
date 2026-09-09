@@ -416,3 +416,19 @@
   Widget plist cleanup, and version bump. A new archive is required before another device test.
 - The recommended package remains `sideload`, not `sideload-host-only`: the former keeps the nested
   Widget extension; the latter is intentionally a host-only diagnostic package.
+
+## 2026-09-09 repair verification
+
+- The current uncommitted Swift diff adds two fail-closed checks: visible education data with no
+  valid grade rows falls through to the allow-listed stable path, and stable responses with no
+  valid parsed rows fail with `grade rows unavailable` instead of producing an empty replacement.
+- The corresponding XCTest cases cover both paths. `OfflineViewModelTests` now matches the actual
+  `OfflineAppState` initializer order and uses an explicit warning-array type to avoid a compiler
+  inference cascade.
+- Portable evidence is green: 77 Python tests, 7 visible-collection runtime cases, golden corpus
+  validation (1/15/32), and `git diff --check`. Windows has no Swift/Xcode; macOS CI remains the
+  compile/archive authority.
+- Widget diagnosis remains an installation/signing boundary: the source IPA layout includes the
+  nested extension and both targets declare the same App Group, but a sideloader must preserve and
+  sign both bundles. The previous local IPA is not evidence because it is version `1.0 (1)` and
+  still contains the removed `NSExtensionPrincipalClass`.

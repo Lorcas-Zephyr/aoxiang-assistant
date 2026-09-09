@@ -183,6 +183,54 @@ final class PortalForegroundCollectorTests: XCTestCase {
         XCTAssertEqual(result.electricityBalance ?? -1, 18)
     }
 
+    func testEmptyVisibleEducationFallsBackToStableGradeResponses() async throws {
+        let transport = makeTransport(gpa: .success(json(["gpa": 3.72])))
+        let emptyEducation = PortalVisibleEducationData(
+            grades: [],
+            schedule: PortalCollectionParsers.SchedulePayload(
+                semesters: [OfflineSemester(id: "current", startDate: "1970-01-01", endDate: "1970-01-01")],
+                courses: []
+            ),
+            scheduleAvailable: false
+        )
+        let collector = PortalForegroundCollector(
+            transport: transport,
+            electricityProvider: { 18 },
+            visibleEducationProvider: { emptyEducation }
+        )
+
+        let result = try await collector.collect(state: .readyToCollect)
+
+        XCTAssertEqual(result.grades.map(\.course), ["数学"])
+        XCTAssertFalse(transport.requests.isEmpty)
+    }
+
+    func testStableCollectionRejectsResponsesThatContainNoValidGrades() async {
+        let gradeSheet = json(["studentId": "student-1", "semesterIds": ["term-1"]])
+        let emptyGradeResponse = json([
+            "semesterId2studentGrades": ["term-1": [[
+                "published": false,
+                "course": ["nameZh": "未发布", "credits": 3],
+                "gp": 4.0,
+                "gaGrade": 96,
+            ]]],
+        ])
+        let transport = RecordingTransport(responses: [
+            "/student/for-std/grade/sheet": [.success(gradeSheet)],
+            "/student/for-std/grade/sheet/info/student-1": [.success(emptyGradeResponse)],
+        ])
+        let collector = PortalForegroundCollector(transport: transport) { 2.5 }
+
+        do {
+            _ = try await collector.collect(state: .readyToCollect)
+            XCTFail("expected invalid grade response")
+        } catch let error as PortalCollectionFailure {
+            XCTAssertEqual(error, .invalidResponse("grade rows unavailable"))
+        } catch {
+            XCTFail("unexpected error: \(error)")
+        }
+    }
+
     func testVisibleEducationProviderUsesPortraitFallbackWhenItsGPAIsMissing() async throws {
         let transport = RecordingTransport(responses: [:])
         let portraitCalls = LockedCounter()
