@@ -46,18 +46,24 @@ public struct WidgetSnapshot: Codable, Equatable {
     public let selectedSemesterName: String?
     public let todayCourses: [WidgetCourseSnapshot]
     public let gradeSummary: WidgetGradeSummary
+    /// Optional so snapshots written by the previous schema remain readable.
+    /// The value is still sanitized and never carries credentials or session
+    /// metadata.
+    public let electricityBalance: Double?
 
     public init(
         generatedAtEpochMilliseconds: Int64,
         selectedSemesterName: String?,
         todayCourses: [WidgetCourseSnapshot],
-        gradeSummary: WidgetGradeSummary
+        gradeSummary: WidgetGradeSummary,
+        electricityBalance: Double? = nil
     ) {
         self.schemaVersion = Self.currentSchemaVersion
         self.generatedAtEpochMilliseconds = generatedAtEpochMilliseconds
         self.selectedSemesterName = selectedSemesterName
         self.todayCourses = todayCourses
         self.gradeSummary = gradeSummary
+        self.electricityBalance = electricityBalance
     }
 
     public func validated() throws -> WidgetSnapshot {
@@ -66,6 +72,7 @@ public struct WidgetSnapshot: Codable, Equatable {
               gradeSummary.count >= 0,
               (gradeSummary.averageScore.map { $0.isFinite && (0.0...100.0).contains($0) } ?? true),
               (gradeSummary.gpa.map { $0.isFinite && (0.0...5.0).contains($0) } ?? true),
+              (electricityBalance.map { $0.isFinite && (0.0..<100000.0).contains($0) } ?? true),
               todayCourses.allSatisfy({ course in
                   guard !course.id.isEmpty, !course.name.isEmpty,
                         course.sections.allSatisfy({ $0 > 0 }) else {
@@ -207,7 +214,8 @@ public struct WidgetSnapshotBuilder {
             generatedAtEpochMilliseconds: Int64(now.timeIntervalSince1970 * 1000),
             selectedSemesterName: semester?.name,
             todayCourses: courses,
-            gradeSummary: WidgetGradeSummary(count: valid.grades.count, averageScore: average, gpa: valid.gpa ?? computedGPA)
+            gradeSummary: WidgetGradeSummary(count: valid.grades.count, averageScore: average, gpa: valid.gpa ?? computedGPA),
+            electricityBalance: valid.electricityBalance
         )
     }
 }

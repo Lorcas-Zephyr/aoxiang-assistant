@@ -587,3 +587,28 @@ iPad, and observe foreground authentication/collection plus Widget snapshot
 rendering. These gates cannot be simulated by Windows or by an unsigned IPA;
 any failure must be recorded and mapped back to a repository fix before the
 goal can close. Structify remains out of scope.
+
+## 2026-09-09 device-validation continuation work
+
+- [x] Keep the visible authentication WebView mounted until foreground collection and the
+  host/Widget snapshot commit finish; add a collection retry action for transient failures.
+- [x] Make the visible education collector tolerant of `dataSemester`/object-map semester
+  payloads and print-data resource student-ID discovery; cover the path with a Node runtime
+  harness.
+- [x] Include the validated electricity balance in the optional Widget snapshot field and expose
+  App Group availability in Management/Home/Widget diagnostics while retaining old snapshot
+  compatibility.
+- [x] Strengthen the signed IPA verifier to check runtime plist App Group values as well as
+  nested signatures, profiles and entitlements.
+- [ ] Rebuild the iPhone/iPad archive on macOS and inspect the new Widget-capable sideload IPA.
+- [ ] User-side re-sign, common App Group provisioning, iPad installation, foreground collection,
+  snapshot write and Widget gallery/rendering evidence remain required before closing the goal.
+
+## 2026-09-09 collection launch race repair
+
+- [x] Gate collection startup on the authentication sheet's `onAppear`, so a management-page
+  tap cannot launch WebKit requests before the visible session is mounted.
+- [x] Portable regression and fixture validation pass; Swift/Xcode and device archive remain
+  macOS-only checks.
+- [x] Retry transitions are handled once by the shared collection callback.
+- [ ] Push this repair and inspect a fresh Widget-capable `sideload` IPA from GitHub Actions.

@@ -180,7 +180,8 @@ final class OfflineDataTests: XCTestCase {
             courses: [OfflineCourse(id: "course-1", name: "课程", semesterId: "term-1", timeSlots: [OfflineTimeSlot(dayOfWeek: 1)])],
             semesters: [OfflineSemester(id: "term-1", name: "学期", startDate: "2026-01-01", endDate: "2026-06-30")],
             selectedSemesterId: "term-1",
-            grades: [OfflineGrade(course: "课程", point: 4, score: 90)]
+            grades: [OfflineGrade(course: "课程", point: 4, score: 90)],
+            electricityBalance: 12.5
         )
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(secondsFromGMT: 0)!
@@ -188,6 +189,7 @@ final class OfflineDataTests: XCTestCase {
         let snapshot = try WidgetSnapshotBuilder().makeSnapshot(from: state, now: date, calendar: calendar)
         XCTAssertEqual(snapshot.todayCourses.map(\.id), ["course-1"])
         XCTAssertEqual(snapshot.gradeSummary.count, 1)
+        XCTAssertEqual(snapshot.electricityBalance, 12.5)
         let data = try JSONEncoder().encode(snapshot)
         let text = String(decoding: data, as: UTF8.self).lowercased()
         XCTAssertFalse(text.contains("password"))
@@ -225,6 +227,17 @@ final class OfflineDataTests: XCTestCase {
         let date = ISO8601DateFormatter().date(from: "2026-01-05T00:00:00Z")!
         let snapshot = try WidgetSnapshotBuilder().makeSnapshot(from: state, now: date, calendar: calendar)
         XCTAssertEqual(snapshot.todayCourses.map(\.id), ["active"])
+    }
+
+    func testWidgetSnapshotWithoutElectricityRemainsReadable() throws {
+        let legacy = """
+        {"schemaVersion":1,"generatedAtEpochMilliseconds":1,"selectedSemesterName":"学期","todayCourses":[],"gradeSummary":{"count":0,"averageScore":null,"gpa":null}}
+        """.data(using: .utf8)!
+
+        let snapshot = try JSONDecoder().decode(WidgetSnapshot.self, from: legacy)
+
+        XCTAssertNil(snapshot.electricityBalance)
+        XCTAssertNoThrow(try snapshot.validated())
     }
 
     func testFileStoreUsesAtomicReplacementAndRejectsCorruptState() throws {
@@ -318,6 +331,15 @@ final class OfflineDataTests: XCTestCase {
             gradeSummary: WidgetGradeSummary(count: 1, averageScore: 101, gpa: nil)
         )
         XCTAssertThrowsError(try invalidSummary.validated())
+
+        let invalidElectricity = WidgetSnapshot(
+            generatedAtEpochMilliseconds: 1,
+            selectedSemesterName: "学期",
+            todayCourses: [],
+            gradeSummary: WidgetGradeSummary(count: 0, averageScore: nil, gpa: nil),
+            electricityBalance: -1
+        )
+        XCTAssertThrowsError(try invalidElectricity.validated())
 
         let invalidCourse = WidgetSnapshot(
             generatedAtEpochMilliseconds: 1,

@@ -51,6 +51,14 @@ struct AoxiangWidgetView: View {
                 .font(.headline)
             if let snapshot = entry.snapshot {
                 Text("今日课程 \(snapshot.todayCourses.count) 门")
+                if let gpa = snapshot.gradeSummary.gpa {
+                    Text(String(format: "GPA %.2f", gpa))
+                        .font(.caption)
+                }
+                if let balance = snapshot.electricityBalance {
+                    Text(String(format: "电费 %.2f", balance))
+                        .font(.caption)
+                }
                 Text("成绩 \(snapshot.gradeSummary.count) 门")
                     .font(.caption)
                     .foregroundColor(.secondary)

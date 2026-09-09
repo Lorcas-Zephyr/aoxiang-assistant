@@ -47,6 +47,16 @@ actual_widget_id="$(/usr/bin/plutil -extract CFBundleIdentifier raw -o - "$widge
   echo "Widget bundle ID mismatch: $actual_widget_id (expected $expected_widget_id)" >&2
   exit 1
 }
+actual_app_group="$(/usr/bin/plutil -extract AoxiangAppGroupIdentifier raw -o - "$app_info" 2>/dev/null || true)"
+actual_widget_group="$(/usr/bin/plutil -extract AoxiangAppGroupIdentifier raw -o - "$widget_info" 2>/dev/null || true)"
+[[ "$actual_app_group" == "$expected_group" ]] || {
+  echo "host App Group plist mismatch: $actual_app_group (expected $expected_group)" >&2
+  exit 1
+}
+[[ "$actual_widget_group" == "$expected_group" ]] || {
+  echo "Widget App Group plist mismatch: $actual_widget_group (expected $expected_group)" >&2
+  exit 1
+}
 extension_point="$(/usr/bin/plutil -extract NSExtension.NSExtensionPointIdentifier raw -o - "$widget_info")"
 [[ "$extension_point" == "com.apple.widgetkit-extension" ]] || {
   echo "unexpected extension point: $extension_point" >&2

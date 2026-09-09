@@ -107,12 +107,19 @@ iPad.
 
 The repository includes scripts/verify_signed_ios_ipa.sh for a macOS shell
 that checks the nested code signatures, provisioning profiles, Bundle IDs and
-App Group before installation:
+App Group before installation. It also checks the `AoxiangAppGroupIdentifier`
+value in both runtime `Info.plist` files, because changing only the signed
+entitlement can leave the app and Widget looking at different containers:
 
     bash scripts/verify_signed_ios_ipa.sh signed-full-widget.ipa \
       com.example.aoxiang \
       com.example.aoxiang.widget \
       group.example.aoxiang
+
+If a signing tool changes the App Group or bundle identifiers, it must update
+the host and Widget `Info.plist` values together with the entitlements. The
+verification command should be run again with those exact identifiers before
+installing.
 
 The workflow first runs both Swift Package suites, then runs one device archive
 with `CODE_SIGNING_ALLOWED=NO`, packages all three variants, and verifies that

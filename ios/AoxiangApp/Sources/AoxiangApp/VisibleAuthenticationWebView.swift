@@ -157,6 +157,29 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
         transition(.prepareToCollect)
     }
 
+    /// Re-opens the collection gate after a transient collection failure.
+    /// The existing WebView and cookie store are retained; credentials never
+    /// cross this boundary.
+    @discardableResult
+    public func retryCollection() -> Bool {
+        guard case .retryableFailure(let failure) = state,
+              failure.operation == .collection else { return false }
+        do {
+            state = try machine.handle(.retry)
+            sessionStore.set(state)
+            lastError = nil
+            return state == .readyToCollect
+        } catch {
+            lastError = error.localizedDescription
+            return false
+        }
+    }
+
+    public var canRetryCollection: Bool {
+        guard case .retryableFailure(let failure) = state else { return false }
+        return failure.operation == .collection
+    }
+
     /// Records a collection-side authentication result without accepting any
     /// credential or session value into the portable model.
     public func recordCollectionFailure(_ failure: PortalCollectionFailure) {
@@ -614,34 +637,55 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
           String(html || '').match(/(?:studentId|studentAssoc)\s*[=:]\s*["']([^"']+)["']/i);
         return match ? clean(match[1]) : '';
       };
+      const scheduleStudentId = () => {
+        try {
+          const resources = performance.getEntriesByType('resource').slice().reverse();
+          for (const entry of resources) {
+            const match = String(entry && entry.name || '').match(
+              /\/for-std\/course-table\/semester\/[^/]+\/print-data\/([^/?#]+)/
+            );
+            if (match && match[1]) return decodeURIComponent(match[1]);
+          }
+        } catch (_) {}
+        return '';
+      };
       const parseSemesterValue = raw => {
         if (Array.isArray(raw)) return raw;
+        if (raw && typeof raw === 'object') return Object.values(raw);
         if (typeof raw !== 'string') return [];
         try {
           const parsed = JSON.parse(raw);
-          return Array.isArray(parsed) ? parsed : [];
+          if (Array.isArray(parsed)) return parsed;
+          return parsed && typeof parsed === 'object' ? Object.values(parsed) : [];
         } catch (_) { return []; }
+      };
+      const semesterID = term => clean(term && (term.id || term.code || term.dataSemester || term.value));
+      const normalizeSemester = term => {
+        if (!term || typeof term !== 'object') return null;
+        const id = semesterID(term);
+        return id ? Object.assign({}, term, { id }) : null;
       };
       const semesters = html => {
         const globals = [window.semesters, window.semesterList, window.semesterOptions, window.__SEMESTERS__];
         for (const globalValue of globals) {
-          const parsed = parseSemesterValue(globalValue);
+          const parsed = parseSemesterValue(globalValue).map(normalizeSemester).filter(Boolean);
           if (parsed.length) return parsed;
         }
         const source = String(html || '');
-        const jsonParseMatch = source.match(/(?:var|const|let)\s+semesters\s*=\s*JSON\.parse\(\s*'([\s\S]*?)'\s*\)/);
+        const jsonParseMatch = source.match(/(?:var|const|let)\s+semesters\s*=\s*JSON\.parse\(\s*(['"])([\s\S]*?)\1\s*\)/);
         if (jsonParseMatch) {
-          const raw = jsonParseMatch[1].replace(/\\'/g, "'").replace(/\\\"/g, '\"');
-          const parsed = parseSemesterValue(raw);
+          const raw = jsonParseMatch[2].replace(/\\'/g, "'").replace(/\\\"/g, '\"');
+          const parsed = parseSemesterValue(raw).map(normalizeSemester).filter(Boolean);
           if (parsed.length) return parsed;
         }
         const directMatch = source.match(/(?:var|const|let)\s+semesters\s*=\s*(\[[\s\S]*?\])\s*;/);
         if (directMatch) {
-          const parsed = parseSemesterValue(directMatch[1]);
+          const parsed = parseSemesterValue(directMatch[1]).map(normalizeSemester).filter(Boolean);
           if (parsed.length) return parsed;
         }
         const embedded = document.querySelector('script[type="application/json"][data-semesters], #semesters');
-        return parseSemesterValue(embedded && (embedded.textContent || embedded.value));
+        return parseSemesterValue(embedded && (embedded.textContent || embedded.value))
+          .map(normalizeSemester).filter(Boolean);
       };
       const authenticationPhase = value => {
         const body = String(value || '').toLowerCase();
@@ -670,7 +714,7 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
         const sheet = String(sheetValue || '');
         const sheetAuth = authenticationPhase(sheet);
         if (sheetAuth) return JSON.stringify({ phase: sheetAuth });
-        let id = studentID(sheet);
+        let id = studentID(sheet) || scheduleStudentId();
         let terms = semesters(sheet);
         if (!id) {
           const info = await json('/student/for-std/student-portrait/getStdInfo');
@@ -690,7 +734,7 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
           const batch = terms.slice(offset, offset + 4);
           const values = await Promise.all(batch.map(async term => {
             try {
-              const value = await json('/student/for-std/grade/sheet/info/' + encodeURIComponent(id) + '?semester=' + encodeURIComponent(term.id));
+              const value = await json('/student/for-std/grade/sheet/info/' + encodeURIComponent(id) + '?semester=' + encodeURIComponent(semesterID(term)));
               if (value && value.__auth) {
                 batchAuthenticationPhase = 'needs_login';
                 return null;
@@ -743,7 +787,7 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
           }
         };
         const today = businessToday();
-        const ordered = tableTerms.filter(term => term && term.id && /^\d{4}-\d{2}-\d{2}$/.test(String(term.startDate || ''))).sort((a, b) => String(a.startDate).localeCompare(String(b.startDate)));
+        const ordered = tableTerms.filter(term => term && semesterID(term) && /^\d{4}-\d{2}-\d{2}$/.test(String(term.startDate || ''))).sort((a, b) => String(a.startDate).localeCompare(String(b.startDate)));
         let index = ordered.findIndex(term => String(term.startDate) <= today && (!term.endDate || String(term.endDate) >= today));
         if (index < 0) { index = ordered.findIndex(term => String(term.startDate) > today); if (index < 0) index = ordered.length - 1; }
         if (!ordered.length) return JSON.stringify({ phase: 'retryable' });
@@ -769,11 +813,11 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
           const target = ordered[index];
           semester = target;
           try {
-            const value = await json('/student/ws/semester/get/' + encodeURIComponent(target.id));
+            const value = await json('/student/ws/semester/get/' + encodeURIComponent(semesterID(target)));
             if (value && value.__auth) return JSON.stringify({ phase: 'needs_login' });
             if (value && !value.__html) semester = value;
           } catch (_) {}
-          print = await json('/student/for-std/course-table/semester/' + encodeURIComponent(target.id) + '/print-data/' + encodeURIComponent(id));
+          print = await json('/student/for-std/course-table/semester/' + encodeURIComponent(semesterID(target)) + '/print-data/' + encodeURIComponent(id));
           if (print && print.__auth) return JSON.stringify({ phase: 'needs_login' });
           if (print && print.__html) {
             const phase = authenticationPhase(print.__html);
@@ -907,27 +951,54 @@ public struct VisibleAuthenticationWebView: UIViewRepresentable {
 public struct AuthenticationScreen: View {
     @ObservedObject public var model: VisibleAuthenticationViewModel
     private let onPrepareToCollect: () -> Void
+    private let isCollecting: Bool
+    private let collectionStatus: String?
 
     public init(
         model: VisibleAuthenticationViewModel,
-        onPrepareToCollect: (() -> Void)? = nil
+        onPrepareToCollect: (() -> Void)? = nil,
+        isCollecting: Bool = false,
+        collectionStatus: String? = nil
     ) {
         self.model = model
-        self.onPrepareToCollect = onPrepareToCollect ?? { model.prepareToCollect() }
+        self.onPrepareToCollect = onPrepareToCollect ?? {
+            if model.canRetryCollection {
+                _ = model.retryCollection()
+            } else {
+                model.prepareToCollect()
+            }
+        }
+        self.isCollecting = isCollecting
+        self.collectionStatus = collectionStatus
     }
 
     public var body: some View {
         VStack(spacing: 0) {
             VisibleAuthenticationWebView(model: model)
+            if let collectionStatus {
+                Text(collectionStatus)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 8)
+                    .padding(.top, 6)
+            }
             HStack {
                 Text(statusText).font(.caption)
                 Spacer()
                 if model.state == .authenticated || model.state == .readyToCollect {
-                    Button(model.state == .readyToCollect ? "开始采集" : "准备采集") {
+                    Button(isCollecting ? "正在采集" : (model.state == .readyToCollect ? "开始采集" : "准备采集")) {
                         onPrepareToCollect()
                     }
+                    .disabled(isCollecting)
+                } else if model.canRetryCollection {
+                    Button(isCollecting ? "正在采集" : "重试采集") {
+                        onPrepareToCollect()
+                    }
+                    .disabled(isCollecting)
                 }
                 Button("重新登录") { model.startInteractiveLogin() }
+                    .disabled(isCollecting)
             }
             .padding(8)
             .background(Color.secondary.opacity(0.12))

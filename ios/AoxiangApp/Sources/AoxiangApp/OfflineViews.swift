@@ -56,6 +56,18 @@ public struct HomeScreen: View {
                     Text("课程 \(model.state.courses.count) 门 · 成绩 \(model.state.grades.count) 门")
                         .foregroundColor(.secondary)
                 }
+                Section("数据概览") {
+                    HStack {
+                        Text("GPA")
+                        Spacer()
+                        Text(model.state.gpa.map { String(format: "%.2f", $0) } ?? "--")
+                    }
+                    HStack {
+                        Text("剩余电费")
+                        Spacer()
+                        Text(model.state.electricityBalance.map { String(format: "%.2f", $0) } ?? "--")
+                    }
+                }
                 Section("今日课程") {
                     if todayCourses.isEmpty { Text("暂无本地课程").foregroundColor(.secondary) }
                     ForEach(todayCourses.prefix(5)) { course in
@@ -179,6 +191,8 @@ public struct ManagementScreen: View {
     @State private var collectionStatus: String?
     @State private var widgetStatus: String?
     @State private var isCollecting = false
+    @State private var pendingCollectionStart = false
+    @State private var authenticationSurfaceMounted = false
     @StateObject private var authenticationModel: VisibleAuthenticationViewModel
 
     public init(model: OfflineAppViewModel) {
@@ -204,9 +218,9 @@ public struct ManagementScreen: View {
                             .font(.caption)
                             .foregroundColor(.secondary)
                     }
-                    if authenticationModel.state == .authenticated || authenticationModel.state == .readyToCollect {
+                    if canStartCollection {
                         Button {
-                            beginCollection()
+                            requestCollection()
                         } label: {
                             Label(
                                 isCollecting ? "正在采集" : "开始采集",
@@ -225,6 +239,13 @@ public struct ManagementScreen: View {
                     } label: { Label("导出可移植备份", systemImage: "square.and.arrow.up") }
                 }
                 Section("小组件") {
+                    Label(
+                        sharedContainerAvailable ? "共享容器可用" : "共享容器不可用",
+                        systemImage: sharedContainerAvailable ? "checkmark.icloud" : "exclamationmark.icloud"
+                    )
+                    Text("App Group：\(AoxiangSharedContainer.appGroupIdentifier)")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
                     Button {
                         widgetStatus = model.writeWidgetSnapshot()
                             ? "小组件快照已刷新"
@@ -285,7 +306,16 @@ public struct ManagementScreen: View {
             .sheet(isPresented: $showingAddCourse) { AddCourseSheet(model: model) }
             .sheet(item: $editingCourse) { course in EditCourseSheet(model: model, course: course) }
             .sheet(isPresented: $showingAuthentication) {
-                AuthenticationScreen(model: authenticationModel, onPrepareToCollect: beginCollection)
+                AuthenticationScreen(
+                    model: authenticationModel,
+                    onPrepareToCollect: requestCollection,
+                    isCollecting: isCollecting,
+                    collectionStatus: collectionStatus
+                )
+                .interactiveDismissDisabled(isCollecting)
+                .onAppear { authenticationSurfaceMounted = true }
+                .onAppear { beginPendingCollectionIfNeeded() }
+                .onDisappear { authenticationSurfaceMounted = false }
             }
             .onDisappear {
                 collectionTask?.cancel()
@@ -293,8 +323,30 @@ public struct ManagementScreen: View {
         }
     }
 
+    private func requestCollection() {
+        guard !isCollecting else { return }
+        guard authenticationSurfaceMounted else {
+            pendingCollectionStart = true
+            showingAuthentication = true
+            return
+        }
+        beginCollection()
+    }
+
+    private func beginPendingCollectionIfNeeded() {
+        guard pendingCollectionStart else { return }
+        pendingCollectionStart = false
+        beginCollection()
+    }
+
     private func beginCollection() {
         guard !isCollecting else { return }
+        if authenticationModel.canRetryCollection {
+            guard authenticationModel.retryCollection() else {
+                collectionStatus = "当前采集状态无法重试，请重新登录"
+                return
+            }
+        }
         if authenticationModel.state == .authenticated {
             authenticationModel.prepareToCollect()
         }
@@ -302,10 +354,10 @@ public struct ManagementScreen: View {
             collectionStatus = "请先完成统一认证"
             return
         }
-        // Keep collection progress visible in the management screen. The
-        // WebView remains the same object and keeps its cookie store after
-        // the authentication sheet is dismissed.
-        showingAuthentication = false
+        // Keep the authentication sheet mounted while page JavaScript and
+        // same-origin requests run. Dismissing it here detaches the visible
+        // WebView and makes collection appear to do nothing on iPad.
+        showingAuthentication = true
         isCollecting = true
         collectionStatus = "正在读取成绩、课表和电费…"
         let cookieStore = authenticationModel.webView.configuration.websiteDataStore.httpCookieStore
@@ -328,6 +380,9 @@ public struct ManagementScreen: View {
                 guard !Task.isCancelled else { return }
                 if model.applyPortalCollection(result) {
                     collectionStatus = "采集完成，已更新本地数据和小组件快照"
+                    // Close only after both local state and the shared Widget
+                    // snapshot have committed successfully.
+                    showingAuthentication = false
                 } else {
                     collectionStatus = "采集结果未能保存；原有数据保持不变"
                 }
@@ -349,6 +404,16 @@ public struct ManagementScreen: View {
         case .retryableFailure: return "可重试失败"
         case .needsUserAttention: return "需要处理"
         }
+    }
+
+    private var canStartCollection: Bool {
+        authenticationModel.state == .authenticated
+            || authenticationModel.state == .readyToCollect
+            || authenticationModel.canRetryCollection
+    }
+
+    private var sharedContainerAvailable: Bool {
+        AoxiangSharedContainer.sharedSnapshotURL() != nil
     }
 }
 

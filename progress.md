@@ -1,5 +1,39 @@
 # Progress
 
+## 2026-09-09 iPad validation continuation: visible collection and snapshot diagnostics
+
+- Added a red/green regression seam for the reported “点击准备采集没有反应” path. The
+  authentication sheet now remains mounted while the same visible `WKWebView` performs
+  education/electricity collection, disables interactive dismissal and login controls during
+  the run, and closes only after local state plus the shared Widget snapshot commit succeeds.
+- Added an explicit retry path for collection-scoped transient failures so a network/portal
+  timeout does not force a fresh login; credentials and cookie values remain inside WebKit.
+- Extended the visible education script to accept `id`/`code`/`dataSemester` semester shapes,
+  object-valued semester maps, and student IDs discovered from prior print-data resources. A
+  Node WebView harness now runs this path end-to-end with sanitized fixture responses.
+- Extended the version-1 Widget snapshot with an optional validated electricity balance. The
+  Widget and Home surface display GPA/electricity when present, while old snapshots without the
+  field remain readable.
+- Management now exposes the resolved App Group availability and identifier. The macOS signed
+  IPA verifier also checks both runtime `Info.plist` App Group fields in addition to nested
+  signatures, provisioning profiles and entitlements.
+- Local script regression: 69 tests passed, golden validator passed (1 version/15 scenarios/32
+  referenced files), and `git diff --check` passed. Swift/Xcode compilation and a real iPad run
+  still require the next macOS workflow artifact and user-side signed-device evidence.
+
+## 2026-09-09 collection launch race repair
+
+- [x] Management-page collection requests now wait for the authentication sheet's visible
+  WebView to mount before starting the collector; callbacks from inside the sheet continue
+  through the same guarded request path.
+- [x] Retry handling is centralized so the authentication sheet and management page cannot
+  consume the same collection transition twice.
+- [x] The portable Python suite (69 tests), golden corpus validation (1 version/15 scenarios/32
+  files), and `git diff --check` pass. Windows has no Swift/Xcode toolchain, so macOS XCTest and
+  the iPhoneOS archive remain authoritative cloud gates.
+- [ ] A new macOS IPA run is still required; `cloud-run-34255125394` predates this repair and
+  must not be described as the current-round build.
+
 ## 2026-09-09 iOS collection build-gate repair
 
 - 复核确认当前 goal `01a06b40-b9a6-7af0-aeb2-c1a56e9c91d8` 仍为 active；没有重复创建

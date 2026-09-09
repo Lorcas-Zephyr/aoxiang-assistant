@@ -174,13 +174,22 @@ class IOSProjectConfigurationTest(unittest.TestCase):
         self.assertIn("phase: 'needs_login'", self.ios_authentication_view)
         self.assertIn("let index = ordered.findIndex", self.ios_authentication_view)
         self.assertNotIn("const index = ordered.findIndex", self.ios_authentication_view)
+        self.assertIn("retryCollection", self.ios_authentication_view)
+        self.assertIn("canRetryCollection", self.ios_authentication_view)
 
     def test_widget_snapshot_requires_the_app_group_on_ios(self):
         self.assertIn("public static func sharedSnapshotURL", self.ios_shared_container)
         self.assertIn("#if os(iOS)", self.ios_shared_container)
         self.assertIn("return nil", self.ios_shared_container)
         self.assertIn("sharedSnapshotURL", self.ios_widget)
+        self.assertIn("electricityBalance", self.ios_widget)
         self.assertNotIn("snapshotURL()", self.ios_widget)
+
+    def test_management_surface_exposes_shared_container_and_collection_recovery(self):
+        self.assertIn("sharedContainerAvailable", self.ios_offline_views)
+        self.assertIn("App Group", self.ios_offline_views)
+        self.assertIn("canRetryCollection", self.ios_offline_views)
+        self.assertIn("interactiveDismissDisabled(isCollecting)", self.ios_offline_views)
 
     def test_signed_targets_can_use_the_signers_registered_identifiers(self):
         self.assertIn("AOXIANG_APP_BUNDLE_IDENTIFIER", self.project)
@@ -263,6 +272,9 @@ class IOSProjectConfigurationTest(unittest.TestCase):
             "embedded.mobileprovision",
             "application-groups",
             "security cms",
+            "AoxiangAppGroupIdentifier",
+            "host App Group plist mismatch",
+            "Widget App Group plist mismatch",
         ):
             self.assertIn(required, script)
 
