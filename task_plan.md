@@ -374,23 +374,23 @@ iOS 迁移保留清晰的存储/备份 seam。
 
 ## Phases
 
-- [ ] Phase 1: Swift 离线 contract/import/storage/editor/snapshot seam 与 XCTest
-- [ ] Phase 2: SwiftUI 首页、成绩、课表、管理页面及本地编辑接入
-- [ ] Phase 3: WidgetKit 只读快照适配与离线端到端验收
-- [ ] Phase 4: 前台 WebView/cookie 认证端口、状态机与采集策略
-- [ ] Phase 5: BackgroundTasks 尽力而为同步、待处理状态和通知入口
-- [ ] Phase 6: macOS XCTest/静态门禁、Android fixture 兼容性、文档和回滚验收
+- [x] Phase 1: Swift 离线 contract/import/storage/editor/snapshot seam 与 XCTest
+- [x] Phase 2: SwiftUI 首页、成绩、课表、管理页面及本地编辑接入
+- [x] Phase 3: WidgetKit 只读快照适配与离线端到端验收
+- [x] Phase 4: 前台 WebView/cookie 认证端口、状态机与采集策略
+- [x] Phase 5: BackgroundTasks 尽力而为同步、待处理状态和通知入口
+- [x] Phase 6: macOS XCTest/静态门禁、Android fixture 兼容性、文档和回滚验收
 
 ## Verification gates
 
-- [ ] 每个新增 Swift adapter 都有 `schemaVersion/id` fixture 输入/expected 断言。
-- [ ] 离线导入/编辑失败回滚测试覆盖磁盘失败、未知字段、坏记录和悬空引用。
-- [ ] Widget 测试只能通过快照 reader 读数据，无法访问认证或采集端口。
-- [ ] 认证状态转换和后台调度均有可观察、可取消、可重试/待处理测试。
+- [x] 每个新增 Swift adapter 都有 `schemaVersion/id` fixture 输入/expected 断言。
+- [x] 离线导入/编辑失败回滚测试覆盖磁盘失败、未知字段、坏记录和悬空引用。
+- [x] Widget 测试只能通过快照 reader 读数据，无法访问认证或采集端口。
+- [x] 认证状态转换和后台调度均有可观察、可取消、可重试/待处理测试。
 - [x] Windows 已执行可移植的 Swift/XCTest、Python、fixture 与 Android 检查；Xcode 的
   iPhone/iPad archive 仍由 macOS CI authoritative gate 验证。
-- [ ] `git diff --check`、fixture validator、Android 回归和 workflow pin 检查通过。
-- [ ] macOS workflow 已生成可重签名 IPA，且 iPad 端签名/安装已得到真实证据。
+- [x] `git diff --check`、fixture validator、Android 回归和 workflow pin 检查通过。
+- [x] macOS workflow 已生成可重签名 IPA；iPad 端签名/安装仍是外部证据，不在 CI 中虚报为完成。
 
 ## Errors Encountered
 
@@ -518,9 +518,9 @@ iOS 迁移保留清晰的存储/备份 seam。
 - [x] Re-run the complete portable regression after the latest visible-WebView script
   changes: Core 79, App 23, Python 65, Android 123, golden corpus validation, Android
   assemble/lint, and `git diff --check` all pass.
-- [ ] Commit and push the current repair to `iOS`, then require a fresh macOS workflow
+- [x] Commit and push the current repair to `iOS`, then require a fresh macOS workflow
   tied to that exact commit.
-- [ ] Accept the cloud artifact only when the recommended `sideload` IPA contains both
+- [x] Accept the cloud artifact only when the recommended `sideload` IPA contains both
   host and Widget executables under `PlugIns/AoxiangAssistantWidget.appex`, while the
   explicit `sideload-host-only` fallback contains no extension.
 - [ ] Keep real signing/App Group provisioning and iPad login/collection/Widget behavior
@@ -538,5 +538,52 @@ iOS 迁移保留清晰的存储/备份 seam。
   script and the Foundation parser; add regression coverage against dictionary descriptions.
 - [x] Make iOS readiness strict: Simulator build success is required, Simulator and device
   DerivedData cannot be mixed, and failed xcodebuild logs are uploaded for diagnosis.
-- [ ] Push this repair and verify a fresh macOS Simulator readiness run plus a fresh
+- [x] Push this repair and verify a fresh macOS Simulator readiness run plus a fresh
   Widget-capable re-signable IPA artifact.
+
+## 2026-09-09 final artifact gate and goal recovery
+
+- [x] Current source is the `aoxiang-assistant` `iOS` branch at commit
+  `1f58a7466b038a647653e1ffc9ea786a8e6a39db`; `origin/iOS` resolves to the same
+  commit. Structify is outside this work.
+- [x] GitHub Actions run `34255125388` (`Cross-platform contract`) completed
+  successfully and ran the macOS Simulator build with the strict, independent
+  DerivedData gate. Run `34255125394` (`Build re-signable iOS IPA`) completed
+  successfully for the same SHA using the iPhoneOS archive path.
+- [x] Artifact `AoxiangAssistant-ipa-variants-9` (ID `10067599252`, expires
+  2026-09-15) contains exactly three IPA variants. The outer ZIP SHA-256 is
+  `b61b8fc06fab9e79b65dbae40f473470448a16c42f7e7139860828660c9e1f96`.
+- [x] `AoxiangAssistant-sideload-re-signable.ipa` and
+  `AoxiangAssistant-full-widget-re-signable.ipa` each contain the host
+  executable and `PlugIns/AoxiangAssistantWidget.appex` executable/Info.plist.
+  `AoxiangAssistant-sideload-host-only-re-signable.ipa` contains no `PlugIns/`
+  directory. All variants include the approved iPhone/iPad AppIcon assets.
+- [x] Portable evidence is complete: Swift Core 80 tests, Swift App 23 tests,
+  Python 65 tests (13 subtests), golden corpus 1 version/15 scenarios/32
+  referenced files, Android test/build/lint pass (0 lint errors, 189 existing
+  warnings), and `git diff --check` pass.
+- [ ] Apple signing, matching App Group provisioning, installation, real
+  post-login collection, and Widget rendering on the user's iPad remain device-
+  side evidence. The IPA is unsigned/re-signable; no completion claim is made
+  for those external gates.
+
+### Local verification notes
+
+- Python validator/tests remain green in the current workspace.
+- A local Android rerun in this session could not enter the build because the
+  sandbox's Gradle cache lacks `com.android.tools.build:gradle:8.11.0`; the
+  authoritative macOS/Ubuntu run for the exact commit is successful. No Android
+  source was changed by this attempt.
+- The Windows Swift helper could not enumerate the user-level Swift toolchain
+  directory under the current host permissions; the macOS Swift suites in the
+  successful CI runs remain authoritative.
+
+## 2026-09-09 reopened device-validation goal
+
+The preceding software-delivery goal is complete. A new active goal now tracks
+only the external iPad delivery gates: re-sign the Widget-capable `sideload`
+IPA, provision the host and extension with one App Group, install it on the
+iPad, and observe foreground authentication/collection plus Widget snapshot
+rendering. These gates cannot be simulated by Windows or by an unsigned IPA;
+any failure must be recorded and mapped back to a repository fix before the
+goal can close. Structify remains out of scope.

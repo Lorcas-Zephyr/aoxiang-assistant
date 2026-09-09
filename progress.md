@@ -14,9 +14,8 @@
 - 本机回归：Swift Core 80、Swift App 23、Python 65（含 13 subtests）、golden
   validator 15 scenarios/32 files、Android 单测/assemble/lint 均通过；lint 仍为 0 errors、
   189 条既有 warnings，`git diff --check` 通过。
-- 待完成：提交/推送后等待新的 macOS readiness 与 re-signable IPA workflow，并检查
-  `sideload` IPA 同时保留主 App 与 Widget extension；签名、App Group 和 iPad 实测仍是
-  外部证据。
+- 当时待完成的提交、macOS readiness、device archive 与 Widget-capable IPA 检查现已完成；
+  签名、App Group 和 iPad 实测仍明确保留为外部证据。
 
 ## 2026-09-09 Xcode 26 diagnosis
 
@@ -182,6 +181,34 @@
   范围包含离线主 App、前台认证/采集和尽力而为后台同步。
 - 已将 `task_plan.md` 切换为三阶段实施计划；当前尚未开始 iOS UI 或认证/后台代码，先盘点
   既有 Foundation-only Package、Android backup seam 和可复用 fixture 入口。
+
+## 2026-09-09 final artifact verification and goal recreation
+
+- CodeGraph 已在当前仓库初始化并验证健康：158 files、3,055 nodes、8,972 edges，索引为最新。
+- `origin/iOS` 与本地 `iOS` 分支均指向 `1f58a7466b038a647653e1ffc9ea786a8e6a39db`。
+- GitHub Actions `34255125388`（Cross-platform contract）和 `34255125394`
+  （Build re-signable iOS IPA）均对该精确提交成功；前者通过严格 Simulator gate，后者通过
+  `iphoneos` archive。
+- Artifact `AoxiangAssistant-ipa-variants-9`（ID `10067599252`，ZIP SHA-256
+  `b61b8fc06fab9e79b65dbae40f473470448a16c42f7e7139860828660c9e1f96`）包含三个 IPA：推荐
+  `AoxiangAssistant-sideload-re-signable.ipa`、兼容的 `AoxiangAssistant-full-widget-re-signable.ipa`
+  均保留 `AoxiangAssistantWidget.appex` 及其可执行文件；显式
+  `AoxiangAssistant-sideload-host-only-re-signable.ipa` 不含 `PlugIns/`。三者均包含新的
+  iPhone/iPad AppIcon 资源。
+- 当前可复现证据：Swift Core 80、Swift App 23、Python 65（13 subtests）、golden
+  corpus 1 version/15 scenarios/32 referenced files、Android test/assemble/lint 全部通过，
+  lint 0 errors/189 existing warnings，`git diff --check` 通过。
+- 原 active goal 的软件验收记录已完整；用户要求重新建立 goal。后续新 goal 只追踪外部
+  签名/App Group、sideload 安装、真实 iPad 采集与 Widget 渲染，不把 unsigned artifact
+  误称为可安装或已验证。
+- 本次本机复核中 Python validator/tests 仍通过；Android 离线命令因当前 Gradle cache 缺少
+  `com.android.tools.build:gradle:8.11.0` 无法配置项目，Windows Swift helper 因宿主权限无法
+  枚举用户 Swift toolchain。两者均由同一提交的 GitHub Actions 成功 job 覆盖，未修改源码。
+- 已将原软件交付 goal 标记为 complete，并按用户要求建立新的 active goal（同一线程 ID），
+  仅追踪 Widget-capable `sideload` 的重签名/App Group 配置、iPad 安装、真实前台采集和
+  Widget 渲染证据；不把这些外部门禁伪装成已完成，也不修改 Structify。
+- 当前交付文件：`dist/ios/cloud-run-34255125394/AoxiangAssistant-ipa-variants-9.zip`
+  及其 `artifact/` 下的三个 IPA。推荐使用 `AoxiangAssistant-sideload-re-signable.ipa`。
 
 ## 2026-09-08 foreground collection continuation
 

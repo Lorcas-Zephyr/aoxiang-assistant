@@ -181,6 +181,23 @@
   stable HTTP collector must record `needsUserAttention`/retry metadata and exit without motion or
   fake success; visible foreground login remains the recovery path.
 
+## 2026-09-09 artifact structure audit
+
+- GitHub artifact metadata reports `AoxiangAssistant-ipa-variants-9`, ID `10067599252`,
+  for run `34255125394`, branch `iOS`, commit
+  `1f58a7466b038a647653e1ffc9ea786a8e6a39db`; it is not expired and is retained until
+  2026-09-15.
+- The outer ZIP contains exactly three IPA files. `sideload` and `full-widget` each contain
+  `Payload/AoxiangAssistant.app/AoxiangAssistant` and
+  `Payload/AoxiangAssistant.app/PlugIns/AoxiangAssistantWidget.appex/AoxiangAssistantWidget`,
+  plus both Info.plists and the Core contract bundle. `sideload-host-only` has no `PlugIns/`
+  entries, by design.
+- All three variants include the approved non-transparent AppIcon assets for iPhone and iPad.
+- This is packaging evidence only. The artifact has no signatures or provisioning profiles;
+  a real Widget requires a signer that preserves the nested extension and grants the same App
+  Group to host and extension. Device-side login, collection, snapshot write and Widget gallery
+  appearance remain unverified until the user installs a newly signed IPA.
+
 ## Real-device repair audit (2026-09-08)
 
 - The supplied iPad screenshot contains `grade response unavailable`, which is
