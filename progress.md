@@ -439,3 +439,13 @@
   introduced.
 - The old `dist/ios/cloud-run-34299633874` artifact remains stale (`1.0 (1)`) and must not be
   installed. A fresh macOS archive for the repair commit is required before another iPad test.
+
+## 2026-09-09 push gate
+
+- Created local commit `87214fd` (`Harden iOS grade collection fallback`) after the verification
+  suite passed. It is one commit ahead of `origin/iOS`.
+- The first push request was not executed: the approval service returned transient HTTP 503. No
+  workaround or indirect upload was attempted; an explicit fresh approval is required before retry.
+- The latest device screenshot does not include the shared-container/App Group status rows added in
+  the current source. It is therefore evidence of an older installed build, consistent with the
+  locally inspected `1.0 (1)` artifact, not of the pending `1.0.1 (2)` repair.

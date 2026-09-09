@@ -649,3 +649,11 @@ goal can close. Structify remains out of scope.
   nested Widget, version `1.0.1 (2)`, and matching App Group placeholders before device testing.
 - [ ] User-side re-sign, installation, foreground collection and Widget gallery/rendering evidence
   remain external gates; do not close the goal before those observations are recorded.
+
+### Push attempt record
+
+- [x] Commit `87214fd` was created locally after the portable checks passed.
+- [ ] Push is pending: the required sandbox approval service rejected the `git push origin iOS`
+  request with a transient `503 Service Unavailable`; no alternate upload path was attempted.
+- [x] The user screenshot's Management page omits the current shared-container/App Group diagnostic
+  rows, confirming its installed IPA predates the current source repair and cannot validate it.

@@ -432,3 +432,13 @@
   nested extension and both targets declare the same App Group, but a sideloader must preserve and
   sign both bundles. The previous local IPA is not evidence because it is version `1.0 (1)` and
   still contains the removed `NSExtensionPrincipalClass`.
+
+## 2026-09-09 device screenshot correlation
+
+- The supplied Management screenshot shows the old Widget section with only the refresh action.
+  It does not show the current `共享容器可用/不可用` label or App Group line in
+  `OfflineViews.swift`. This establishes that the installed app predates the source/UI repair;
+  the observed `grade response unavailable` is therefore from the old delivery path.
+- Local `87214fd` is ahead of `origin/iOS` by one commit. Its first push was denied before network
+  execution because the approval service returned transient HTTP 503; no alternative publication
+  mechanism was used.
