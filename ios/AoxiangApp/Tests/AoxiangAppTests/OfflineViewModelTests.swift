@@ -14,6 +14,29 @@ final class OfflineViewModelTests: XCTestCase {
         }
     }
 
+    private final class FailingSnapshotStore: ReversibleWidgetSnapshotStore {
+        private(set) var currentSnapshot: WidgetSnapshot?
+        private(set) var writeAttempted = false
+        private(set) var restoreAttempted = false
+
+        init(existingSnapshot: WidgetSnapshot?) {
+            self.currentSnapshot = existingSnapshot
+        }
+
+        func read() throws -> WidgetSnapshot? {
+            currentSnapshot
+        }
+
+        func write(_ snapshot: WidgetSnapshot) throws {
+            writeAttempted = true
+            throw OfflineDataError.persistenceFailed("injected widget write failure")
+        }
+
+        func restore(_ snapshot: WidgetSnapshot?) throws {
+            restoreAttempted = true
+        }
+    }
+
     func testImportAndLocalEditPublishState() throws {
         let store = InMemoryOfflineStateStore()
         let controller = try OfflineDataController(store: store)
@@ -111,7 +134,7 @@ final class OfflineViewModelTests: XCTestCase {
         XCTAssertEqual(try writer.read(), previousSnapshot)
     }
 
-    func testPortalCollectionFailsClosedWhenSharedWidgetContainerIsUnavailable() throws {
+    func testPortalCollectionCommitsMainDataWhenSharedWidgetContainerIsUnavailable() throws {
         let oldState = OfflineAppState(
             semesters: [OfflineSemester(id: "old", startDate: "2026-01-01", endDate: "2026-06-30")],
             selectedSemesterId: "old",
@@ -133,9 +156,60 @@ final class OfflineViewModelTests: XCTestCase {
             electricityBalance: 18
         )
 
-        XCTAssertFalse(model.applyPortalCollection(result))
-        XCTAssertEqual(model.state, oldState)
-        XCTAssertEqual(store.value, oldState)
+        XCTAssertTrue(model.applyPortalCollection(result))
+        XCTAssertEqual(model.state.grades.map(\.id), ["new-grade"])
+        XCTAssertEqual(model.state.selectedSemesterId, "new")
+        XCTAssertEqual(model.state.courses.map(\.id), ["new-course"])
+        XCTAssertEqual(model.state.gpa, 3.7)
+        XCTAssertEqual(model.state.electricityBalance, 18)
+        XCTAssertEqual(store.value, model.state)
+        XCTAssertNil(model.errorMessage)
+        XCTAssertEqual(
+            model.lastWidgetSnapshotWarning,
+            "小组件共享容器不可用；本地数据已保存，但小组件不会更新。"
+        )
+        XCTAssertEqual(model.lastPortalCollectionWarnings, [])
+    }
+
+    func testPortalCollectionKeepsMainDataWhenWidgetWriteFails() throws {
+        let oldState = OfflineAppState(
+            semesters: [OfflineSemester(id: "old", startDate: "2026-01-01", endDate: "2026-06-30")],
+            selectedSemesterId: "old",
+            grades: [OfflineGrade(id: "old-grade", course: "旧课", credits: 1, point: 2.0, score: 60)],
+            gpa: 2.0,
+            electricityBalance: 5
+        )
+        let store = InMemoryOfflineStateStore(value: oldState)
+        let controller = try OfflineDataController(store: store)
+        let previousSnapshot = try WidgetSnapshotBuilder().makeSnapshot(
+            from: oldState,
+            now: Date(timeIntervalSince1970: 1_757_000_000)
+        )
+        let writer = FailingSnapshotStore(existingSnapshot: previousSnapshot)
+        let model = OfflineAppViewModel(controller: controller, snapshotWriter: writer)
+
+        let result = PortalCollectedData(
+            grades: [OfflineGrade(id: "new-grade", course: "新课", credits: 3, point: 3.7, score: 92)],
+            gpa: 3.7,
+            schedule: PortalCollectionParsers.SchedulePayload(
+                semesters: [OfflineSemester(id: "new", startDate: "2026-02-01", endDate: "2026-07-01")],
+                courses: [OfflineCourse(id: "new-course", name: "新课", semesterId: "new")]
+            ),
+            electricityBalance: 18
+        )
+
+        XCTAssertTrue(model.applyPortalCollection(result))
+        XCTAssertEqual(model.state.grades.map(\.id), ["new-grade"])
+        XCTAssertEqual(model.state.selectedSemesterId, "new")
+        XCTAssertEqual(model.state.courses.map(\.id), ["new-course"])
+        XCTAssertEqual(model.state.gpa, 3.7)
+        XCTAssertEqual(model.state.electricityBalance, 18)
+        XCTAssertEqual(store.value, model.state)
+        XCTAssertTrue(writer.writeAttempted)
+        XCTAssertFalse(writer.restoreAttempted)
+        XCTAssertNil(model.errorMessage)
+        XCTAssertEqual(model.lastWidgetSnapshotWarning, "小组件快照无法写入；本地数据已保存。")
+        XCTAssertEqual(writer.currentSnapshot, previousSnapshot)
     }
 
     func testPartialPortalCollectionPreservesUnavailableScheduleAndElectricity() throws {

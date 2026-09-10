@@ -643,7 +643,7 @@ goal can close. Structify remains out of scope.
 - [x] Added a fail-closed Swift collector guard so an empty visible/API grade result cannot replace
   existing grades or be reported as a successful collection.
 - [x] Fixed the Swift app test compile seam (initializer argument order and warning type inference).
-- [ ] Commit and push this repair to `iOS`, then wait for macOS Swift tests and the `iphoneos`
+- [x] Commit and push this repair to `iOS`, then wait for macOS Swift tests and the `iphoneos`
   archive workflow for the exact commit.
 - [ ] Inspect and deliver only the fresh `AoxiangAssistant-sideload-re-signable.ipa`; verify the
   nested Widget, version `1.0.1 (2)`, and matching App Group placeholders before device testing.
@@ -653,7 +653,67 @@ goal can close. Structify remains out of scope.
 ### Push attempt record
 
 - [x] Commit `87214fd` was created locally after the portable checks passed.
-- [ ] Push is pending: the required sandbox approval service rejected the `git push origin iOS`
-  request with a transient `503 Service Unavailable`; no alternate upload path was attempted.
+- [x] The initial sandbox push attempt failed locally with Schannel `SEC_E_NO_CREDENTIALS`; after
+  explicit user authorization, the elevated Git channel pushed `87214fd` and `66caf6b` to
+  `origin/iOS` (`66caf6b` is the exact Actions head).
 - [x] The user screenshot's Management page omits the current shared-container/App Group diagnostic
   rows, confirming its installed IPA predates the current source repair and cannot validate it.
+
+## 2026-09-09 foreground commit and Widget diagnostic repair
+
+- [x] Confirmed the observed `grade response unavailable` path can be caused by a rendered grade
+  page whose JSON endpoint is unavailable; the visible WebView fallback remains the first source,
+  with the allow-listed HTTP collector as a bounded fallback.
+- [x] Changed `OfflineAppViewModel.applyPortalCollection` to commit validated grades, schedule,
+  GPA and electricity to the main local store before attempting Widget publication. An unavailable
+  App Group or failed snapshot write no longer rolls back valid foreground data.
+- [x] Added `lastWidgetSnapshotWarning` and updated Management collection messaging so a successful
+  local collection is not shown as an overall failure, while Widget unavailability remains explicit.
+- [x] Removed the unsupported `SecTask*` entitlement introspection from the Foundation package;
+  the archive now uses the build-time App Group contract and fail-closed container lookup.
+- [ ] Re-run portable suites, commit/push this repair, and inspect a fresh macOS `sideload` IPA.
+- [ ] User-side re-signing with one App Group, iPad installation, real collection, and Widget
+  gallery/rendering remain external gates.
+
+## 2026-09-09 screenshot follow-up: grade page and Widget
+
+- [x] Correlated the supplied screenshot with the old `grade response unavailable` path. It shows
+  an installed build without the current App Group diagnostic rows, so it is not evidence for the
+  pending `1.0.1 (2)` source.
+- [ ] Add a red runtime fixture for a grade page whose headers are `td` cells, semesters are only
+  in a select/data attribute, and rows expose component-style data attributes.
+- [ ] Make the visible WebView script decode those bootstrap forms and return sanitized grade rows
+  before falling back to stable HTTP; expose bounded row/source diagnostics without sensitive data.
+- [ ] Re-run Swift/Python/Android checks, push the exact repair, and inspect the new Widget-capable
+  sideload IPA before asking for another iPad installation test.
+
+## 2026-09-09 latest device report
+
+- The user reports that the sideloaded app reaches the grades page but still
+  does not produce the expected records, and the Widget remains unavailable.
+- The supplied screenshot still shows the pre-repair `grade response
+  unavailable` wording and the old Management surface without the current
+  shared-container diagnostics; it is not evidence for the current `1.0.1
+  (2)` source until a fresh IPA is installed.
+- Next acceptance requires a rendered grades page to yield at least one
+  normalized row or an explicit authentication/retry state, never a successful
+  empty collection. The IPA must retain the nested Widget extension and one
+  authorized App Group in both signed bundles.
+
+## 2026-09-10 semantic grade fallback and delivery handoff
+
+- [x] Extend the visible WebView grade parser to map `data-label`, `aria-label`,
+  `data-field`, `data-column`, `data-key` and dataset labels when the portal has
+  no reliable header row; preserve header and fixed-column fallbacks.
+- [x] Cover ordinary tables, reordered/`td` headers, component rows, semantic
+  cells, `data-*` rows, iframe tables, delayed rendering and a page whose route
+  remains on Home while grade content is mounted.
+- [x] Normalize WebKit JavaScript bridge values (`String`, `NSString`, `Data`,
+  Foundation collections) before parsing the sanitized collection envelope.
+- [x] Re-run portable validation: Python 86 tests, AoxiangCore 84 tests,
+  AoxiangApp 32 tests, golden corpus 1 version/15 scenarios/32 files, and
+  `git diff --check` all pass on Windows.
+- [ ] Commit and push this exact source state, then inspect the macOS archive
+  for App/Widget version `1.0.1 (2)`, nested Widget layout and matching App Group.
+- [ ] User-side re-sign, install, foreground collection and Widget gallery
+  evidence remain required before closing the goal.

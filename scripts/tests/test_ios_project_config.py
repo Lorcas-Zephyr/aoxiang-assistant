@@ -200,6 +200,18 @@ class IOSProjectConfigurationTest(unittest.TestCase):
         self.assertIn("electricityBalance", self.ios_widget)
         self.assertNotIn("snapshotURL()", self.ios_widget)
 
+    def test_shared_container_uses_ios_supported_entitlement_boundary(self):
+        self.assertNotIn(
+            "SecTaskCreateFromSelf",
+            self.ios_shared_container,
+            "SecTask entitlement APIs are not available in the iOS SDK used by the archive",
+        )
+        self.assertNotIn(
+            "SecTaskCopyValueForEntitlement",
+            self.ios_shared_container,
+            "signed entitlement introspection must not make the iOS target uncompilable",
+        )
+
     def test_widget_extension_uses_swiftui_widget_bundle_entrypoint(self):
         """WidgetKit discovers the @main WidgetBundle without an Obj-C principal class."""
         extension_block = self.ios_widget_info.split("<key>NSExtension</key>", 1)[1]
@@ -287,6 +299,27 @@ class IOSProjectConfigurationTest(unittest.TestCase):
             "AOXIANG_APP_GROUP_IDENTIFIER",
         ):
             self.assertIn(setting, script)
+
+    def test_re_signable_ipa_builder_validates_archive_metadata_before_packaging(self):
+        script = IPA_BUILD_SCRIPT.read_text(encoding="utf-8")
+        for required in (
+            "CFBundleShortVersionString",
+            "CFBundleVersion",
+            "AoxiangAppGroupIdentifier",
+            "NSExtension.NSExtensionPointIdentifier",
+            "NSExtension.NSExtensionPrincipalClass",
+            "archive Widget App Group mismatch",
+            "archive marketing version mismatch",
+        ):
+            self.assertIn(required, script)
+        self.assertIn('IOS_EXPECTED_MARKETING_VERSION: "1.0.1"', IPA_WORKFLOW_FILE.read_text(encoding="utf-8"))
+        self.assertIn('IOS_EXPECTED_BUILD_VERSION: "2"', IPA_WORKFLOW_FILE.read_text(encoding="utf-8"))
+
+    def test_re_signable_ipa_requires_widget_bundle_to_be_an_app_extension(self):
+        build_script = IPA_BUILD_SCRIPT.read_text(encoding="utf-8")
+        verifier = SIGNED_IPA_VERIFY_SCRIPT.read_text(encoding="utf-8")
+        self.assertIn("${app_bundle_identifier}.", build_script)
+        self.assertIn("${expected_app_id}.", verifier)
 
     def test_signed_ipa_verifier_checks_nested_code_and_shared_entitlements(self):
         script = SIGNED_IPA_VERIFY_SCRIPT.read_text(encoding="utf-8")

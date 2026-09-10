@@ -179,6 +179,169 @@ execute().then(value => process.stdout.write(String(value))).catch(error => {{
         }])
         self.assertEqual(result["schedule"]["semester"]["id"], "term-fixture")
 
+    def test_education_script_maps_grade_columns_by_exact_header_when_columns_are_reordered(self):
+        script = self.embedded_script()
+        harness = f"""
+const cells = values => values.map(value => ({{ innerText: value, textContent: value }}));
+const gradeRow = {{
+  querySelectorAll: selector => selector === 'td'
+    ? cells(['必修', '数据结构', '考试', '3', '平时 40 / 期末 48', '95', '4.0', '备注'])
+    : []
+}};
+const gradeTable = {{
+  querySelectorAll: selector => {{
+    if (selector === 'thead th') return cells(['课程性质', '课程\\n名称', '考核方式', '学分', '成绩构成', '成绩', '绩点', '成绩详情']);
+    if (selector === 'tbody tr' || selector === 'tr') return [gradeRow];
+    return [];
+  }}
+}};
+const document = {{
+  querySelector: () => null,
+  querySelectorAll: selector => selector === 'table' ? [gradeTable] : [],
+  body: {{ innerText: '学生成绩' }}
+}};
+const window = {{ document }};
+globalThis.window = window;
+globalThis.document = document;
+globalThis.performance = {{ getEntriesByType: () => [] }};
+globalThis.fetch = async (url) => {{
+  const path = String(url).split('?')[0];
+  if (path === '/student/for-std/student-portrait/getStdInfo') return response('unavailable', 503);
+  return response('not found', 404);
+}};
+function response(body, status = 200) {{
+  return {{ status, ok: status >= 200 && status < 300, text: async () => body }};
+}}
+async function execute() {{
+{script}
+}}
+execute().then(value => process.stdout.write(String(value))).catch(error => {{
+  process.stderr.write(String(error && error.stack || error));
+  process.exit(1);
+}});
+"""
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "education-reordered-columns.js"
+            path.write_text(harness, encoding="utf-8")
+            completed = subprocess.run(["node", str(path)], capture_output=True, check=False)
+        stdout = completed.stdout.decode("utf-8", errors="replace")
+        stderr = completed.stderr.decode("utf-8", errors="replace")
+        self.assertEqual(completed.returncode, 0, stderr or stdout)
+        result = json.loads(stdout)
+        self.assertEqual(result["phase"], "success")
+        self.assertEqual(result["grades"], [{
+            "course": "数据结构",
+            "credits": 3,
+            "point": 4,
+            "score": 95,
+            "category": "必修",
+            "detail": "平时 40 / 期末 48",
+        }])
+
+    def test_education_script_reads_nested_direct_cells_from_component_grade_rows(self):
+        script = self.embedded_script()
+        harness = f"""
+const nestedCell = value => ({{
+  children: [{{}}, {{}}],
+  innerText: value,
+  textContent: value
+}});
+const gradeRow = {{
+  children: [nestedCell('组件成绩'), nestedCell('3'), nestedCell('4.0'), nestedCell('95'), nestedCell('期末 95')],
+  querySelectorAll: () => []
+}};
+const gradeTable = {{
+  querySelectorAll: selector => {{
+    if (selector === 'thead th') return [];
+    if (selector === '.grade-row') return [gradeRow];
+    return [];
+  }}
+}};
+const document = {{
+  querySelector: () => null,
+  querySelectorAll: selector => selector === '.grade-list' ? [gradeTable] : [],
+  body: {{ innerText: '学生成绩' }}
+}};
+const window = {{ document }};
+globalThis.window = window;
+globalThis.document = document;
+globalThis.performance = {{ getEntriesByType: () => [] }};
+globalThis.fetch = async (url) => {{
+  const path = String(url).split('?')[0];
+  if (path === '/student/for-std/student-portrait/getStdInfo') return response('unavailable', 503);
+  return response('not found', 404);
+}};
+function response(body, status = 200) {{
+  return {{ status, ok: status >= 200 && status < 300, text: async () => body }};
+}}
+async function execute() {{
+{script}
+}}
+execute().then(value => process.stdout.write(String(value))).catch(error => {{
+  process.stderr.write(String(error && error.stack || error));
+  process.exit(1);
+}});
+"""
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "education-component-grade-row.js"
+            path.write_text(harness, encoding="utf-8")
+            completed = subprocess.run(["node", str(path)], capture_output=True, check=False)
+        stdout = completed.stdout.decode("utf-8", errors="replace")
+        stderr = completed.stderr.decode("utf-8", errors="replace")
+        self.assertEqual(completed.returncode, 0, stderr or stdout)
+        result = json.loads(stdout)
+        self.assertEqual(result["phase"], "success")
+        self.assertEqual(result["grades"][0]["course"], "组件成绩")
+        self.assertEqual(result["grades"][0]["detail"], "期末 95")
+
+    def test_education_script_finds_generic_grade_items_under_document_body(self):
+        script = self.embedded_script()
+        const_body = """
+const cell = value => ({ innerText: value, textContent: value, children: [] });
+const gradeRow = {
+  children: [cell('通识英语'), cell('2'), cell('3.7'), cell('91'), cell('期末 91')],
+  querySelectorAll: selector => selector === '.grade-item' ? [] : []
+};
+const body = {
+  innerText: '学生成绩',
+  children: [gradeRow],
+  querySelectorAll: selector => selector === '.grade-item' ? [gradeRow] : []
+};
+const document = {
+  body,
+  querySelector: () => null,
+  querySelectorAll: selector => selector === 'body' ? [body] : []
+};
+const window = { document };
+globalThis.window = window;
+globalThis.document = document;
+globalThis.performance = { getEntriesByType: () => [] };
+globalThis.fetch = async () => response('not found', 404);
+function response(body, status = 200) {
+  return { status, ok: status >= 200 && status < 300, text: async () => body };
+}
+"""
+        harness = f"""
+{const_body}
+async function execute() {{
+{script}
+}}
+execute().then(value => process.stdout.write(String(value))).catch(error => {{
+  process.stderr.write(String(error && error.stack || error));
+  process.exit(1);
+}});
+"""
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "education-body-grade-items.js"
+            path.write_text(harness, encoding="utf-8")
+            completed = subprocess.run(["node", str(path)], capture_output=True, check=False)
+        stdout = completed.stdout.decode("utf-8", errors="replace")
+        stderr = completed.stderr.decode("utf-8", errors="replace")
+        self.assertEqual(completed.returncode, 0, stderr or stdout)
+        result = json.loads(stdout)
+        self.assertEqual(result["phase"], "success")
+        self.assertEqual(result["grades"][0]["course"], "通识英语")
+
     def test_education_script_keeps_rendered_grade_table_when_grade_page_request_fails(self):
         script = self.embedded_script()
         harness = f"""
@@ -289,7 +452,10 @@ execute().then(value => process.stdout.write(String(value))).catch(error => {{
         script = self.embedded_script()
         harness = f"""
 let rendered = false;
-setTimeout(() => {{ rendered = true; }}, 1800);
+        // A slow SPA route can mount the table after the old 3.5 second poll
+        // window. Keep this above that boundary so the native fallback cannot
+        // regress to an empty grade collection.
+        setTimeout(() => {{ rendered = true; }}, 4200);
 const cells = values => values.map(value => ({{ innerText: value, textContent: value }}));
 const gradeRow = {{ querySelectorAll: selector => selector === 'td' ? cells(['延迟成绩', '2', '3.2', '87', '期末 87']) : [] }};
 const gradeTable = {{
@@ -438,6 +604,196 @@ execute().then(value => process.stdout.write(JSON.stringify({{ result: JSON.pars
         self.assertEqual(payload["result"]["phase"], "success")
         self.assertEqual(payload["result"]["grades"][0]["course"], "无学号成绩")
         self.assertFalse(payload["result"]["scheduleAvailable"])
+
+    def test_education_script_reads_td_headers_and_component_data_attributes(self):
+        script = self.embedded_script()
+        harness = f"""
+const cells = values => values.map(value => ({{ innerText: value, textContent: value }}));
+const headerRow = {{
+  querySelectorAll: selector => selector === 'td'
+    ? cells(['课程性质', '课程名称', '学分', '成绩', '绩点', '成绩构成'])
+    : [],
+  children: []
+}};
+const attributes = {{
+  'data-course-name': '组件属性成绩',
+  'data-credits': '3',
+  'data-score': '92',
+  'data-point': '3.8',
+  'data-detail': '期末 92',
+  'data-category': '必修'
+}};
+const gradeRow = {{
+  getAttribute: name => Object.prototype.hasOwnProperty.call(attributes, name) ? attributes[name] : null,
+  querySelectorAll: () => [],
+  children: [],
+  innerText: '组件属性成绩 3 92 3.8 期末 92'
+}};
+const gradeTable = {{
+  querySelectorAll: selector => {{
+    if (selector === 'tr') return [headerRow];
+    if (selector === 'tr:first-child td') return cells(['课程性质', '课程名称', '学分', '成绩', '绩点', '成绩构成']);
+    if (selector === '[data-course-name]') return [gradeRow];
+    return [];
+  }}
+}};
+const option = {{ textContent: '2026 秋', value: 'term-fixture', selected: true }};
+const body = {{
+  innerText: '学生成绩',
+  querySelectorAll: selector => selector === '[data-course-name]' ? [gradeRow] : []
+}};
+const document = {{
+  body,
+  querySelector: () => null,
+  querySelectorAll: selector => {{
+    if (selector === 'table') return [gradeTable];
+    if (selector === 'select option') return [option];
+    if (selector === 'body') return [body];
+    return [];
+  }}
+}};
+const window = {{ document }};
+globalThis.window = window;
+globalThis.document = document;
+globalThis.performance = {{ getEntriesByType: () => [] }};
+globalThis.fetch = async () => response('not found', 404);
+function response(body, status = 200) {{
+  return {{ status, ok: status >= 200 && status < 300, text: async () => body }};
+}}
+async function execute() {{
+{script}
+}}
+execute().then(value => process.stdout.write(String(value))).catch(error => {{
+  process.stderr.write(String(error && error.stack || error));
+  process.exit(1);
+}});
+"""
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "education-component-data-attributes.js"
+            path.write_text(harness, encoding="utf-8")
+            completed = subprocess.run(["node", str(path)], capture_output=True, check=False)
+        stdout = completed.stdout.decode("utf-8", errors="replace")
+        stderr = completed.stderr.decode("utf-8", errors="replace")
+        self.assertEqual(completed.returncode, 0, stderr or stdout)
+        result = json.loads(stdout)
+        self.assertEqual(result["phase"], "success")
+        self.assertEqual(result["grades"], [{
+            "course": "组件属性成绩",
+            "credits": 3,
+            "point": 3.8,
+            "score": 92,
+            "category": "必修",
+            "detail": "期末 92",
+        }])
+
+    def test_education_script_maps_semantic_cell_labels_without_a_header_row(self):
+        script = self.embedded_script()
+        harness = f"""
+const semanticCell = (label, value) => ({{
+  getAttribute: name => (name === 'data-label' || name === 'aria-label' || name === 'data-field') ? label : null,
+  innerText: value,
+  textContent: value,
+  children: []
+}});
+const gradeRow = {{
+  querySelectorAll: selector => selector === 'td' ? [
+    semanticCell('成绩', '91'),
+    semanticCell('课程名称', '语义列成绩'),
+    semanticCell('成绩构成', '期末 91'),
+    semanticCell('绩点', '3.7'),
+    semanticCell('课程性质', '专业必修'),
+    semanticCell('学分', '2')
+  ] : [],
+  children: []
+}};
+const gradeTable = {{
+  querySelectorAll: selector => selector === '[data-grade-row]' ? [gradeRow] : []
+}};
+const document = {{
+  querySelector: () => null,
+  querySelectorAll: selector => selector === '[role="table"]' ? [gradeTable] : [],
+  body: {{ innerText: '学生成绩' }}
+}};
+const window = {{ document }};
+globalThis.window = window;
+globalThis.document = document;
+globalThis.performance = {{ getEntriesByType: () => [] }};
+globalThis.fetch = async () => response('not found', 404);
+function response(body, status = 200) {{
+  return {{ status, ok: status >= 200 && status < 300, text: async () => body }};
+}}
+async function execute() {{
+{script}
+}}
+execute().then(value => process.stdout.write(String(value))).catch(error => {{
+  process.stderr.write(String(error && error.stack || error));
+  process.exit(1);
+}});
+"""
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "education-semantic-cell-labels.js"
+            path.write_text(harness, encoding="utf-8")
+            completed = subprocess.run(["node", str(path)], capture_output=True, check=False)
+        stdout = completed.stdout.decode("utf-8", errors="replace")
+        stderr = completed.stderr.decode("utf-8", errors="replace")
+        self.assertEqual(completed.returncode, 0, stderr or stdout)
+        result = json.loads(stdout)
+        self.assertEqual(result["phase"], "success")
+        self.assertEqual(result["grades"], [{
+            "course": "语义列成绩",
+            "credits": 2,
+            "point": 3.7,
+            "score": 91,
+            "category": "专业必修",
+            "detail": "期末 91",
+        }])
+
+    def test_education_script_collects_delayed_rows_while_route_is_still_home(self):
+        script = self.embedded_script()
+        harness = f"""
+let rendered = false;
+setTimeout(() => {{ rendered = true; }}, 1200);
+const cells = values => values.map(value => ({{ innerText: value, textContent: value }}));
+const gradeRow = {{
+  querySelectorAll: selector => selector === 'td' ? cells(['首页延迟成绩', '1', '3.0', '82', '期末 82']) : [],
+  children: []
+}};
+const gradeTable = {{
+  querySelectorAll: selector => selector === 'thead th'
+    ? cells(['课程名称', '学分', '绩点', '成绩', '成绩构成'])
+    : (selector === 'tbody tr' ? [gradeRow] : [])
+}};
+const document = {{
+  querySelector: () => null,
+  querySelectorAll: selector => selector === 'table' && rendered ? [gradeTable] : [],
+  body: {{ innerText: '首页' }}
+}};
+const window = {{ document }};
+globalThis.window = window;
+globalThis.document = document;
+globalThis.performance = {{ getEntriesByType: () => [] }};
+globalThis.fetch = async () => response('not found', 404);
+function response(body, status = 200) {{
+  return {{ status, ok: status >= 200 && status < 300, text: async () => body }};
+}}
+async function execute() {{
+{script}
+}}
+execute().then(value => process.stdout.write(String(value))).catch(error => {{
+  process.stderr.write(String(error && error.stack || error));
+  process.exit(1);
+}});
+"""
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "education-home-delayed-table.js"
+            path.write_text(harness, encoding="utf-8")
+            completed = subprocess.run(["node", str(path)], capture_output=True, check=False)
+        stdout = completed.stdout.decode("utf-8", errors="replace")
+        stderr = completed.stderr.decode("utf-8", errors="replace")
+        self.assertEqual(completed.returncode, 0, stderr or stdout)
+        result = json.loads(stdout)
+        self.assertEqual(result["phase"], "success")
+        self.assertEqual(result["grades"][0]["course"], "首页延迟成绩")
 
 
 if __name__ == "__main__":

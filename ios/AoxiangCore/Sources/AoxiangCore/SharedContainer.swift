@@ -1,9 +1,5 @@
 import Foundation
 
-#if os(iOS) && canImport(Security)
-import Security
-#endif
-
 /// Shared file location used by the main iOS app and its Widget extension.
 /// The portable package keeps the path contract in one place; it does not
 /// expose credentials, cookies, authentication state, or network clients.
@@ -14,22 +10,19 @@ public enum AoxiangSharedContainer {
     public static let defaultAppGroupIdentifier = "group.cn.nwpu.aoxiang-assistant"
     public static let snapshotFileName = "widget-snapshot.json"
 
-    /// The bundle value is a build-time hint. A re-signer may update the
-    /// application-groups entitlement without rewriting this plist, so the
-    /// signed entitlement is preferred whenever it is readable.
+    /// The bundle value is the runtime contract for the shared container. A
+    /// re-signer that changes the App Group must update this Info.plist value
+    /// together with both signed entitlements; iOS does not expose a supported
+    /// public API for reading another target's application-groups entitlement.
     public static var appGroupIdentifier: String {
-        let configured = configuredAppGroupIdentifier()
-        let entitled = signedAppGroupIdentifiers()
-        return appGroupCandidates(
-            configuredIdentifier: configured,
-            entitledIdentifiers: entitled
-        ).first ?? configured ?? defaultAppGroupIdentifier
+        configuredAppGroupIdentifier() ?? defaultAppGroupIdentifier
     }
 
     /// Orders possible group identifiers without touching the filesystem.
-    /// `nil` means that entitlements could not be inspected (for example on a
-    /// host test), while an empty array means the signed target declares no
-    /// groups and must fail closed instead of guessing one.
+    /// `nil` means that no signed-entitlement list is available to the caller
+    /// (for example on a host test). The helper remains pure so tests and
+    /// packaging tools can resolve a deterministic candidate order without
+    /// depending on platform security APIs.
     static func appGroupCandidates(
         configuredIdentifier: String?,
         entitledIdentifiers: [String]?
@@ -43,7 +36,7 @@ public enum AoxiangSharedContainer {
             candidates.append(value)
         }
 
-        if let entitledIdentifiers {
+        if entitledIdentifiers != nil {
             // When the signed entitlement is available, a stale plist value
             // is deliberately ignored unless the signer actually authorized
             // it. This is what lets common sideloaders use their team-owned
@@ -68,7 +61,7 @@ public enum AoxiangSharedContainer {
         #if os(iOS)
         for identifier in appGroupCandidates(
             configuredIdentifier: configuredAppGroupIdentifier(),
-            entitledIdentifiers: signedAppGroupIdentifiers()
+            entitledIdentifiers: nil
         ) {
             if let container = fileManager.containerURL(
                 forSecurityApplicationGroupIdentifier: identifier
@@ -111,20 +104,6 @@ public enum AoxiangSharedContainer {
         return normalized
     }
 
-    private static func signedAppGroupIdentifiers() -> [String]? {
-        #if os(iOS) && canImport(Security)
-        guard let task = SecTaskCreateFromSelf(nil) else { return nil }
-        let raw = SecTaskCopyValueForEntitlement(
-            task,
-            "com.apple.security.application-groups" as CFString,
-            nil
-        )
-        guard let values = raw as? [String] else { return [] }
-        return values
-        #else
-        return nil
-        #endif
-    }
 }
 
 /// Represents an unavailable App Group at the Widget storage boundary. Both

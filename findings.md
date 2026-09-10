@@ -442,3 +442,32 @@
 - Local `87214fd` is ahead of `origin/iOS` by one commit. Its first push was denied before network
   execution because the approval service returned transient HTTP 503; no alternative publication
   mechanism was used.
+
+## 2026-09-09 latest screenshot and collection symptom
+
+- The latest supplied screenshot shows the old Management wording (`grade
+  response unavailable`) and no App Group diagnostics, so the installed
+  package predates the current DOM fallback and `1.0.1 (2)` release source.
+- The reported flow reaches the grades page but does not commit rows. The
+  source-side contract is explicit: a rendered grades page must return
+  normalized rows even when grade JSON or bootstrap calls fail; if no valid
+  row exists it must return an explicit retry/authentication result.
+- Widget availability remains a signed-bundle boundary: the re-signer must
+  preserve `Payload/AoxiangAssistant.app/PlugIns/AoxiangAssistantWidget.appex`
+  and authorize the same App Group in both nested code signatures.
+
+## 2026-09-10 current repair audit
+
+- A rendered成绩 page can now produce normalized rows without depending on a
+  successful grade JSON request, student bootstrap, schedule endpoint or URL
+  route. Semantic cell attributes are used before positional fallbacks, and
+  duplicate rows are de-duplicated before crossing the WebView boundary.
+- The native bridge accepts the concrete value shapes returned by WebKit on
+  different SDKs while still serializing only the sanitized JSON envelope.
+- The source tests are green, but Windows cannot prove an `iphoneos` archive,
+  code signatures, provisioning profiles, App Group authorization or WidgetKit
+  gallery registration. The old downloaded IPA remains stale and must not be
+  used for device conclusions.
+- The next authoritative artifact is the fresh macOS `sideload` IPA. A
+  successful host-only build or an IPA with a missing/unsigned nested Widget
+  does not satisfy the delivery goal.

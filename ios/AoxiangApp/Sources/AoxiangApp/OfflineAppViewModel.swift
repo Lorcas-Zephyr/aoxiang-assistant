@@ -41,6 +41,10 @@ public final class OfflineAppViewModel: ObservableObject {
     @Published public private(set) var errorMessage: String?
     @Published public private(set) var lastImportSucceeded = false
     @Published public private(set) var lastPortalCollectionWarnings: [PortalCollectionWarning] = []
+    /// A Widget/App Group failure is independent from the main app commit.
+    /// Keep it observable without presenting a successful collection as an
+    /// operation error.
+    @Published public private(set) var lastWidgetSnapshotWarning: String?
 
     public let authenticationStore: AuthenticationSessionStore
     private let controller: OfflineDataController
@@ -133,13 +137,11 @@ public final class OfflineAppViewModel: ObservableObject {
         }
     }
 
-    /// Applies a complete foreground collection result as one state change.
-    /// The controller validates and persists the candidate before this model
-    /// publishes it or refreshes the Widget timeline, so a failed collection
-    /// cannot expose a partially updated app or snapshot.
+    /// Applies a complete foreground collection result as one main-app state
+    /// change. Widget publication is best-effort: a missing or unavailable App
+    /// Group must not discard valid grades, schedule, or electricity data.
     @discardableResult
     public func applyPortalCollection(_ result: PortalCollectedData) -> Bool {
-        let previousState = state
         do {
             var candidate = state
             candidate.grades = result.grades
@@ -159,29 +161,25 @@ public final class OfflineAppViewModel: ObservableObject {
             if let electricityBalance = result.electricityBalance {
                 candidate.electricityBalance = electricityBalance
             }
-            // Read the old snapshot before publishing either side of this
-            // cross-file commit. A missing App Group therefore fails closed
-            // instead of reporting a successful collection with no Widget.
-            let previousSnapshot = try snapshotWriter.read()
             _ = try controller.replace(candidate)
-            do {
-                try persistWidgetSnapshot(for: candidate)
-            } catch {
-                // Both stores are atomic individually; restore the old values
-                // if the second commit cannot complete.
-                try? snapshotWriter.restore(previousSnapshot)
-                _ = try? controller.replace(previousState)
-                state = controller.state
-                throw error
-            }
             state = controller.state
             lastPortalCollectionWarnings = result.warnings
             errorMessage = nil
-            return true
         } catch {
             errorMessage = error.localizedDescription
             return false
         }
+
+        do {
+            try persistWidgetSnapshot(for: state)
+            lastWidgetSnapshotWarning = nil
+        } catch {
+            // The local commit above is authoritative. Snapshot storage is a
+            // separate, atomic file boundary and may be unavailable for a
+            // sideloaded target whose App Group was not provisioned.
+            lastWidgetSnapshotWarning = widgetSnapshotWarning(for: error)
+        }
+        return true
     }
 
     @discardableResult
@@ -288,16 +286,22 @@ public final class OfflineAppViewModel: ObservableObject {
     public func writeWidgetSnapshot(now: Date = Date()) -> Bool {
         do {
             try persistWidgetSnapshot(for: state, now: now)
+            lastWidgetSnapshotWarning = nil
             return true
         } catch {
-            if let offlineError = error as? OfflineDataError,
-               offlineError == .sharedContainerUnavailable {
-                errorMessage = "小组件共享容器不可用；本地数据已保存，但小组件不会更新。"
-            } else {
-                errorMessage = error.localizedDescription
-            }
+            let warning = widgetSnapshotWarning(for: error)
+            lastWidgetSnapshotWarning = warning
+            errorMessage = warning
             return false
         }
+    }
+
+    private func widgetSnapshotWarning(for error: Error) -> String {
+        if let offlineError = error as? OfflineDataError,
+           offlineError == .sharedContainerUnavailable {
+            return "小组件共享容器不可用；本地数据已保存，但小组件不会更新。"
+        }
+        return "小组件快照无法写入；本地数据已保存。"
     }
 
     private func persistWidgetSnapshot(for value: OfflineAppState, now: Date = Date()) throws {

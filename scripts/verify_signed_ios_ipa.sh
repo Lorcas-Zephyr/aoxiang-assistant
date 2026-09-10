@@ -47,6 +47,14 @@ actual_widget_id="$(/usr/bin/plutil -extract CFBundleIdentifier raw -o - "$widge
   echo "Widget bundle ID mismatch: $actual_widget_id (expected $expected_widget_id)" >&2
   exit 1
 }
+[[ "$expected_widget_id" == "${expected_app_id}."* ]] || {
+  echo "Widget bundle ID is not an extension of the host bundle ID: $expected_widget_id" >&2
+  exit 1
+}
+[[ "$actual_widget_id" == "${expected_app_id}."* ]] || {
+  echo "Widget bundle ID is not an extension of the host bundle ID: $actual_widget_id" >&2
+  exit 1
+}
 actual_app_group="$(/usr/bin/plutil -extract AoxiangAppGroupIdentifier raw -o - "$app_info" 2>/dev/null || true)"
 actual_widget_group="$(/usr/bin/plutil -extract AoxiangAppGroupIdentifier raw -o - "$widget_info" 2>/dev/null || true)"
 [[ "$actual_app_group" == "$expected_group" ]] || {

@@ -11,6 +11,42 @@ public enum VisibleCollectionTarget: Equatable {
     case electricity
 }
 
+/// Normalizes the values that WebKit can bridge back from page JavaScript.
+///
+/// `WKWebView.callAsyncJavaScript` is declared as returning `Any` and the
+/// concrete bridge has varied across iOS/Xcode releases: a JSON string is the
+/// normal result, while Foundation may expose that same value as `NSString`,
+/// `Data`, or an already-materialized JSON object. Keep this conversion pure
+/// and limited to the sanitized collection envelope before it reaches the
+/// domain parser.
+public enum VisibleCollectionJavaScriptResult {
+    public static func jsonData(from value: Any?) -> Data? {
+        guard let value else { return nil }
+        if let data = value as? Data {
+            return data
+        }
+        if let string = value as? String {
+            return Data(string.utf8)
+        }
+        if let string = value as? NSString {
+            return Data((string as String).utf8)
+        }
+        if let object = value as? [String: Any], JSONSerialization.isValidJSONObject(object) {
+            return try? JSONSerialization.data(withJSONObject: object, options: [])
+        }
+        if let object = value as? [Any], JSONSerialization.isValidJSONObject(object) {
+            return try? JSONSerialization.data(withJSONObject: object, options: [])
+        }
+        if let object = value as? NSDictionary, JSONSerialization.isValidJSONObject(object) {
+            return try? JSONSerialization.data(withJSONObject: object, options: [])
+        }
+        if let object = value as? NSArray, JSONSerialization.isValidJSONObject(object) {
+            return try? JSONSerialization.data(withJSONObject: object, options: [])
+        }
+        return nil
+    }
+}
+
 /// Classifies navigation destinations without reading page state or cookie
 /// values. The electricity portal deliberately starts through one CAS-shaped
 /// URL, so that expected first hop must not be mistaken for session expiry.
@@ -408,8 +444,7 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
                 )
                 guard self.educationContinuation != nil else { return }
                 self.educationEvaluationInFlight = false
-                guard let json = value as? String,
-                      let data = json.data(using: .utf8) else {
+                guard let data = VisibleCollectionJavaScriptResult.jsonData(from: value) else {
                     self.finishEducation(.failure(PortalCollectionFailure.invalidResponse("visible education payload unavailable")))
                     return
                 }
@@ -662,20 +697,33 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
       };
       const clean = value => String(value == null ? '' : value).trim();
       const studentID = html => {
-        const liveValue = clean(window.studentId || '');
+        const liveValue = clean(window.studentId || window.studentID || window.studentAssoc || '');
         if (liveValue) return liveValue;
+        // Keep the portal's original top-level bootstrap selector as a direct
+        // fallback. Some WebKit pages expose the input through the global
+        // document while iframe/component shims only appear in `documents`.
+        const directInput = typeof document !== 'undefined' && document &&
+          typeof document.querySelector === 'function'
+          ? document.querySelector('#studentId') : null;
+        const directValue = clean(directInput && (directInput.value ||
+          directInput.getAttribute && (directInput.getAttribute('data-student-id') ||
+            directInput.getAttribute('data-student-assoc'))) || '');
+        if (directValue) return directValue;
         for (const currentDocument of documents) {
           try {
-            const input = currentDocument === document
-              ? document.querySelector('#studentId')
-              : currentDocument.querySelector('#studentId');
-            const value = clean(input && input.value || '');
-            if (value) return value;
+            const selectors = ['#studentId', 'input[name="studentId"]',
+              '[data-student-id]', '[data-student-assoc]'];
+            for (const selector of selectors) {
+              const input = currentDocument.querySelector(selector);
+              const value = clean(input && (input.value || input.getAttribute &&
+                (input.getAttribute('data-student-id') || input.getAttribute('data-student-assoc'))) || '');
+              if (value) return value;
+            }
           } catch (_) {}
         }
         const match = String(html || '').match(/id=["']studentId["'][^>]*value=["']([^"']+)["']/i) ||
           String(html || '').match(/value=["']([^"']+)["'][^>]*id=["']studentId["']/i) ||
-          String(html || '').match(/(?:studentId|studentAssoc)\s*[=:]\s*["']([^"']+)["']/i);
+          String(html || '').match(/(?:studentId|studentID|studentAssoc)\s*[=:]\s*["']([^"']+)["']/i);
         return match ? clean(match[1]) : '';
       };
       const scheduleStudentId = () => {
@@ -706,6 +754,31 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
         const id = semesterID(term);
         return id ? Object.assign({}, term, { id }) : null;
       };
+      const decodeJavaScriptString = raw => {
+        const source = String(raw || '');
+        let output = '';
+        for (let index = 0; index < source.length; index += 1) {
+          const character = source[index];
+          if (character !== '\\' || index + 1 >= source.length) {
+            output += character;
+            continue;
+          }
+          const next = source[++index];
+          const escapes = { n: '\n', r: '\r', t: '\t', b: '\b', f: '\f', v: '\v',
+            '0': '\0', '\\': '\\', '"': '"', "'": "'" };
+          if (Object.prototype.hasOwnProperty.call(escapes, next)) {
+            output += escapes[next];
+            continue;
+          }
+          if (next === 'u' && /^[0-9a-fA-F]{4}$/.test(source.slice(index + 1, index + 5))) {
+            output += String.fromCharCode(parseInt(source.slice(index + 1, index + 5), 16));
+            index += 4;
+            continue;
+          }
+          output += next;
+        }
+        return output;
+      };
       const semesters = html => {
         const globals = [window.semesters, window.semesterList, window.semesterOptions, window.__SEMESTERS__];
         for (const globalValue of globals) {
@@ -715,7 +788,7 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
         const source = String(html || '');
         const jsonParseMatch = source.match(/(?:var|const|let)\s+semesters\s*=\s*JSON\.parse\(\s*(['"])([\s\S]*?)\1\s*\)/);
         if (jsonParseMatch) {
-          const raw = jsonParseMatch[2].replace(/\\'/g, "'").replace(/\\\"/g, '\"');
+          const raw = decodeJavaScriptString(jsonParseMatch[2]);
           const parsed = parseSemesterValue(raw).map(normalizeSemester).filter(Boolean);
           if (parsed.length) return parsed;
         }
@@ -724,9 +797,31 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
           const parsed = parseSemesterValue(directMatch[1]).map(normalizeSemester).filter(Boolean);
           if (parsed.length) return parsed;
         }
-        const embedded = document.querySelector('script[type="application/json"][data-semesters], #semesters');
-        return parseSemesterValue(embedded && (embedded.textContent || embedded.value))
-          .map(normalizeSemester).filter(Boolean);
+        for (const currentDocument of documents) {
+          try {
+            const embedded = currentDocument.querySelector('script[type="application/json"][data-semesters], #semesters');
+            const embeddedValues = parseSemesterValue(embedded && (embedded.textContent || embedded.value))
+              .map(normalizeSemester).filter(Boolean);
+            if (embeddedValues.length) return embeddedValues;
+            const options = Array.from(currentDocument.querySelectorAll('select option'))
+              .map(option => normalizeSemester({
+                id: clean(option && (option.value || option.getAttribute && option.getAttribute('value'))),
+                value: clean(option && (option.value || option.getAttribute && option.getAttribute('value'))),
+                name: clean(option && (option.textContent || option.innerText)),
+                nameZh: clean(option && (option.textContent || option.innerText)),
+                startDate: clean(option && option.getAttribute && option.getAttribute('data-start-date')),
+                endDate: clean(option && option.getAttribute && option.getAttribute('data-end-date'))
+              })).filter(Boolean);
+            if (options.length) return options;
+            const dataNodes = Array.from(currentDocument.querySelectorAll('[data-semester-id], [data-semester]'))
+              .map(node => normalizeSemester({
+                id: clean(node && node.getAttribute && (node.getAttribute('data-semester-id') || node.getAttribute('data-semester'))),
+                name: clean(node && (node.innerText || node.textContent))
+              })).filter(Boolean);
+            if (dataNodes.length) return dataNodes;
+          } catch (_) {}
+        }
+        return [];
       };
       const authenticationPhase = value => {
         const body = String(value || '').toLowerCase();
@@ -755,7 +850,21 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
         const parsed = Number(match[0]);
         return Number.isFinite(parsed) ? parsed : null;
       };
-      const cellText = cell => clean(cell && (cell.innerText || cell.textContent || cell.value || ''));
+        const cellText = cell => clean(cell && (cell.innerText || cell.textContent || cell.value || ''));
+        const cellLabel = cell => {
+          if (!cell || typeof cell.getAttribute !== 'function') return '';
+          const attributes = ['data-label', 'aria-label', 'data-field', 'data-column', 'data-key'];
+          for (const attribute of attributes) {
+            try {
+              const value = clean(cell.getAttribute(attribute));
+              if (value) return value;
+            } catch (_) {}
+          }
+          try {
+            const dataset = cell.dataset || {};
+            return clean(dataset.label || dataset.field || dataset.column || dataset.key || '');
+          } catch (_) { return ''; }
+        };
       const cellsFor = row => {
         if (!row || typeof row.querySelectorAll !== 'function') return [];
         const selectors = [
@@ -772,15 +881,30 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
           } catch (_) {}
         }
         try {
-          const direct = Array.from(row.children || []).filter(child =>
-            child && (!child.children || child.children.length === 0)
-          );
+          // Component-based grade lists frequently use nested div/span cells
+          // instead of td elements. Preserve each direct child as one logical
+          // cell so its innerText can still be mapped by the fixed fallback
+          // column order when no semantic cell selector is available.
+          const direct = Array.from(row.children || []).filter(child => child);
           if (direct.length) return direct;
         } catch (_) {}
         return [];
       };
-      const columnIndex = (headers, patterns, fallback) => {
-        const index = headers.findIndex(header => patterns.some(pattern => header.includes(pattern)));
+      const normalizeHeader = value => clean(value)
+        .replace(/\s+/g, '')
+        .replace(/[：:（）()【】\[\]]/g, '')
+        .toLowerCase();
+      const columnIndex = (headers, exactPatterns, fallback, excludedPatterns = []) => {
+        const normalizedHeaders = headers.map(normalizeHeader);
+        const exact = normalizedHeaders.findIndex(header =>
+          exactPatterns.some(pattern => header === normalizeHeader(pattern)));
+        if (exact >= 0) return exact;
+        const index = normalizedHeaders.findIndex(header =>
+          exactPatterns.some(pattern => {
+            const normalizedPattern = normalizeHeader(pattern);
+            return header.includes(normalizedPattern) &&
+              !excludedPatterns.some(excluded => header.includes(normalizeHeader(excluded)));
+          }));
         return index >= 0 ? index : fallback;
       };
       const renderedGradeRows = () => {
@@ -790,7 +914,12 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
         const roots = [];
         const rootSelectors = [
           'table', '[role="table"]', '[role="grid"]', '.grade-table', '.grade-list',
-          '.el-table', '.ant-table', '.vxe-table', '.ivu-table'
+          '.el-table', '.ant-table', '.vxe-table', '.ivu-table',
+          // Some portal builds render grade cards directly under body without
+          // a table/list wrapper. Including body lets the semantic row
+          // selectors below handle that shape while the record key de-dupes
+          // any nested table rows we already visited.
+          'body'
         ];
         documents.forEach(currentDocument => {
           if (!currentDocument || typeof currentDocument.querySelectorAll !== 'function') return;
@@ -823,15 +952,47 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
           const element = findFirst(row, selectors);
           return cellText(element);
         };
+        const attributeValue = (row, names) => {
+          if (!row || typeof row.getAttribute !== 'function') return '';
+          for (const name of names) {
+            try {
+              const value = clean(row.getAttribute(name));
+              if (value) return value;
+            } catch (_) {}
+          }
+          return '';
+        };
         const recordFromValues = (values, headers) => {
           if (!values.length) return null;
-          const normalizedHeaders = headers.map(value => value.toLowerCase());
-          const courseIndex = columnIndex(normalizedHeaders, ['课程名称', '课程名', '课程', '科目', 'course', 'lesson'], 0);
-          const creditIndex = columnIndex(normalizedHeaders, ['学分', 'credit'], 1);
-          const pointIndex = columnIndex(normalizedHeaders, ['绩点', 'grade point', 'point', 'gp'], 2);
-          const scoreIndex = columnIndex(normalizedHeaders, ['成绩', '分数', 'score', 'grade'], 3);
-          const detailIndex = columnIndex(normalizedHeaders, ['成绩构成', '成绩详情', '详情', '备注', 'detail'], 4);
-          const categoryIndex = columnIndex(normalizedHeaders, ['课程类别', '课程性质', '类别', 'category'], -1);
+          const courseIndex = columnIndex(
+            headers,
+            ['课程名称', '课程名', '课程', '科目', 'course', 'lesson'],
+            0,
+            ['课程性质', '课程类别', '课程类型', '课程代码', '课程编号']
+          );
+          const creditIndex = columnIndex(headers, ['学分', '学分数', 'credit', 'credits'], 1);
+          const pointIndex = columnIndex(
+            headers,
+            ['绩点', '绩点值', 'grade point', 'gradepoint', 'point', 'gp'],
+            2,
+            ['成绩构成', '成绩详情', '成绩组成']
+          );
+          const scoreIndex = columnIndex(
+            headers,
+            ['成绩', '分数', '总评成绩', '最终成绩', 'score', 'grade'],
+            3,
+            ['成绩构成', '成绩详情', '成绩组成', '平时成绩', '期末成绩']
+          );
+          const detailIndex = columnIndex(
+            headers,
+            ['成绩构成', '成绩详情', '成绩组成', '详情', '备注', 'detail'],
+            4
+          );
+          const categoryIndex = columnIndex(
+            headers,
+            ['课程类别', '课程性质', '课程类型', '类别', 'category'],
+            -1
+          );
           const course = clean(values[courseIndex] || '');
           const credits = numeric(values[creditIndex]);
           const point = numeric(values[pointIndex]);
@@ -852,6 +1013,7 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
           if (!table || typeof table.querySelectorAll !== 'function') return;
           const headerCells = findAll(table, [
             'thead th', 'tr:first-child th', '[role="columnheader"]',
+            'tr:first-child td',
             '.el-table__header-wrapper th', '.ant-table-thead th',
             '.vxe-table--header-wrapper th', '.vxe-header--column',
             '.grade-header [role="cell"]', '.grade-header th'
@@ -865,12 +1027,16 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
             '.grade-row', '.grade-item', '.score-row',
             'li[data-course], li.course-item, .course-item'
           ]);
-          if (!sourceRows.length) sourceRows = findAll(table, ['tr']);
-          sourceRows.forEach(row => {
-            const values = cellsFor(row).map(cellText);
-            if (!values.length || values.every(value => !value)) return;
-            const record = recordFromValues(values, headers);
-            if (!record) return;
+           if (!sourceRows.length) sourceRows = findAll(table, ['tr']);
+           sourceRows.forEach(row => {
+             const rowCells = cellsFor(row);
+             const values = rowCells.map(cellText);
+             if (!values.length || values.every(value => !value)) return;
+             const semanticLabels = rowCells.map(cellLabel);
+             const record = semanticLabels.some(Boolean)
+               ? recordFromValues(values, semanticLabels)
+               : recordFromValues(values, headers);
+             if (!record) return;
             const key = [record.course, record.credits, record.point, record.score, record.category, record.detail].join('\u0001');
             if (!seenRecords.has(key)) {
               seenRecords.add(key);
@@ -879,6 +1045,20 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
           });
           const namedRows = findAll(table, ['.grade-row', '.grade-item', '[data-grade-row]']);
           namedRows.forEach(row => {
+            const semanticCells = cellsFor(row);
+            const semanticValues = semanticCells.map(cellText);
+            const semanticLabels = semanticCells.map(cellLabel);
+            if (semanticValues.length && semanticLabels.some(Boolean)) {
+              const semanticRecord = recordFromValues(semanticValues, semanticLabels);
+              if (semanticRecord) {
+                const key = [semanticRecord.course, semanticRecord.credits, semanticRecord.point, semanticRecord.score, semanticRecord.category, semanticRecord.detail].join('\\u0001');
+                if (!seenRecords.has(key)) {
+                  seenRecords.add(key);
+                  records.push(semanticRecord);
+                }
+                return;
+              }
+            }
             const course = namedValue(row, ['.course-name', '.course', '.lesson-name', '[data-field="course"]', '[data-field="courseName"]']);
             const credits = numeric(namedValue(row, ['.credits', '.credit', '[data-field="credits"]', '[data-field="credit"]']));
             const point = numeric(namedValue(row, ['.point', '.gp', '.grade-point', '[data-field="point"]', '[data-field="gp"]']));
@@ -900,12 +1080,39 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
               records.push(record);
             }
           });
+          const attributeRows = findAll(table, [
+            '[data-course-name]', '[data-course]', '[data-grade-row]'
+          ]);
+          attributeRows.forEach(row => {
+            const record = {
+              course: attributeValue(row, ['data-course-name', 'data-course', 'data-lesson-name']),
+              credits: numeric(attributeValue(row, ['data-credits', 'data-credit'])),
+              point: numeric(attributeValue(row, ['data-point', 'data-gp', 'data-grade-point'])),
+              score: numeric(attributeValue(row, ['data-score', 'data-grade'])),
+              category: attributeValue(row, ['data-category', 'data-course-category']) || '课程',
+              detail: attributeValue(row, ['data-detail', 'data-grade-detail'])
+            };
+            const passFail = /^(P|NP|通过|不通过|优秀|良好|中等|及格|不及格)$/i.test(
+              attributeValue(row, ['data-score', 'data-grade'])
+            );
+            if (!record.course || record.credits === null ||
+                (!Number.isFinite(record.point) && !Number.isFinite(record.score) && !passFail)) return;
+            const key = [record.course, record.credits, record.point, record.score, record.category, record.detail].join('\u0001');
+            if (!seenRecords.has(key)) {
+              seenRecords.add(key);
+              records.push(record);
+            }
+          });
         });
         return records;
       };
       const waitForRenderedGradeRows = async () => {
         let rows = renderedGradeRows();
-        for (let attempt = 0; attempt < 14 && !rows.length; attempt += 1) {
+        // SPA grade routes often report navigation finished before Vue has
+        // mounted the table. Allow up to eight seconds for that render, while
+        // still staying well inside the native 25-second continuation timeout.
+        const renderedWaitDeadline = Math.min(collectionDeadline, Date.now() + 8000);
+        while (!rows.length && Date.now() < renderedWaitDeadline) {
           await new Promise(resolve => setTimeout(resolve, 250));
           rows = renderedGradeRows();
         }

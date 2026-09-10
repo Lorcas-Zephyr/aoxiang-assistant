@@ -449,3 +449,64 @@
 - The latest device screenshot does not include the shared-container/App Group status rows added in
   the current source. It is therefore evidence of an older installed build, consistent with the
   locally inspected `1.0 (1)` artifact, not of the pending `1.0.1 (2)` repair.
+
+## 2026-09-09 fresh archive triggered
+
+- The first local `git push` attempt failed with Schannel `SEC_E_NO_CREDENTIALS`. After the user
+  explicitly authorized all operations, the elevated Git channel successfully pushed `87214fd` and
+  `66caf6b` to `origin/iOS`.
+- GitHub Actions runs `34332754304` (re-signable iPhone/iPad IPA) and `34332754357` (cross-platform
+  contract) are running from exact head `66caf6bf63a25fe511315299c5c690a576b324fc`. No stale local
+  IPA is being used for the next device test.
+
+## 2026-09-09 foreground commit and Widget diagnostic repair
+
+- `OfflineAppViewModel.applyPortalCollection` now treats the main local state as the authoritative
+  foreground result. It commits grades, schedule, GPA and electricity first, then attempts the
+  shared Widget snapshot as a best-effort second boundary; snapshot failure preserves the previous
+  Widget snapshot and no longer rolls back the newly collected local data.
+- Added `lastWidgetSnapshotWarning` to distinguish an unavailable App Group from a generic snapshot
+  write failure. Management collection status now reads this warning and no longer claims that a
+  Widget refresh succeeded when it did not.
+- Removed `SecTaskCreateFromSelf`/`SecTaskCopyValueForEntitlement` from `SharedContainer.swift`;
+  those APIs are not available in the Xcode 26.6 SDK used by the macOS archive. Runtime lookup now
+  follows the configured build-time App Group and fails closed when it is not provisioned.
+- The prior exact-head Actions runs `34332754304`/`34332754357` failed at that SDK compile seam;
+  this repair must be pushed before requesting a replacement archive. The old `1.0 (1)` local IPA
+  remains invalid evidence.
+
+## 2026-09-09 screenshot follow-up
+
+- Reopened the latest supplied screenshot and confirmed it is the older management surface: it
+  still reports `grade response unavailable` and does not show the new shared-container/App Group
+  diagnostics. The screenshot therefore identifies the failure mode but cannot validate the current
+  uncommitted DOM fallback or Widget packaging repair.
+- The next regression slice targets real portal variants not yet covered by the harness: `td`-only
+  header rows, semester values exposed through `<select>`/data attributes, and component rows whose
+  course/score values are exposed through `data-*` attributes rather than the current class names.
+
+## 2026-09-09 latest user report
+
+- User reports that sideloaded iPad still cannot use the Widget and that
+  opening the grades page does not produce the expected records.
+- The supplied screenshot correlates with the stale `1.0 (1)` Management UI
+  and old `grade response unavailable` text; it cannot validate the current
+  source repair. A fresh macOS archive is required before another device test.
+- Next action is to finish the real-page collection diagnostic, then package
+  and audit a fresh `sideload` IPA for the nested Widget and App Group.
+
+## 2026-09-10 semantic grade parser closeout
+
+- Added semantic column-label support to the visible education collector for
+  portal variants that expose labels through `data-*`, `aria-label` or dataset
+  properties instead of a usable table header. Header order and fixed-column
+  parsing remain fallbacks.
+- Added deterministic coverage for semantic cells, `td` header rows,
+  component/data rows, delayed Home-route rendering and WebKit bridge value
+  normalization. The visible runtime suite now passes 13 collection cases;
+  the complete Python suite passes 86 tests.
+- Swift Foundation package and app package pass 84 and 32 tests respectively;
+  golden fixtures validate 1 version, 15 scenarios and 32 referenced files.
+- Current state is ready for commit. No current IPA has been delivered from
+  this source yet; the next package must be the Widget-preserving
+  `AoxiangAssistant-sideload-re-signable.ipa` from the macOS workflow.

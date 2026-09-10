@@ -247,9 +247,12 @@ public struct ManagementScreen: View {
                         .font(.caption)
                         .foregroundColor(.secondary)
                     Button {
-                        widgetStatus = model.writeWidgetSnapshot()
-                            ? "小组件快照已刷新"
-                            : "小组件快照无法写入；本地数据保持不变"
+                        if model.writeWidgetSnapshot() {
+                            widgetStatus = "小组件快照已刷新"
+                        } else {
+                            widgetStatus = model.lastWidgetSnapshotWarning
+                                ?? "小组件快照无法写入；本地数据保持不变"
+                        }
                     } label: {
                         Label("刷新小组件快照", systemImage: "arrow.triangle.2.circlepath")
                     }
@@ -380,8 +383,9 @@ public struct ManagementScreen: View {
                 guard !Task.isCancelled else { return }
                 if model.applyPortalCollection(result) {
                     collectionStatus = collectionStatus(for: result.warnings)
-                    // Close only after both local state and the shared Widget
-                    // snapshot have committed successfully.
+                    // The local state is the authoritative foreground result.
+                    // Widget publication is best-effort and is surfaced as a
+                    // warning without keeping the authentication sheet open.
                     showingAuthentication = false
                 } else {
                     collectionStatus = "采集结果未能保存；原有数据保持不变"
@@ -396,14 +400,26 @@ public struct ManagementScreen: View {
     }
 
     private func collectionStatus(for warnings: [PortalCollectionWarning]) -> String {
-        guard !warnings.isEmpty else { return "采集完成，已更新本地数据和小组件快照" }
         let parts = warnings.map { warning -> String in
             switch warning {
             case .electricityUnavailable: return "电费暂不可用"
             case .scheduleUnavailable: return "课表暂不可用"
             }
         }
-        return "成绩已更新，小组件已刷新；" + parts.joined(separator: "、")
+        let widgetWarning = model.lastWidgetSnapshotWarning
+        if parts.isEmpty, widgetWarning == nil {
+            return "采集完成，已更新本地数据和小组件快照"
+        }
+
+        var status = parts.isEmpty
+            ? "采集完成，本地数据已保存"
+            : "成绩已更新；" + parts.joined(separator: "、")
+        if let widgetWarning {
+            status += "；" + widgetWarning
+        } else if !parts.isEmpty {
+            status += "；小组件快照已刷新"
+        }
+        return status
     }
 
     private var authenticationStatusText: String {
