@@ -524,3 +524,20 @@
   build on iPadOS, confirm the management diagnostics, run foreground login /
   collection, add the Widget, and observe its snapshot. Keep the goal open
   until those observations are recorded.
+
+## 2026-09-10 sideload compatibility and grade-card repair
+
+- Added a fail-closed App Group candidate derived from the rewritten host
+  Bundle ID (and shared by the `.widget` extension after stripping its suffix).
+  This covers sideload tools that rewrite signed identifiers but leave the
+  build-time App Group plist value unchanged; `FileManager.containerURL`
+  remains the only authority, and no private-sandbox fallback was added.
+- Added a red/green WebView regression for the mobile grade-card layout
+  (`.score-item`/`.score-info`) and a bounded parser for course name, credits,
+  GPA point, and final score. Existing table, iframe, semantic-cell, delayed
+  render, and API-failure fallbacks remain covered.
+- Local verification: Python 87 tests, Swift Core 86 tests, Swift App 32 tests,
+  visible collection runtime 14 cases, golden corpus 1 version/15 scenarios/32
+  referenced files, and `git diff --check` all pass.
+- A new macOS archive is still required before iPad testing; no Widget or live
+  portal behavior is claimed until the re-signed IPA is installed and observed.

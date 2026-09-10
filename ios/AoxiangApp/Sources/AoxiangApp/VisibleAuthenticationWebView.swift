@@ -1104,6 +1104,71 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
             }
           });
         });
+        // The current JWXT mobile layout can render each result as a card
+        // (`.score-item`/`.score-info`) instead of a table. Keep this
+        // fallback deliberately narrow: only cards with a course name,
+        // credits, and either a point or a final score become records.
+        const cardSelectors = [
+          '.score-item', '.score-info', '.score-content > li',
+          '.grade-card', '.grade-item', '[data-score-card]'
+        ];
+        documents.forEach(currentDocument => {
+          if (!currentDocument) return;
+          const cardRoots = [currentDocument, currentDocument.body].filter(root =>
+            root && typeof root.querySelectorAll === 'function'
+          );
+          cardSelectors.forEach(selector => {
+            let cards = [];
+            cardRoots.forEach(root => {
+              try { cards.push(...Array.from(root.querySelectorAll(selector))); } catch (_) {}
+            });
+            cards = cards.filter((card, index) => cards.indexOf(card) === index);
+            cards.forEach(card => {
+              const raw = String(card && (card.innerText || card.textContent || '') || '')
+                .replace(/\u00a0/g, ' ');
+              const compact = clean(raw);
+              const courseElement = findFirst(card, [
+                '.course-name', '.course-title', '[data-course-name]',
+                '[data-field="course"]', '[data-field="courseName"]',
+                'h2', 'h3', 'h4', 'strong'
+              ]);
+              const course = clean(courseElement && (courseElement.innerText || courseElement.textContent) || '') ||
+                raw.split(/\r?\n/).map(clean).find(line => line &&
+                  !/(?:^|[·・])课程\s*[·・:]?|学分|绩点|成绩/.test(line)) || '';
+              const creditMatch = compact.match(/(?:课程\s*[·・:]?\s*)?(\d+(?:\.\d+)?)\s*学分/);
+              const pointMatch = compact.match(/绩点\s*[：:]?\s*(\d+(?:\.\d+)?)/);
+              const scoreMatches = [];
+              const scorePattern = /((?:总评|最终)?成绩)\s*[：:]?\s*(\d+(?:\.\d+)?)/g;
+              let scoreMatch;
+              while ((scoreMatch = scorePattern.exec(compact)) !== null) {
+                const label = scoreMatch[1];
+                const preceding = compact.slice(Math.max(0, scoreMatch.index - 3), scoreMatch.index);
+                if (/(?:期末|平时|实验|过程)$/.test(preceding)) continue;
+                if (label === '成绩' || label === '总评成绩' || label === '最终成绩') {
+                  scoreMatches.push(scoreMatch[2]);
+                }
+              }
+              const score = scoreMatches.length ? numeric(scoreMatches[scoreMatches.length - 1]) : null;
+              const point = pointMatch ? numeric(pointMatch[1]) : null;
+              const credits = creditMatch ? numeric(creditMatch[1]) : null;
+              if (!course || credits === null ||
+                  (!Number.isFinite(point) && !Number.isFinite(score))) return;
+              const record = {
+                course,
+                credits,
+                point: Number.isFinite(point) ? point : null,
+                score: Number.isFinite(score) ? score : null,
+                category: '课程',
+                detail: ''
+              };
+              const key = [record.course, record.credits, record.point, record.score, record.category, record.detail].join('\u0001');
+              if (!seenRecords.has(key)) {
+                seenRecords.add(key);
+                records.push(record);
+              }
+            });
+          });
+        });
         return records;
       };
       const waitForRenderedGradeRows = async () => {

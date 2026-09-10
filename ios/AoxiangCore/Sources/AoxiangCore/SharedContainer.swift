@@ -25,7 +25,8 @@ public enum AoxiangSharedContainer {
     /// depending on platform security APIs.
     static func appGroupCandidates(
         configuredIdentifier: String?,
-        entitledIdentifiers: [String]?
+        entitledIdentifiers: [String]?,
+        bundleIdentifier: String? = nil
     ) -> [String] {
         let configured = configuredIdentifier.flatMap(normalizeGroupIdentifier)
         let entitled = entitledIdentifiers?.compactMap(normalizeGroupIdentifier) ?? []
@@ -47,6 +48,7 @@ public enum AoxiangSharedContainer {
             entitled.forEach { append($0) }
         } else {
             append(configured)
+            append(derivedGroupIdentifier(from: bundleIdentifier))
             append(defaultAppGroupIdentifier)
         }
         return candidates
@@ -61,7 +63,8 @@ public enum AoxiangSharedContainer {
         #if os(iOS)
         for identifier in appGroupCandidates(
             configuredIdentifier: configuredAppGroupIdentifier(),
-            entitledIdentifiers: nil
+            entitledIdentifiers: nil,
+            bundleIdentifier: Bundle.main.bundleIdentifier
         ) {
             if let container = fileManager.containerURL(
                 forSecurityApplicationGroupIdentifier: identifier
@@ -102,6 +105,26 @@ public enum AoxiangSharedContainer {
             return nil
         }
         return normalized
+    }
+
+    /// Many sideload tools rewrite both bundle identifiers and signed
+    /// entitlements, but leave the build-time App Group plist placeholder
+    /// unchanged. When the entitlement list cannot be inspected through a
+    /// public API, derive the conventional team-owned group as a candidate;
+    /// `containerURL` remains the authority and rejects unauthorized values.
+    private static func derivedGroupIdentifier(from bundleIdentifier: String?) -> String? {
+        guard var normalized = bundleIdentifier?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !normalized.isEmpty,
+              !normalized.contains("$("),
+              !normalized.contains(" ") else {
+            return nil
+        }
+        let parts = normalized.split(separator: ".", omittingEmptySubsequences: true)
+        if parts.last?.lowercased() == "widget" {
+            normalized = parts.dropLast().joined(separator: ".")
+        }
+        guard !normalized.isEmpty else { return nil }
+        return normalizeGroupIdentifier("group.\(normalized)")
     }
 
 }

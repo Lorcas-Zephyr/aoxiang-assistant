@@ -748,6 +748,60 @@ execute().then(value => process.stdout.write(String(value))).catch(error => {{
             "detail": "期末 91",
         }])
 
+    def test_education_script_reads_rendered_grade_cards(self):
+        script = self.embedded_script()
+        harness = f"""
+const courseName = {{ className: 'course-name', innerText: '大学英语（III）', textContent: '大学英语（III）', children: [], querySelectorAll: () => [] }};
+const card = {{
+  className: 'score-item',
+  innerText: '大学英语（III）\\n课程 · 2.0 学分\\n绩点 2.7\\n期末成绩:64.2 平时成绩:85.7\\n成绩 75',
+  textContent: '大学英语（III） 课程 2.0 学分 绩点 2.7 期末成绩:64.2 平时成绩:85.7 成绩 75',
+  children: [courseName],
+  querySelectorAll: selector => selector === '.course-name' ? [courseName] : []
+}};
+const body = {{
+  innerText: '学生成绩',
+  querySelectorAll: selector => selector === '.score-item' ? [card] : []
+}};
+const document = {{
+  body,
+  querySelector: () => null,
+  querySelectorAll: selector => selector === 'body' ? [body] : []
+}};
+const window = {{ document }};
+globalThis.window = window;
+globalThis.document = document;
+globalThis.performance = {{ getEntriesByType: () => [] }};
+globalThis.fetch = async () => response('not found', 404);
+function response(body, status = 200) {{
+  return {{ status, ok: status >= 200 && status < 300, text: async () => body }};
+}}
+async function execute() {{
+{script}
+}}
+execute().then(value => process.stdout.write(String(value))).catch(error => {{
+  process.stderr.write(String(error && error.stack || error));
+  process.exit(1);
+}});
+"""
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "education-grade-card.js"
+            path.write_text(harness, encoding="utf-8")
+            completed = subprocess.run(["node", str(path)], capture_output=True, check=False)
+        stdout = completed.stdout.decode("utf-8", errors="replace")
+        stderr = completed.stderr.decode("utf-8", errors="replace")
+        self.assertEqual(completed.returncode, 0, stderr or stdout)
+        result = json.loads(stdout)
+        self.assertEqual(result["phase"], "success")
+        self.assertEqual(result["grades"], [{
+            "course": "大学英语（III）",
+            "credits": 2,
+            "point": 2.7,
+            "score": 75,
+            "category": "课程",
+            "detail": "",
+        }])
+
     def test_education_script_collects_delayed_rows_while_route_is_still_home(self):
         script = self.embedded_script()
         harness = f"""
