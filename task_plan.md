@@ -713,7 +713,10 @@ goal can close. Structify remains out of scope.
 - [x] Re-run portable validation: Python 86 tests, AoxiangCore 84 tests,
   AoxiangApp 32 tests, golden corpus 1 version/15 scenarios/32 files, and
   `git diff --check` all pass on Windows.
-- [ ] Commit and push this exact source state, then inspect the macOS archive
-  for App/Widget version `1.0.1 (2)`, nested Widget layout and matching App Group.
+- [x] Commit and push this exact source state as `14e5332`; macOS archive run
+  `34419549086` and cross-platform run `34419549161` both passed.
+- [x] Inspect the fresh artifact: `sideload` contains the nested Widget, both
+  bundles are `1.0.1 (2)`, bundle IDs are host plus `.widget`, and both plist
+  contracts use `group.cn.nwpu.aoxiang-assistant`.
 - [ ] User-side re-sign, install, foreground collection and Widget gallery
   evidence remain required before closing the goal.

@@ -471,3 +471,19 @@
 - The next authoritative artifact is the fresh macOS `sideload` IPA. A
   successful host-only build or an IPA with a missing/unsigned nested Widget
   does not satisfy the delivery goal.
+
+## 2026-09-10 fresh IPA audit
+
+- Commit `14e5332` produced successful macOS archive run `34419549086`; the
+  cross-platform contract run `34419549161` also passed.
+- The downloaded `AoxiangAssistant-sideload-re-signable.ipa` is 2,369,925
+  bytes, SHA-256
+  `A2AE76D1A3BF8414749B59ABC9BB480727ECA344099E031D6577E28D1C71F355`, and
+  contains the nested `AoxiangAssistantWidget.appex`.
+- App and Widget Info.plist values are `1.0.1 (2)` with IDs
+  `cn.nwpu.aoxiangassistant` and `cn.nwpu.aoxiangassistant.widget`; both carry
+  the same App Group placeholder. The Widget uses
+  `com.apple.widgetkit-extension` and has no `NSExtensionPrincipalClass`.
+- The package is intentionally re-signable rather than installable as-is:
+  the user/sideload tool must sign both nested bundles and authorize that App
+  Group. Device Widget registration and live collection are still unverified.

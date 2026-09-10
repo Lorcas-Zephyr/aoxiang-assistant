@@ -510,3 +510,17 @@
 - Current state is ready for commit. No current IPA has been delivered from
   this source yet; the next package must be the Widget-preserving
   `AoxiangAssistant-sideload-re-signable.ipa` from the macOS workflow.
+
+## 2026-09-10 fresh sideload IPA
+
+- Pushed commit `14e5332` to `origin/iOS`.
+- macOS archive run `34419549086` passed, and contract run `34419549161`
+  passed. The artifact was downloaded and unpacked locally for inspection.
+- Formal delivery file: `AoxiangAssistant-sideload-re-signable-1.0.1-build2.ipa`.
+  It preserves the Widget extension and both target plist contracts use the
+  same App Group. `sideload-host-only` was audited only as a negative control
+  and is not a delivery candidate.
+- Remaining acceptance is external: re-sign both bundles, install this fresh
+  build on iPadOS, confirm the management diagnostics, run foreground login /
+  collection, add the Widget, and observe its snapshot. Keep the goal open
+  until those observations are recorded.
