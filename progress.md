@@ -558,3 +558,6 @@
 - The previous local build-3-named IPA still contains `CFBundleVersion=2` and
   is not a delivery artifact. A fresh macOS Actions artifact must be audited
   before installation; only the Widget-preserving `sideload` IPA is valid.
+- The stable collector also accepts a valid `semesterId2studentGrades` map
+  returned directly by the grade-sheet route, avoiding an unnecessary
+  per-semester request on portal deployments that inline the grade response.

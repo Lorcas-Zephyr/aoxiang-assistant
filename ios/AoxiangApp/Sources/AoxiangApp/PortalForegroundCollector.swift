@@ -178,18 +178,26 @@ public struct PortalForegroundCollector {
             : (!infoSemesterIDs.isEmpty
                 ? infoSemesterIDs
                 : PortalCollectionParsers.discoverSemesterIDs(from: sheetText))
+        // Some portal deployments return the grade map directly from the
+        // sheet route. Keep that already-valid response instead of requiring
+        // a second per-semester request whose shape may have changed.
         var gradeResponses: [[String: Any]] = []
-        for offset in stride(from: 0, to: semesterIDs.count, by: 4) {
-            for semesterID in semesterIDs[offset..<min(offset + 4, semesterIDs.count)] {
-                guard !isCancelled() else { throw PortalCollectionFailure.cancelled }
-                do {
-                    let response = try await send(try PortalEndpoints.gradeInfo(studentID: resolvedStudentID, semesterID: semesterID))
-                    if let object = try? jsonObject(response.0) { gradeResponses.append(object) }
-                } catch let failure as PortalCollectionFailure {
-                    if case .invalidResponse = failure {
-                        continue
+        if let direct = directGradeResponse(from: sheetObject) {
+            gradeResponses.append(direct)
+        }
+        if gradeResponses.isEmpty {
+            for offset in stride(from: 0, to: semesterIDs.count, by: 4) {
+                for semesterID in semesterIDs[offset..<min(offset + 4, semesterIDs.count)] {
+                    guard !isCancelled() else { throw PortalCollectionFailure.cancelled }
+                    do {
+                        let response = try await send(try PortalEndpoints.gradeInfo(studentID: resolvedStudentID, semesterID: semesterID))
+                        if let object = try? jsonObject(response.0) { gradeResponses.append(object) }
+                    } catch let failure as PortalCollectionFailure {
+                        if case .invalidResponse = failure {
+                            continue
+                        }
+                        throw failure
                     }
-                    throw failure
                 }
             }
         }
@@ -498,6 +506,18 @@ public struct PortalForegroundCollector {
             return Array(map.keys).sorted()
         }
         return []
+    }
+
+    private func directGradeResponse(from object: [String: Any]) -> [String: Any]? {
+        if let map = object["semesterId2studentGrades"] as? [String: Any], !map.isEmpty {
+            return object
+        }
+        if let response = object["response"] as? [String: Any],
+           let map = response["semesterId2studentGrades"] as? [String: Any],
+           !map.isEmpty {
+            return response
+        }
+        return nil
     }
 
     private func scheduleSemesterRecords(object: [String: Any], html: String) -> [ScheduleSemesterRecord] {
