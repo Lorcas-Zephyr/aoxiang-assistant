@@ -67,11 +67,27 @@ public final class URLSessionHTTPCollectionAdapter: StableHTTPCollectionPort {
     private let session: URLSession
     private let cookieHeaderProvider: ((URL) async -> String?)?
 
+    /// Returns the isolated configuration used by the adapter when callers do
+    /// not provide a session. Cookies are copied explicitly from WebKit into a
+    /// request header, so URLSession must not read or persist its own cookie
+    /// storage (including response `Set-Cookie` values).
+    static func defaultSessionConfiguration() -> URLSessionConfiguration {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.httpShouldSetCookies = false
+        configuration.httpCookieStorage = nil
+        configuration.urlCredentialStorage = nil
+        return configuration
+    }
+
+    private static func makeDefaultSession() -> URLSession {
+        URLSession(configuration: defaultSessionConfiguration())
+    }
+
     public init(
-        session: URLSession = .shared,
+        session: URLSession? = nil,
         cookieHeaderProvider: ((URL) async -> String?)? = nil
     ) {
-        self.session = session
+        self.session = session ?? Self.makeDefaultSession()
         self.cookieHeaderProvider = cookieHeaderProvider
     }
 
@@ -114,7 +130,7 @@ public extension URLSessionHTTPCollectionAdapter {
     /// values are copied only into the in-memory request and are never logged,
     /// encoded into a backup, or written to a separate store.
     convenience init(
-        session: URLSession = .shared,
+        session: URLSession? = nil,
         cookieStore: WKHTTPCookieStore
     ) {
         self.init(session: session, cookieHeaderProvider: { requestURL in
