@@ -244,22 +244,35 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
         guard electricityContinuation == nil, portraitContinuation == nil else {
             throw PortalCollectionFailure.retryable(.invalidResponse)
         }
-        return try await withCheckedThrowingContinuation { continuation in
-            electricityContinuation = continuation
-            electricityCASBootstrapPending = true
-            electricityPollTask?.cancel()
-            electricityPollTask = nil
-            electricityEvaluationInFlight = false
-            electricityTimeoutTask?.cancel()
-            electricityTimeoutTask = Task { [weak self] in
-                try? await Task.sleep(nanoseconds: 20_000_000_000)
-                guard !Task.isCancelled else { return }
-                await MainActor.run {
-                    self?.finishElectricity(.failure(PortalCollectionFailure.retryable(.serverUnavailable)))
+        return try await withTaskCancellationHandler(operation: {
+            try await withCheckedThrowingContinuation { continuation in
+                guard !Task.isCancelled else {
+                    continuation.resume(throwing: PortalCollectionFailure.cancelled)
+                    return
                 }
+                electricityContinuation = continuation
+                electricityCASBootstrapPending = true
+                electricityPollTask?.cancel()
+                electricityPollTask = nil
+                electricityEvaluationInFlight = false
+                electricityTimeoutTask?.cancel()
+                electricityTimeoutTask = Task { [weak self] in
+                    // A missing balance must not hold the complete foreground
+                    // collection open indefinitely. Grades and the schedule are
+                    // committed independently when this bounded probe expires.
+                    try? await Task.sleep(nanoseconds: 12_000_000_000)
+                    guard !Task.isCancelled else { return }
+                    await MainActor.run {
+                        self?.finishElectricity(.failure(PortalCollectionFailure.retryable(.serverUnavailable)))
+                    }
+                }
+                webView.load(URLRequest(url: electricityLoginURL))
             }
-            webView.load(URLRequest(url: electricityLoginURL))
-        }
+        }, onCancel: { [weak self] in
+            Task { @MainActor [weak self] in
+                self?.finishElectricity(.failure(PortalCollectionFailure.cancelled))
+            }
+        })
     }
 
     /// Reads the student portrait through the visible WebView when the stable
@@ -272,18 +285,28 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
         guard electricityContinuation == nil, portraitContinuation == nil else {
             throw PortalCollectionFailure.retryable(.invalidResponse)
         }
-        return try await withCheckedThrowingContinuation { continuation in
-            portraitContinuation = continuation
-            portraitTimeoutTask?.cancel()
-            portraitTimeoutTask = Task { [weak self] in
-                try? await Task.sleep(nanoseconds: 12_000_000_000)
-                guard !Task.isCancelled else { return }
-                await MainActor.run {
-                    self?.finishPortrait(.failure(PortalCollectionFailure.retryable(.serverUnavailable)))
+        return try await withTaskCancellationHandler(operation: {
+            try await withCheckedThrowingContinuation { continuation in
+                guard !Task.isCancelled else {
+                    continuation.resume(throwing: PortalCollectionFailure.cancelled)
+                    return
                 }
+                portraitContinuation = continuation
+                portraitTimeoutTask?.cancel()
+                portraitTimeoutTask = Task { [weak self] in
+                    try? await Task.sleep(nanoseconds: 12_000_000_000)
+                    guard !Task.isCancelled else { return }
+                    await MainActor.run {
+                        self?.finishPortrait(.failure(PortalCollectionFailure.retryable(.serverUnavailable)))
+                    }
+                }
+                webView.load(URLRequest(url: studentPortraitURL))
             }
-            webView.load(URLRequest(url: studentPortraitURL))
-        }
+        }, onCancel: { [weak self] in
+            Task { @MainActor [weak self] in
+                self?.finishPortrait(.failure(PortalCollectionFailure.cancelled))
+            }
+        })
     }
 
     /// Collects education data inside the authenticated WebView. The script
@@ -297,19 +320,29 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
               educationContinuation == nil else {
             throw PortalCollectionFailure.retryable(.invalidResponse)
         }
-        return try await withCheckedThrowingContinuation { continuation in
-            educationContinuation = continuation
-            educationEvaluationInFlight = false
-            educationTimeoutTask?.cancel()
-            educationTimeoutTask = Task { [weak self] in
-                try? await Task.sleep(nanoseconds: 25_000_000_000)
-                guard !Task.isCancelled else { return }
-                await MainActor.run {
-                    self?.finishEducation(.failure(PortalCollectionFailure.retryable(.serverUnavailable)))
+        return try await withTaskCancellationHandler(operation: {
+            try await withCheckedThrowingContinuation { continuation in
+                guard !Task.isCancelled else {
+                    continuation.resume(throwing: PortalCollectionFailure.cancelled)
+                    return
                 }
+                educationContinuation = continuation
+                educationEvaluationInFlight = false
+                educationTimeoutTask?.cancel()
+                educationTimeoutTask = Task { [weak self] in
+                    try? await Task.sleep(nanoseconds: 25_000_000_000)
+                    guard !Task.isCancelled else { return }
+                    await MainActor.run {
+                        self?.finishEducation(.failure(PortalCollectionFailure.retryable(.serverUnavailable)))
+                    }
+                }
+                webView.load(URLRequest(url: studentGradeURL))
             }
-            webView.load(URLRequest(url: studentGradeURL))
-        }
+        }, onCancel: { [weak self] in
+            Task { @MainActor [weak self] in
+                self?.finishEducation(.failure(PortalCollectionFailure.cancelled))
+            }
+        })
     }
 
     /// Returns cookie names only. Values are deliberately inaccessible to the
@@ -387,11 +420,7 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
         didFail navigation: WKNavigation!,
         withError error: Error
     ) {
-        lastError = error.localizedDescription
-        transition(.retryableFailure(RetryableAuthenticationFailure(
-            operation: .login,
-            reason: .networkUnavailable
-        )))
+        recordNavigationFailure(error)
         if electricityContinuation != nil {
             finishElectricity(.failure(PortalCollectionFailure.retryable(.networkUnavailable)))
         }
@@ -408,11 +437,7 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
         didFailProvisionalNavigation navigation: WKNavigation!,
         withError error: Error
     ) {
-        lastError = error.localizedDescription
-        transition(.retryableFailure(RetryableAuthenticationFailure(
-            operation: .login,
-            reason: .networkUnavailable
-        )))
+        recordNavigationFailure(error)
         if electricityContinuation != nil {
             finishElectricity(.failure(PortalCollectionFailure.retryable(.networkUnavailable)))
         }
@@ -422,6 +447,18 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
         if educationContinuation != nil {
             finishEducation(.failure(PortalCollectionFailure.retryable(.networkUnavailable)))
         }
+    }
+
+    private func recordNavigationFailure(_ error: Error) {
+        lastError = error.localizedDescription
+        let operation: AuthenticationOperation =
+            (electricityContinuation != nil || portraitContinuation != nil || educationContinuation != nil)
+                ? .collection
+                : .login
+        transition(.retryableFailure(RetryableAuthenticationFailure(
+            operation: operation,
+            reason: .networkUnavailable
+        )))
     }
 
     private func handleEducationNavigation(in webView: WKWebView) {
@@ -497,9 +534,34 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
             electricityEvaluationInFlight = true
             webView.evaluateJavaScript("""
             (() => {
-              const token = new URL(location.href).searchParams.get('synjones-auth') || sessionStorage.getItem('access_token') || '';
+              const readStorage = (keys) => {
+                for (const name of ['sessionStorage', 'localStorage']) {
+                  let storage = null;
+                  try {
+                    storage = window[name];
+                  } catch (_) {}
+                  if (!storage) continue;
+                  try {
+                    for (const key of keys) {
+                      const value = storage.getItem(key);
+                      if (value) return value;
+                    }
+                  } catch (_) {}
+                }
+                return '';
+              };
+              const query = new URL(location.href).searchParams;
+              const token = query.get('synjones-auth') ||
+                readStorage(['access_token', 'accessToken', 'synjones-auth', 'synjonesAuth', 'token']) ||
+                '';
               if (!token) return false;
-              location.replace(location.origin + '/jfdt/charge/feeitem/toAppitem?feeitemid=182&synjones-auth=' + encodeURIComponent(token) + '&appId=36&loginFrom=h5&type=app');
+              const target = new URL('/jfdt/charge/feeitem/toAppitem', location.origin);
+              target.searchParams.set('feeitemid', query.get('feeitemid') || '182');
+              target.searchParams.set('synjones-auth', token);
+              target.searchParams.set('appId', query.get('appId') || '36');
+              target.searchParams.set('loginFrom', query.get('loginFrom') || 'h5');
+              target.searchParams.set('type', query.get('type') || 'app');
+              if (location.href !== target.href) location.replace(target.href);
               return true;
             })()
             """) { [weak self] value, error in
@@ -518,21 +580,31 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
         }
         guard path.hasPrefix("/jfdt/") else { return }
         electricityEvaluationInFlight = true
-        let script = Self.electricityBalanceScript
-        webView.evaluateJavaScript(script) { [weak self] value, error in
-            Task { @MainActor in
-                guard let self else { return }
+        Task { @MainActor [weak self, weak webView] in
+            guard let self, let webView else { return }
+            do {
+                // The balance is populated by a Vue request after navigation.
+                // callAsyncJavaScript lets the page-side probe await a bounded
+                // same-origin response and inspect Vue 2/Vue 3 state without
+                // moving cookies or raw responses into Swift.
+                let value = try await webView.callAsyncJavaScript(
+                    Self.electricityBalanceScript,
+                    arguments: [:],
+                    in: nil,
+                    contentWorld: .page
+                )
+                guard self.electricityContinuation != nil else { return }
                 self.electricityEvaluationInFlight = false
-                if let error {
-                    self.finishElectricity(.failure(PortalCollectionFailure.retryable(.serverUnavailable)))
-                    self.lastError = error.localizedDescription
-                    return
-                }
                 if let number = value as? NSNumber {
                     self.finishElectricity(.success(number.doubleValue))
                 } else {
                     self.scheduleElectricityEvaluation()
                 }
+            } catch {
+                guard self.electricityContinuation != nil else { return }
+                self.electricityEvaluationInFlight = false
+                self.lastError = error.localizedDescription
+                self.scheduleElectricityEvaluation()
             }
         }
     }
@@ -579,62 +651,152 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
         continuation.resume(with: result)
     }
 
-    private static let electricityBalanceScript = """
-        (() => {
+    private static let electricityBalanceScript = #"""
+        return (async () => {
           const labels = ['当前剩余电量','剩余电量','电费余额','剩余电费','剩余金额','电量余额'];
+          const balanceKeyPattern = /(?:balance|electric(?:ity)?|remaining|remain|surplus|amount|余额|剩余|电费|电量|金额)/i;
+          const containerKeyPattern = /(?:response|data|map|showdata|result|payload|electric|eleric|fee|charge|balance|setup|state|info|remaining|remain|surplus|amount)/i;
           const parse = value => {
-            const match = String(value == null ? '' : value).match(/-?\\d+(?:\\.\\d+)?/);
+            const match = String(value == null ? '' : value).match(/-?\d+(?:\.\d+)?/);
             if (!match) return null;
             const number = Number.parseFloat(match[0]);
             return Number.isFinite(number) && number >= 0 && number < 100000 ? number : null;
           };
-          const inspect = value => {
-            if (!value || typeof value !== 'object') return null;
-            for (const label of labels) {
-              if (Object.prototype.hasOwnProperty.call(value, label)) {
-                const parsed = parse(value[label]);
-                if (parsed !== null) return parsed;
+          const inspect = (value, depth = 0, seen = new Set()) => {
+            try {
+              if (!value || typeof value !== 'object' || depth > 8 || seen.has(value)) return null;
+              seen.add(value);
+              const entries = Array.isArray(value)
+                ? value.map((candidate, index) => [String(index), candidate])
+                : Object.entries(value);
+              for (const [label, candidate] of entries) {
+                const name = String(label);
+                if (labels.includes(name) || balanceKeyPattern.test(name)) {
+                  const parsed = parse(candidate);
+                  if (parsed !== null) return parsed;
+                }
+                if (Array.isArray(value) || containerKeyPattern.test(name)) {
+                  const nested = inspect(candidate, depth + 1, seen);
+                  if (nested !== null) return nested;
+                }
               }
-            }
-            for (const [label, candidate] of Object.entries(value)) {
-              if (!/(?:剩余.*(?:电费|金额|电量)|(?:电费|电量).*余额)/.test(String(label))) continue;
-              const parsed = parse(candidate);
-              if (parsed !== null) return parsed;
-            }
+            } catch (_) {}
             return null;
           };
           const app = document.querySelector('#app');
-          const root = app && (app.__vue__ ||
-            (app.__vueParentComponent && app.__vueParentComponent.proxy) ||
-            (app.__vue_app__ && app.__vue_app__._instance && app.__vue_app__._instance.proxy));
-          const queue = root ? [root] : [];
+          const appInstance = app && app.__vue_app__ && app.__vue_app__._instance;
+          const parentInstance = app && app.__vueParentComponent;
+          const roots = [
+            app && app.__vue__,
+            parentInstance,
+            parentInstance && parentInstance.proxy,
+            appInstance,
+            appInstance && appInstance.proxy,
+            window.aboutEleric,
+            window.electricInfo,
+            window.__INITIAL_STATE__
+          ].filter(Boolean);
+          const queue = roots.map(value => ({ value, depth: 0 }));
           const seen = new Set();
-          while (queue.length && seen.size < 100) {
-            const component = queue.shift();
-            if (!component || seen.has(component)) continue;
+          const enqueue = (value, depth) => {
+            if (!value || typeof value !== 'object' || depth > 6 || seen.has(value)) return;
+            queue.push({ value, depth });
+          };
+          while (queue.length && seen.size < 500) {
+            const item = queue.shift();
+            const component = item && item.value;
+            const depth = item && item.depth || 0;
+            if (!component || typeof component !== 'object' || seen.has(component)) continue;
             seen.add(component);
-            const data = component.$data || {};
-            const candidates = [
+            const componentBalance = inspect(component);
+            if (componentBalance !== null) return componentBalance;
+            const directCandidates = [
               component.aboutEleric && component.aboutEleric.electricInfo,
-              data.aboutEleric && data.aboutEleric.electricInfo,
               component.aboutElectric && component.aboutElectric.electricInfo,
-              data.aboutElectric && data.aboutElectric.electricInfo,
               component.electricInfo,
-              data.electricInfo
+              component.$data && component.$data.aboutEleric && component.$data.aboutEleric.electricInfo,
+              component.$data && component.$data.aboutElectric && component.$data.aboutElectric.electricInfo,
+              component.$data && component.$data.electricInfo,
+              component.setupState && component.setupState.electricInfo,
+              component.data && component.data.electricInfo,
+              component.setupState,
+              component.data,
+              component.ctx
             ];
-            for (const candidate of candidates) {
+            for (const candidate of directCandidates) {
               const parsed = inspect(candidate);
               if (parsed !== null) return parsed;
             }
-            (component.$children || []).forEach(child => queue.push(child));
+            try {
+              (component.$children || []).forEach(child => enqueue(child, depth + 1));
+              enqueue(component.$, depth + 1);
+              enqueue(component.subTree, depth + 1);
+              enqueue(component.component, depth + 1);
+              enqueue(component.ctx, depth + 1);
+              enqueue(component.setupState, depth + 1);
+              enqueue(component.data, depth + 1);
+              const keys = Object.keys(component);
+              keys.filter(key => /electric|eleric|fee|balance|showdata|charge/i.test(key))
+                .forEach(key => enqueue(component[key], depth + 1));
+            } catch (_) {}
           }
-          const text = document.body ? document.body.innerText : '';
-          const direct = text.match(/(?:当前剩余电量|剩余电量|电量余额)\\s*[：:]\\s*(-?\\d+(?:\\.\\d+)?)/) ||
-            text.match(/(?:剩余电费|电费余额|剩余金额)\\s*[：:]?\\s*(?:¥|￥)?\\s*(-?\\d+(?:\\.\\d+)?)\\s*元/) ||
-            text.match(/(?:¥|￥)?\\s*(-?\\d+(?:\\.\\d+)?)\\s*(?:元|度)\\s*[：:]?\\s*(?:剩余电费|电费余额|剩余金额|当前剩余电量|剩余电量|电量余额)/);
-          return direct ? parse(direct[1]) : null;
+          const body = document && document.body;
+          const texts = [body && body.innerText, body && body.textContent]
+            .filter(value => typeof value === 'string' && value.trim())
+            .map(value => value.replace(/\s+/g, ' '));
+          for (const text of texts) {
+            const direct = text.match(/(?:当前剩余电量|剩余电量|电量余额|剩余电费|电费余额|剩余金额)\s*[：:]?\s*(?:¥|￥)?\s*(-?\d+(?:\.\d+)?)/) ||
+              text.match(/(?:¥|￥)?\s*(-?\d+(?:\.\d+)?)\s*(?:元|度)\s*[：:]?\s*(?:剩余电费|电费余额|剩余金额|当前剩余电量|剩余电量|电量余额)/);
+            if (direct) {
+              const parsed = parse(direct[1]);
+              if (parsed !== null) return parsed;
+            }
+          }
+
+          // Some versions leave the page on a loading shell while the API
+          // response is already represented in a same-origin resource. Read
+          // only candidate JSON bodies inside WebKit; raw bodies never cross
+          // the native bridge.
+          let resources = [];
+          try {
+            resources = performance.getEntriesByType('resource').map(entry => String(entry.name || ''))
+              .filter(url => {
+                try {
+                  const parsed = new URL(url, location.origin);
+                  return parsed.origin === location.origin &&
+                    /(?:fee|electric|charge|balance|appitem)/i.test(parsed.href);
+                } catch (_) {
+                  return false;
+                }
+              })
+              .filter((url, index, values) => values.indexOf(url) === index).slice(-6);
+          } catch (_) {}
+          for (const url of resources) {
+            let timer = null;
+            try {
+              const controller = typeof AbortController === 'function' ? new AbortController() : null;
+              timer = setTimeout(() => controller && controller.abort(), 1800);
+              const options = { credentials: 'include', cache: 'no-store' };
+              if (controller) options.signal = controller.signal;
+              const response = await fetch(url, options);
+              if (!response.ok) continue;
+              const body = await response.text();
+              let value = null;
+              try { value = JSON.parse(body); } catch (_) {}
+              const parsed = inspect(value);
+              if (parsed !== null) return parsed;
+              const match = body.match(/(?:当前剩余电量|剩余电量|电费余额|剩余电费|剩余金额)[^\d-]{0,12}(-?\d+(?:\.\d+)?)/);
+              if (match) {
+                const number = parse(match[1]);
+                if (number !== null) return number;
+              }
+            } catch (_) {} finally {
+              if (timer !== null) clearTimeout(timer);
+            }
+          }
+          return null;
         })()
-        """
+    """#
 
     private static let educationCollectionScript = #"""
     return (async () => {

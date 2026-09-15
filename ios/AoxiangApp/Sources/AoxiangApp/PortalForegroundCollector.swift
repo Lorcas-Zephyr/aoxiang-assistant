@@ -95,6 +95,9 @@ public struct PortalForegroundCollector {
                 }
                 var electricity: Double?
                 var warnings: [PortalCollectionWarning] = []
+                if !education.scheduleAvailable {
+                    warnings.append(.scheduleUnavailable)
+                }
                 do {
                     let value = try await electricityProvider()
                     guard value.isFinite, value >= 0, value < 100000 else {

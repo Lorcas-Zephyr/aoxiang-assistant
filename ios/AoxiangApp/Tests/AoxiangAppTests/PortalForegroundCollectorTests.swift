@@ -318,6 +318,30 @@ final class PortalForegroundCollectorTests: XCTestCase {
         XCTAssertTrue(transport.requests.isEmpty)
     }
 
+    func testVisibleEducationUnavailableScheduleAddsScheduleWarning() async throws {
+        let transport = RecordingTransport(responses: [:])
+        let education = PortalVisibleEducationData(
+            grades: [OfflineGrade(id: "grade-1", course: "数学", credits: 3, point: 4, score: 95)],
+            gpa: 3.8,
+            schedule: PortalCollectionParsers.SchedulePayload(
+                semesters: [OfflineSemester(id: "current", startDate: "1970-01-01", endDate: "1970-01-01")],
+                courses: []
+            ),
+            scheduleAvailable: false
+        )
+        let collector = PortalForegroundCollector(
+            transport: transport,
+            electricityProvider: { 18 },
+            visibleEducationProvider: { education }
+        )
+
+        let result = try await collector.collect(state: .readyToCollect)
+
+        XCTAssertFalse(result.scheduleAvailable)
+        XCTAssertEqual(result.warnings, [.scheduleUnavailable])
+        XCTAssertEqual(result.electricityBalance ?? -1, 18, accuracy: 0.0001)
+    }
+
     func testStableGradesAreCommittedWhenScheduleEndpointIsUnavailable() async throws {
         let gradeSheet = json(["studentId": "student-1", "semesterIds": ["term-1"]])
         let gradeResponse = json([

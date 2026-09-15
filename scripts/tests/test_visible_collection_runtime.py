@@ -28,6 +28,121 @@ class VisibleCollectionRuntimeTest(unittest.TestCase):
         self.assertIsNotNone(match)
         return match.group(1)
 
+    def electricity_script(self):
+        source = SOURCE_FILE.read_text(encoding="utf-8")
+        match = re.search(
+            r"private static let electricityBalanceScript = #\"\"\"(.*?)\"\"\"#",
+            source,
+            flags=re.DOTALL,
+        )
+        self.assertIsNotNone(match)
+        return match.group(1)
+
+    def run_electricity_script(self, setup, timeout=5):
+        harness = f"""
+{setup}
+async function execute() {{
+{self.electricity_script()}
+}}
+execute().then(value => process.stdout.write(JSON.stringify(value))).catch(error => {{
+  process.stderr.write(String(error && error.stack || error));
+  process.exit(1);
+}});
+"""
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "electricity-runtime.js"
+            path.write_text(harness, encoding="utf-8")
+            completed = subprocess.run(
+                ["node", str(path)],
+                capture_output=True,
+                check=False,
+                timeout=timeout,
+            )
+        stdout = completed.stdout.decode("utf-8", errors="replace")
+        stderr = completed.stderr.decode("utf-8", errors="replace")
+        self.assertEqual(completed.returncode, 0, stderr or stdout)
+        return json.loads(stdout)
+
+    def test_electricity_script_reads_nested_api_response_map_show_data(self):
+        result = self.run_electricity_script("""
+const document = { querySelector: () => null, body: { innerText: '加载中' } };
+const window = {};
+globalThis.document = document;
+globalThis.window = window;
+globalThis.location = { origin: 'https://yktapp.nwpu.edu.cn' };
+globalThis.performance = {
+  getEntriesByType: () => [{ name: 'https://yktapp.nwpu.edu.cn/jfdt/api/feeitem/balance' }]
+};
+globalThis.fetch = async () => ({
+  ok: true,
+  text: async () => JSON.stringify({
+    map: { showData: { balance: '18.52' } }
+  })
+});
+""")
+        self.assertEqual(result, 18.52)
+
+    def test_electricity_script_reads_nested_vue_response_map_show_data(self):
+        result = self.run_electricity_script("""
+const app = {
+  __vue__: {
+    aboutEleric: {
+      electricInfo: {
+        response: { map: { showData: { '剩余金额': '￥21.75' } } }
+      }
+    }
+  }
+};
+const document = { querySelector: selector => selector === '#app' ? app : null, body: { innerText: '' } };
+const window = {};
+globalThis.document = document;
+globalThis.window = window;
+globalThis.performance = { getEntriesByType: () => [] };
+globalThis.fetch = async () => ({ ok: false, text: async () => '' });
+""")
+        self.assertEqual(result, 21.75)
+
+    def test_electricity_script_reads_vue3_setup_state_balance_field(self):
+        result = self.run_electricity_script("""
+const app = {
+  __vueParentComponent: {
+    setupState: { remainingAmount: '12.75' }
+  }
+};
+const document = { querySelector: selector => selector === '#app' ? app : null, body: { innerText: '' } };
+const window = {};
+globalThis.document = document;
+globalThis.window = window;
+globalThis.performance = { getEntriesByType: () => [] };
+globalThis.fetch = async () => ({ ok: false, text: async () => '' });
+""")
+        self.assertEqual(result, 12.75)
+
+    def test_electricity_script_reads_dom_balance_without_colon_or_unit(self):
+        result = self.run_electricity_script("""
+const document = {
+  querySelector: () => null,
+  body: { innerText: '校园卡\\n剩余金额 18.52' }
+};
+const window = {};
+globalThis.document = document;
+globalThis.window = window;
+globalThis.performance = { getEntriesByType: () => [] };
+globalThis.fetch = async () => ({ ok: false, text: async () => '' });
+""")
+        self.assertEqual(result, 18.52)
+
+    def test_electricity_script_returns_promptly_for_empty_loading_skeleton(self):
+        result = self.run_electricity_script("""
+const document = { querySelector: () => null, body: { innerText: '正在加载...' } };
+const window = {};
+globalThis.document = document;
+globalThis.window = window;
+globalThis.performance = { getEntriesByType: () => [] };
+globalThis.fetch = async () => ({ ok: true, text: async () => '' });
+""", timeout=2)
+        self.assertIsNone(result)
+
     def test_education_script_accepts_data_semester_and_returns_sanitized_success(self):
         script = self.embedded_script()
         harness = f"""

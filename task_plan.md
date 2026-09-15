@@ -538,6 +538,21 @@ iOS 迁移保留清晰的存储/备份 seam。
   script and the Foundation parser; add regression coverage against dictionary descriptions.
 - [x] Make iOS readiness strict: Simulator build success is required, Simulator and device
   DerivedData cannot be mixed, and failed xcodebuild logs are uploaded for diagnosis.
+
+## 2026-09-16 iPad full-width layout and collection lifecycle repair
+
+- [x] Confirm the reported layout defect is caused by iPad `NavigationView` split
+  navigation: each top-level tab supplied only a list, so its content rendered in the
+  left sidebar while the detail column stayed empty.
+- [x] Force single-column navigation for 首页、成绩、课表、管理 and the three local
+  editor sheets with `.navigationViewStyle(.stack)`.
+- [x] Keep foreground collection mounted in the visible WebView while it runs; cancel
+  the three WebView continuations deterministically and classify navigation failures as
+  collection failures when a collection is active.
+- [x] Add static layout coverage and lifecycle regression seams.
+- [x] Run Python 95 tests, AoxiangCore 88 tests, AoxiangApp 35 tests and
+  `git diff --check`; all pass on Windows. A real iPadOS/Xcode archive remains the
+  platform-specific delivery gate.
 - [x] Push this repair and verify a fresh macOS Simulator readiness run plus a fresh
   Widget-capable re-signable IPA artifact.
 

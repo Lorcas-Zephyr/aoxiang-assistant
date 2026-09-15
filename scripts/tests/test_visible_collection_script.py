@@ -62,11 +62,13 @@ class VisibleCollectionScriptTest(unittest.TestCase):
 
     def test_embedded_electricity_script_is_javascript_syntax_valid_and_supports_portal_variants(self):
         self.assert_embedded_script_is_syntax_valid(
-            r'private static let electricityBalanceScript = \"\"\"(.*?)\"\"\"',
+            r'private static let electricityBalanceScript = #\"\"\"(.*?)\"\"\"#',
             "visible-electricity-collection",
         )
         source = SOURCE_FILE.read_text(encoding="utf-8")
         self.assertIn("app.__vueParentComponent", source)
+        self.assertIn("app.__vue_app__", source)
+        self.assertIn("performance.getEntriesByType('resource')", source)
         self.assertIn("Object.entries(value)", source)
         self.assertIn("scheduleElectricityEvaluation", source)
 

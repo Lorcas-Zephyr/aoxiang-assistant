@@ -498,3 +498,15 @@
   tests cannot establish that entitlement after a third-party re-sign.
 - No password, Cookie, SMS code, or WebView session is included in the shared
   snapshot or portable backup.
+
+## 2026-09-16 iPad layout finding
+
+- `AoxiangRootView` uses a `TabView`, while each of its four screens creates its own
+  `NavigationView`. On iPad, the default style is a split view; a list-only screen
+  therefore appears as a narrow left sidebar with an empty detail area.
+- The least invasive fix compatible with the package's iOS 15 deployment target is to
+  apply `.navigationViewStyle(.stack)` to each `NavigationView`. Replacing the views
+  with `NavigationStack` would raise the minimum OS requirement or require a second
+  conditional view tree.
+- The fix is source-level and statically covered. Actual iPadOS rendering still needs
+  confirmation from the next re-signed IPA because Windows cannot run SwiftUI/UIKit.

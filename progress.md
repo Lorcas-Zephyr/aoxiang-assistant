@@ -561,3 +561,18 @@
 - The stable collector also accepts a valid `semesterId2studentGrades` map
   returned directly by the grade-sheet route, avoiding an unnecessary
   per-semester request on portal deployments that inline the grade response.
+
+## 2026-09-16 iPad full-width layout repair
+
+- Root cause confirmed: the four tab screens used `NavigationView` with its iPad
+  default split style. Because each screen only supplied a list, visible content was
+  confined to the left sidebar.
+- Added `.navigationViewStyle(.stack)` to 首页、成绩、课表、管理 and Add/Edit course
+  and grade editor sheets. Added a configuration regression requiring all seven
+  navigation surfaces to opt out of split navigation.
+- Kept concurrent visible-collection fixes in the same repair set: cancellation
+  handlers now finish pending WebView operations, navigation failures are attributed to
+  collection when appropriate, and unavailable schedule data is reported as a warning.
+- Verification: Python 95 tests, AoxiangCore 88 tests, AoxiangApp 35 tests, and
+  `git diff --check` passed. Windows cannot replace macOS WebKit/Xcode or real iPadOS
+  layout evidence; the next IPA must be built from this exact source.

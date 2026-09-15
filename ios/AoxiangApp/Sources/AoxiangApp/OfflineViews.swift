@@ -81,6 +81,7 @@ public struct HomeScreen: View {
             }
             .navigationTitle("翱翔助手")
         }
+        .navigationViewStyle(.stack)
     }
 }
 
@@ -149,6 +150,7 @@ public struct GradesScreen: View {
                 GradeEditorSheet(model: model, grade: grade)
             }
         }
+        .navigationViewStyle(.stack)
     }
 }
 
@@ -176,6 +178,7 @@ public struct ScheduleScreen: View {
             }
             .navigationTitle("课表")
         }
+        .navigationViewStyle(.stack)
     }
 }
 
@@ -324,6 +327,7 @@ public struct ManagementScreen: View {
                 collectionTask?.cancel()
             }
         }
+        .navigationViewStyle(.stack)
     }
 
     private func requestCollection() {
@@ -379,7 +383,10 @@ public struct ManagementScreen: View {
                 collectionTask = nil
             }
             do {
-                let result = try await collector.collect(state: .readyToCollect)
+                let result = try await collector.collect(
+                    state: .readyToCollect,
+                    isCancelled: { Task.isCancelled }
+                )
                 guard !Task.isCancelled else { return }
                 if model.applyPortalCollection(result) {
                     collectionStatus = collectionStatus(for: result.warnings)
@@ -473,6 +480,7 @@ private struct AddCourseSheet: View {
             }
             .onAppear { selectedSemesterID = model.state.selectedSemesterId }
         }
+        .navigationViewStyle(.stack)
     }
 }
 
@@ -513,6 +521,7 @@ private struct EditCourseSheet: View {
                 }
             }
         }
+        .navigationViewStyle(.stack)
     }
 }
 
@@ -557,6 +566,7 @@ private struct GradeEditorSheet: View {
                 }
             }
         }
+        .navigationViewStyle(.stack)
     }
 
     private func save() {

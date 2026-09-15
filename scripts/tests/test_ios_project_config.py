@@ -227,6 +227,14 @@ class IOSProjectConfigurationTest(unittest.TestCase):
         self.assertIn("canRetryCollection", self.ios_offline_views)
         self.assertIn("interactiveDismissDisabled(isCollecting)", self.ios_offline_views)
 
+    def test_all_ipad_navigation_views_force_single_column_layout(self):
+        """iPad must not render each tab as a narrow split-navigation sidebar."""
+        self.assertGreaterEqual(
+            self.ios_offline_views.count(".navigationViewStyle(.stack)"),
+            7,
+            "all four screens and their editor sheets must opt out of iPad split navigation",
+        )
+
     def test_signed_targets_can_use_the_signers_registered_identifiers(self):
         self.assertIn("AOXIANG_APP_BUNDLE_IDENTIFIER", self.project)
         self.assertIn("AOXIANG_WIDGET_BUNDLE_IDENTIFIER", self.project)
