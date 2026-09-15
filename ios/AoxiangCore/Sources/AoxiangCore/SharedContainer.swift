@@ -61,9 +61,10 @@ public enum AoxiangSharedContainer {
         fileManager: FileManager = .default
     ) -> URL? {
         #if os(iOS)
+        let signedGroups = runtimeApplicationGroupIdentifiers()
         for identifier in appGroupCandidates(
             configuredIdentifier: configuredAppGroupIdentifier(),
-            entitledIdentifiers: nil,
+            entitledIdentifiers: signedGroups,
             bundleIdentifier: Bundle.main.bundleIdentifier
         ) {
             if let container = fileManager.containerURL(
@@ -76,6 +77,56 @@ public enum AoxiangSharedContainer {
         #else
         return nil
         #endif
+    }
+
+    /// Reads the signed provisioning profile embedded in the running target.
+    /// A sideload tool may rewrite the bundle identifier and App Group while
+    /// leaving the source Info.plist value unchanged. The profile is the
+    /// authority for the identifiers that `containerURL` is allowed to open;
+    /// when it is present and declares no groups, fail closed rather than
+    /// probing stale or guessed values.
+    static func runtimeApplicationGroupIdentifiers() -> [String]? {
+        guard let profileURL = Bundle.main.url(
+            forResource: "embedded",
+            withExtension: "mobileprovision"
+        ),
+        let profileData = try? Data(contentsOf: profileURL) else {
+            return nil
+        }
+        return appGroupIdentifiers(fromProvisioningProfileData: profileData)
+    }
+
+    /// Extracts the XML plist payload from an embedded CMS provisioning
+    /// profile and returns only its application-groups entitlement. This is a
+    /// structured plist parse; the surrounding CMS envelope is ignored.
+    /// `nil` means the profile could not be inspected, while an empty array
+    /// means it was valid but did not authorize an App Group.
+    static func appGroupIdentifiers(fromProvisioningProfileData data: Data) -> [String]? {
+        let plistStart = Data("<plist".utf8)
+        let plistEnd = Data("</plist>".utf8)
+        guard let start = data.range(of: plistStart),
+              let end = data.range(
+                  of: plistEnd,
+                  options: [],
+                  in: start.lowerBound..<data.endIndex
+              ) else {
+            return nil
+        }
+
+        let plistData = data.subdata(in: start.lowerBound..<end.upperBound)
+        guard let object = try? PropertyListSerialization.propertyList(
+            from: plistData,
+            options: [],
+            format: nil
+        ),
+        let root = object as? [String: Any],
+        let entitlements = root["Entitlements"] as? [String: Any] else {
+            return nil
+        }
+        guard let groups = entitlements["com.apple.security.application-groups"] else {
+            return []
+        }
+        return groups as? [String] ?? []
     }
 
     /// Creates a store for the sole App Group path. The unavailable store is

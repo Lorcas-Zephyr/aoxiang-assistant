@@ -63,6 +63,51 @@ final class OfflineDataTests: XCTestCase {
         )
     }
 
+    func testProvisioningProfileGroupsAreReadFromItsEntitlementsPlist() {
+        let profile = Data(
+            """
+            CMS wrapper bytes
+            <plist version="1.0">
+            <dict>
+                <key>Entitlements</key>
+                <dict>
+                    <key>application-identifier</key>
+                    <string>TEAM.com.example.aoxiangassistant</string>
+                    <key>com.apple.security.application-groups</key>
+                    <array>
+                        <string>group.com.example.aoxiangassistant</string>
+                    </array>
+                </dict>
+            </dict>
+            </plist>
+            trailing CMS bytes
+            """.utf8
+        )
+
+        XCTAssertEqual(
+            AoxiangSharedContainer.appGroupIdentifiers(fromProvisioningProfileData: profile),
+            ["group.com.example.aoxiangassistant"]
+        )
+    }
+
+    func testProvisioningProfileWithoutAppGroupFailsClosed() {
+        let profile = Data(
+            """
+            <plist version="1.0"><dict>
+                <key>Entitlements</key><dict>
+                    <key>application-identifier</key>
+                    <string>TEAM.com.example.aoxiangassistant</string>
+                </dict>
+            </dict></plist>
+            """.utf8
+        )
+
+        XCTAssertEqual(
+            AoxiangSharedContainer.appGroupIdentifiers(fromProvisioningProfileData: profile),
+            []
+        )
+    }
+
     func testImportsLegacyAndroidBackupAndNormalizesToCurrentState() throws {
         let legacy = """
         {"version":"2.0","exportDate":"2026-01-15","courses":[{"id":"course-1","name":"软件工程","semesterId":"semester-1","timeSlots":[{"weekRange":"1-17","repeatRule":"","dayOfWeek":2,"classSections":[1,2]}]}],"settings":{"semesters":[{"id":"semester-1","name":"2026 春季","startDate":"2026-02-23","endDate":"2026-07-05","weekCount":18,"sectionCount":13,"sectionTimes":[{"start":"08:30","end":"09:15"}]}],"themeColor":"#2F80ED","darkMode":false}}
