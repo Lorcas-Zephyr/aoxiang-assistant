@@ -231,6 +231,39 @@ final class PortalForegroundCollectorTests: XCTestCase {
         }
     }
 
+    func testCollectionAcceptsDirectGradeRowsReturnedBySheetEndpoint() async throws {
+        let gradeSheet = json([
+            "studentId": "student-1",
+            "semesterId2studentGrades": [
+                "term-1": [[
+                    "published": true,
+                    "course": ["nameZh": "成绩页直返", "credits": 3],
+                    "gp": 4.0,
+                    "gaGrade": 96,
+                ]],
+            ],
+        ])
+        let transport = RecordingTransport(responses: [
+            "/student/for-std/grade/sheet": [.success(gradeSheet)],
+            "/student/for-std/course-table": [.failure(TestTransportError())],
+        ])
+        let collector = PortalForegroundCollector(transport: transport) { 2.5 }
+
+        let result = try await collector.collect(state: .readyToCollect)
+
+        XCTAssertEqual(result.grades.map(\.course), ["成绩页直返"])
+        XCTAssertFalse(result.scheduleAvailable)
+        XCTAssertEqual(result.warnings, [.scheduleUnavailable])
+        XCTAssertEqual(
+            transport.requests.map { $0.url.path },
+            [
+                "/student/for-std/grade/sheet",
+                "/student/for-std/student-portrait/getMyGpa",
+                "/student/for-std/course-table",
+            ]
+        )
+    }
+
     func testVisibleEducationProviderUsesPortraitFallbackWhenItsGPAIsMissing() async throws {
         let transport = RecordingTransport(responses: [:])
         let portraitCalls = LockedCounter()

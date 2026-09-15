@@ -553,7 +553,7 @@
   Group. App and Widget build `1.0.1 (3)` are aligned so sideload installers
   cannot confuse this package with build 2.
 - Portable verification on Windows is green: Python 89 tests, AoxiangCore 88
-  tests, AoxiangApp 32 tests, golden fixtures (1 version/15 scenarios/32
+  tests, AoxiangApp 33 tests, golden fixtures (1 version/15 scenarios/32
   files), and `git diff --check`.
 - The previous local build-3-named IPA still contains `CFBundleVersion=2` and
   is not a delivery artifact. A fresh macOS Actions artifact must be audited
