@@ -683,11 +683,14 @@ public class MainActivity extends Activity {
         l.addView(summary);
 
         l.addView(section("今日课程"));
-        List<ScheduleModels.Course> todayCourses = coursesForDate(LocalDate.now(), selectedSemester());
-        if (todayCourses.isEmpty()) {
+        ScheduleModels.Semester todaySemester = selectedSemester();
+        List<CourseMeeting> todayMeetings = todaySemester == null
+                ? new ArrayList<>()
+                : courseMeetingsForDate(coursesForSemester(todaySemester.id), todaySemester, LocalDate.now());
+        if (todayMeetings.isEmpty()) {
             l.addView(emptyHint("今天没有课程"));
         } else {
-            for (ScheduleModels.Course course : todayCourses) l.addView(schedulePreviewRow(course, LocalDate.now()));
+            for (CourseMeeting meeting : todayMeetings) l.addView(schedulePreviewRow(meeting, LocalDate.now()));
         }
 
     }
@@ -1663,7 +1666,7 @@ public class MainActivity extends Activity {
                     }
                     cell.addView(dots, new LinearLayout.LayoutParams(-1, dp(18)));
                 }
-                cell.setOnClickListener(v -> showDailyCoursesDialog(date, daily));
+                cell.setOnClickListener(v -> showDailyCoursesDialog(semester, date));
                 line.addView(cell, new LinearLayout.LayoutParams(0, dp(86), 1));
                 cursor = cursor.plusDays(1);
             }
@@ -1845,18 +1848,20 @@ public class MainActivity extends Activity {
                 .withDayOfMonth(1);
     }
 
-    private void showDailyCoursesDialog(LocalDate date, List<ScheduleModels.Course> daily) {
+    private void showDailyCoursesDialog(ScheduleModels.Semester semester, LocalDate date) {
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
         box.setPadding(dp(20), dp(12), dp(20), dp(12));
-        if (daily.isEmpty()) {
+        List<CourseMeeting> meetings = semester == null
+                ? new ArrayList<>()
+                : courseMeetingsForDate(coursesForSemester(semester.id), semester, date);
+        if (meetings.isEmpty()) {
             box.addView(label("没有课程", 14, mutedColor()));
         } else {
-            for (ScheduleModels.Course course : sortedCourses(daily)) {
-                ScheduleModels.TimeSlot slot = primarySlotForDate(course, date);
-                ScheduleModels.Semester semester = selectedSemester();
-                String time = slot == null ? ScheduleUtils.formatCourseTime(course)
-                        : ScheduleUtils.formatMeetingTime(semester, slot, course.location, date);
+            for (CourseMeeting meeting : meetings) {
+                ScheduleModels.Course course = meeting.course;
+                String time = ScheduleUtils.formatMeetingTime(
+                        semester, meeting.slot, course.location, date);
                 TextView item = label(course.name + "\n" + time, 13, textColor());
                 item.setPadding(0, dp(8), 0, dp(8));
                 box.addView(item);
@@ -4322,16 +4327,16 @@ public class MainActivity extends Activity {
         return wrap;
     }
 
-    private LinearLayout schedulePreviewRow(ScheduleModels.Course course, LocalDate date) {
+    private LinearLayout schedulePreviewRow(CourseMeeting meeting, LocalDate date) {
         LinearLayout card = card(surfaceColor());
-        ScheduleModels.TimeSlot slot = primarySlotForDate(course, date);
+        ScheduleModels.Course course = meeting.course;
+        ScheduleModels.TimeSlot slot = meeting.slot;
         TextView name = label(course.name, 15, textColor());
         name.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
         card.addView(name);
         ScheduleModels.Semester semester = selectedSemester();
-        card.addView(label(slot == null ? primaryTimeForDate(course, date)
-                : ScheduleUtils.formatMeetingTime(semester, slot, course.location, date), 12, mutedColor()));
-        String location = slot != null && slot.location != null ? slot.location : course.location;
+        card.addView(label(ScheduleUtils.formatMeetingTime(semester, slot, course.location, date), 12, mutedColor()));
+        String location = slot.location != null ? slot.location : course.location;
         if (location != null) card.addView(label(location, 12, mutedColor()));
         card.setOnClickListener(v -> showCourseMeetingDetailDialog(course, slot));
         return card;
@@ -4634,6 +4639,28 @@ public class MainActivity extends Activity {
         return sortedCourses(out);
     }
 
+    /**
+     * Every meeting that happens on {@code date}, ordered by class section. A course taught twice on
+     * the same day contributes two entries, so listings show each meeting instead of only the first.
+     */
+    private static List<CourseMeeting> courseMeetingsForDate(List<ScheduleModels.Course> semesterCourses,
+                                                             ScheduleModels.Semester semester,
+                                                             LocalDate date) {
+        List<CourseMeeting> out = new ArrayList<>();
+        if (semester == null || date == null) return out;
+        int week = ScheduleUtils.weekNumberForDate(date, semester);
+        int day = date.getDayOfWeek().getValue();
+        for (ScheduleModels.Course course : semesterCourses) {
+            for (ScheduleModels.TimeSlot slot : ScheduleUtils.meetingsForWeekDay(course, week, day)) {
+                out.add(new CourseMeeting(course, slot));
+            }
+        }
+        out.sort(Comparator.comparingInt((CourseMeeting meeting) -> Collections.min(meeting.slot.classSections))
+                .thenComparingInt(meeting -> Collections.max(meeting.slot.classSections))
+                .thenComparing(meeting -> meeting.course.name == null ? "" : meeting.course.name));
+        return out;
+    }
+
     private int currentScheduleWeek(ScheduleModels.Semester semester) {
         int baseWeek = baseScheduleWeek(semester);
         int weekCount = Math.max(1, semester.weekCount);
@@ -4689,32 +4716,6 @@ public class MainActivity extends Activity {
         int day = 7;
         for (ScheduleModels.TimeSlot slot : course.timeSlots) day = Math.min(day, slot.dayOfWeek);
         return day;
-    }
-
-    private String primaryTimeForDate(ScheduleModels.Course course, LocalDate date) {
-        ScheduleModels.Semester semester = selectedSemester();
-        if (semester == null) return ScheduleUtils.formatCourseTime(course);
-        int week = ScheduleUtils.weekNumberForDate(date, semester);
-        int day = date.getDayOfWeek().getValue();
-        return dayPrimarySectionLabel(course, week, day);
-    }
-
-    private ScheduleModels.TimeSlot primarySlotForDate(ScheduleModels.Course course, LocalDate date) {
-        ScheduleModels.Semester semester = selectedSemester();
-        if (semester == null) return null;
-        int week = ScheduleUtils.weekNumberForDate(date, semester);
-        int day = date.getDayOfWeek().getValue();
-        ScheduleModels.TimeSlot earliest = null;
-        for (ScheduleModels.TimeSlot slot : course.timeSlots) {
-            if (slot.dayOfWeek != day
-                    || !ScheduleUtils.isWeekInRange(week, slot.weekRange)
-                    || !ScheduleUtils.matchesRepeatRule(week, slot.repeatRule)
-                    || slot.classSections.isEmpty()) continue;
-            if (earliest == null || Collections.min(slot.classSections) < Collections.min(earliest.classSections)) {
-                earliest = slot;
-            }
-        }
-        return earliest;
     }
 
     private ScheduleModels.TimeSlot matchingSlot(ScheduleModels.Course course, int week, int day, int section) {

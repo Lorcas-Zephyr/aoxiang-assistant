@@ -4,6 +4,7 @@ import java.time.LocalDate;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -37,6 +38,26 @@ public final class ScheduleUtils {
         if (rule == ScheduleModels.RepeatRule.ODD) return week % 2 == 1;
         if (rule == ScheduleModels.RepeatRule.EVEN) return week % 2 == 0;
         return true;
+    }
+
+    /**
+     * Every meeting of {@code course} that actually happens on the given weekday of the given week.
+     * A course imported from the portal keeps one entry per distinct meeting, so the same course can
+     * be taught twice on the same day; all of them are returned, ordered by class section.
+     */
+    public static List<ScheduleModels.TimeSlot> meetingsForWeekDay(ScheduleModels.Course course, int week, int day) {
+        List<ScheduleModels.TimeSlot> meetings = new ArrayList<>();
+        if (course == null) return meetings;
+        for (ScheduleModels.TimeSlot slot : course.timeSlots) {
+            if (slot.dayOfWeek != day
+                    || slot.classSections == null || slot.classSections.isEmpty()
+                    || !isWeekInRange(week, slot.weekRange)
+                    || !matchesRepeatRule(week, slot.repeatRule)) continue;
+            meetings.add(slot);
+        }
+        meetings.sort(Comparator.comparingInt((ScheduleModels.TimeSlot slot) -> Collections.min(slot.classSections))
+                .thenComparingInt(slot -> Collections.max(slot.classSections)));
+        return meetings;
     }
 
     public static int weekNumberForDate(LocalDate date, ScheduleModels.Semester semester) {
