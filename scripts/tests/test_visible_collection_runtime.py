@@ -503,6 +503,59 @@ execute().then(value => process.stdout.write(String(value))).catch(error => {{
         self.assertEqual(result["phase"], "success")
         self.assertEqual(result["grades"][0]["course"], "延迟成绩")
 
+    def test_education_script_resamples_rows_after_grade_request_when_spa_mounts_late(self):
+        script = self.embedded_script()
+        harness = f"""
+let rendered = false;
+// The first DOM poll ends at eight seconds. Mount while the fallback request
+// is in flight to reproduce a slow Vue route on a real device.
+setTimeout(() => {{ rendered = true; }}, 8200);
+const cells = values => values.map(value => ({{ innerText: value, textContent: value }}));
+const gradeRow = {{ querySelectorAll: selector => selector === 'td' ? cells(['请求期间成绩', '2', '3.5', '88', '期末 88']) : [] }};
+const gradeTable = {{
+  querySelectorAll: selector => selector === 'thead th'
+    ? cells(['课程名称', '学分', '绩点', '成绩', '成绩构成'])
+    : (selector === 'tbody tr' || selector === 'tr' ? [gradeRow] : [])
+}};
+const document = {{
+  querySelector: () => null,
+  querySelectorAll: selector => selector === 'table' && rendered ? [gradeTable] : [],
+  body: {{ innerText: '学生成绩' }}
+}};
+const window = {{ document }};
+globalThis.window = window;
+globalThis.document = document;
+globalThis.performance = {{ getEntriesByType: () => [] }};
+globalThis.fetch = async (url) => {{
+  const path = String(url).split('?')[0];
+  if (path === '/student/for-std/grade/sheet/') {{
+    await new Promise(resolve => setTimeout(resolve, 700));
+    return response('<html><body>学生成绩</body></html>');
+  }}
+  return response('not found', 404);
+}};
+function response(body, status = 200) {{
+  return {{ status, ok: status >= 200 && status < 300, text: async () => body }};
+}}
+async function execute() {{
+{script}
+}}
+execute().then(value => process.stdout.write(String(value))).catch(error => {{
+  process.stderr.write(String(error && error.stack || error));
+  process.exit(1);
+}});
+"""
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "education-grade-late-request.js"
+            path.write_text(harness, encoding="utf-8")
+            completed = subprocess.run(["node", str(path)], capture_output=True, check=False)
+        stdout = completed.stdout.decode("utf-8", errors="replace")
+        stderr = completed.stderr.decode("utf-8", errors="replace")
+        self.assertEqual(completed.returncode, 0, stderr or stdout)
+        result = json.loads(stdout)
+        self.assertEqual(result["phase"], "success")
+        self.assertEqual(result["grades"][0]["course"], "请求期间成绩")
+
     def test_education_script_keeps_grades_when_schedule_endpoint_is_unavailable(self):
         script = self.embedded_script()
         harness = f"""
@@ -786,6 +839,62 @@ execute().then(value => process.stdout.write(String(value))).catch(error => {{
 """
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "education-grade-card.js"
+            path.write_text(harness, encoding="utf-8")
+            completed = subprocess.run(["node", str(path)], capture_output=True, check=False)
+        stdout = completed.stdout.decode("utf-8", errors="replace")
+        stderr = completed.stderr.decode("utf-8", errors="replace")
+        self.assertEqual(completed.returncode, 0, stderr or stdout)
+        result = json.loads(stdout)
+        self.assertEqual(result["phase"], "success")
+        self.assertEqual(result["grades"], [{
+            "course": "大学英语（III）",
+            "credits": 2,
+            "point": 2.7,
+            "score": 75,
+            "category": "课程",
+            "detail": "",
+        }])
+
+    def test_education_script_extracts_course_from_single_line_mobile_card_without_title_class(self):
+        """The real mobile card can expose one flattened innerText string."""
+        script = self.embedded_script()
+        harness = f"""
+const card = {{
+  className: 'score-item',
+  // WebKit may flatten block text when the card is rendered by a component
+  // wrapper. There is no stable course-name class in this variant.
+  innerText: '大学英语（III） 课程 · 2.0 学分 绩点 2.7 期末成绩:64.2 平时成绩:85.7 成绩 75',
+  textContent: '大学英语（III） 课程 · 2.0 学分 绩点 2.7 期末成绩:64.2 平时成绩:85.7 成绩 75',
+  children: [],
+  querySelectorAll: () => []
+}};
+const body = {{
+  innerText: '学生成绩',
+  querySelectorAll: selector => selector === '.score-item' ? [card] : []
+}};
+const document = {{
+  body,
+  querySelector: () => null,
+  querySelectorAll: selector => selector === 'body' ? [body] : []
+}};
+const window = {{ document }};
+globalThis.window = window;
+globalThis.document = document;
+globalThis.performance = {{ getEntriesByType: () => [] }};
+globalThis.fetch = async () => response('not found', 404);
+function response(body, status = 200) {{
+  return {{ status, ok: status >= 200 && status < 300, text: async () => body }};
+}}
+async function execute() {{
+{script}
+}}
+execute().then(value => process.stdout.write(String(value))).catch(error => {{
+  process.stderr.write(String(error && error.stack || error));
+  process.exit(1);
+}});
+"""
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "education-grade-card-flat-text.js"
             path.write_text(harness, encoding="utf-8")
             completed = subprocess.run(["node", str(path)], capture_output=True, check=False)
         stdout = completed.stdout.decode("utf-8", errors="replace")

@@ -487,3 +487,14 @@
 - The package is intentionally re-signable rather than installable as-is:
   the user/sideload tool must sign both nested bundles and authorize that App
   Group. Device Widget registration and live collection are still unverified.
+
+## 2026-09-16 current delivery boundary
+
+- The current source fixes the mobile score-card parser and hardens runtime App
+  Group discovery; these changes are local until the exact commit is present in
+  a fresh macOS archive.
+- A sideloaded package can use WidgetKit only when the host and nested Widget
+  are both retained, signed, and provisioned with the same App Group. Source
+  tests cannot establish that entitlement after a third-party re-sign.
+- No password, Cookie, SMS code, or WebView session is included in the shared
+  snapshot or portable backup.

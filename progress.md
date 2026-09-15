@@ -541,3 +541,20 @@
   referenced files, and `git diff --check` all pass.
 - A new macOS archive is still required before iPad testing; no Widget or live
   portal behavior is claimed until the re-signed IPA is installed and observed.
+
+## 2026-09-16 build 3 collection closeout
+
+- Added a regression for the current mobile score-card shape when WebKit
+  flattens the card into one line and provides no stable course-name class.
+  The visible collector now extracts the course name before the course,
+  credits, GPA and score metadata boundary.
+- Widget App Group discovery now uses the embedded provisioning profile when
+  available and fails closed when a readable profile explicitly has no App
+  Group. App and Widget build `1.0.1 (3)` are aligned so sideload installers
+  cannot confuse this package with build 2.
+- Portable verification on Windows is green: Python 89 tests, AoxiangCore 88
+  tests, AoxiangApp 32 tests, golden fixtures (1 version/15 scenarios/32
+  files), and `git diff --check`.
+- The previous local build-3-named IPA still contains `CFBundleVersion=2` and
+  is not a delivery artifact. A fresh macOS Actions artifact must be audited
+  before installation; only the Widget-preserving `sideload` IPA is valid.

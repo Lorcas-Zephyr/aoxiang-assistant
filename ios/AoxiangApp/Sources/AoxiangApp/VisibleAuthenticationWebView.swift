@@ -1112,6 +1112,30 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
           '.score-item', '.score-info', '.score-content > li',
           '.grade-card', '.grade-item', '[data-score-card]'
         ];
+        const cardCourse = (raw, compact, courseElement) => {
+          // Require a value after GPA/final-score labels. This avoids treating
+          // a legitimate title such as "成绩分析" as metadata.
+          const metadataPattern = /(?:课程\s*[·・:：]|\d+(?:\.\d+)?\s*学分|绩点\s*[：:]?\s*(?=[-+]?\d)|(?:总评|最终)?成绩\s*[：:]?\s*(?=[-+]?\d|P\b|NP\b|通过|不通过|优秀|良好|中等|及格|不及格))/;
+          const beforeMetadata = value => {
+            const match = String(value || '').match(metadataPattern);
+            if (!match || match.index <= 0) return '';
+            return String(value).slice(0, match.index)
+              .replace(/^[|·・:：\-\s]+|[|·・:：\-\s]+$/g, '');
+          };
+          const explicit = clean(courseElement &&
+            (courseElement.innerText || courseElement.textContent) || '');
+          if (explicit) return beforeMetadata(explicit) || explicit;
+
+          // The mobile score component does not guarantee a title class. On
+          // some WebKit releases `innerText` is flattened into one line, so
+          // split the course name from the first stable metadata label.
+          const lines = String(raw || '').split(/\r?\n/).map(clean).filter(Boolean);
+          const isMetadataLine = value => /^\s*\S*\s*(?:课程\s*[·・:：]|\d+(?:\.\d+)?\s*学分|绩点\s*[：:]?\s*(?=[-+]?\d)|(?:总评|最终)?成绩\s*[：:]?\s*(?=[-+]?\d|P\b|NP\b|通过|不通过|优秀|良好|中等|及格|不及格))/.test(value);
+          const containsMetadata = value => metadataPattern.test(value);
+          const line = lines.find(value => !isMetadataLine(value) && !containsMetadata(value));
+          if (line) return line;
+          return beforeMetadata(compact);
+        };
         documents.forEach(currentDocument => {
           if (!currentDocument) return;
           const cardRoots = [currentDocument, currentDocument.body].filter(root =>
@@ -1132,9 +1156,7 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
                 '[data-field="course"]', '[data-field="courseName"]',
                 'h2', 'h3', 'h4', 'strong'
               ]);
-              const course = clean(courseElement && (courseElement.innerText || courseElement.textContent) || '') ||
-                raw.split(/\r?\n/).map(clean).find(line => line &&
-                  !/(?:^|[·・])课程\s*[·・:]?|学分|绩点|成绩/.test(line)) || '';
+              const course = cardCourse(raw, compact, courseElement);
               const creditMatch = compact.match(/(?:课程\s*[·・:]?\s*)?(\d+(?:\.\d+)?)\s*学分/);
               const pointMatch = compact.match(/绩点\s*[：:]?\s*(\d+(?:\.\d+)?)/);
               const scoreMatches = [];
@@ -1192,7 +1214,7 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
       try {
         // Inspect the already-mounted page first. This keeps a loaded table
         // useful even when a second request to the same route is slow or down.
-        const renderedGrades = await waitForRenderedGradeRows();
+        let renderedGrades = await waitForRenderedGradeRows();
         let sheetValue = '';
         if (renderedGrades.length) {
           // Avoid any network request before checking the visible bootstrap.
@@ -1204,6 +1226,13 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
           } catch (_) {
             sheetValue = visibleDocumentHTML();
           }
+        }
+        // A slow SPA can mount its cards while the same-origin sheet request
+        // is in flight. Re-sample after that request so the initial empty
+        // poll does not force the collection down the API-only path.
+        if (!renderedGrades.length) {
+          const lateRows = renderedGradeRows();
+          if (lateRows.length) renderedGrades = lateRows;
         }
         if (sheetValue && sheetValue.__auth && !renderedGrades.length) return JSON.stringify({ phase: 'needs_login' });
         const sheet = String(sheetValue || '');
