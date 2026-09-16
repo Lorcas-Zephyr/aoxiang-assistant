@@ -315,7 +315,74 @@ final class PortalForegroundCollectorTests: XCTestCase {
         XCTAssertNil(result.electricityBalance)
         XCTAssertEqual(result.scheduleAvailable, true)
         XCTAssertEqual(result.warnings, [.electricityUnavailable])
+        XCTAssertEqual(result.electricityIssue, .retryable(.serverUnavailable))
         XCTAssertTrue(transport.requests.isEmpty)
+    }
+
+    func testVisibleEducationPreservesElectricityAuthenticationIssueWithPartialData() async throws {
+        let education = PortalVisibleEducationData(
+            grades: [OfflineGrade(id: "grade-login", course: "认证保留", credits: 3, point: 4, score: 95)],
+            gpa: 3.8,
+            schedule: PortalCollectionParsers.SchedulePayload(
+                semesters: [OfflineSemester(id: "term-1", startDate: "2026-01-01", endDate: "2026-07-01")],
+                courses: []
+            )
+        )
+        let collector = PortalForegroundCollector(
+            transport: RecordingTransport(responses: [:]),
+            electricityProvider: { throw PortalCollectionFailure.authenticationRequired },
+            visibleEducationProvider: { education }
+        )
+
+        let result = try await collector.collect(state: .readyToCollect)
+
+        XCTAssertEqual(result.grades.map(\.course), ["认证保留"])
+        XCTAssertEqual(result.electricityIssue, .needsLogin)
+        XCTAssertEqual(result.warnings, [.electricityUnavailable])
+    }
+
+    func testVisibleEducationPreservesElectricitySMSIssueWithPartialData() async throws {
+        let education = PortalVisibleEducationData(
+            grades: [OfflineGrade(id: "grade-sms", course: "短信保留", credits: 3, point: 4, score: 95)],
+            gpa: 3.8,
+            schedule: PortalCollectionParsers.SchedulePayload(
+                semesters: [OfflineSemester(id: "term-1", startDate: "2026-01-01", endDate: "2026-07-01")],
+                courses: []
+            )
+        )
+        let collector = PortalForegroundCollector(
+            transport: RecordingTransport(responses: [:]),
+            electricityProvider: { throw PortalCollectionFailure.smsRequired },
+            visibleEducationProvider: { education }
+        )
+
+        let result = try await collector.collect(state: .readyToCollect)
+
+        XCTAssertEqual(result.grades.map(\.course), ["短信保留"])
+        XCTAssertEqual(result.electricityIssue, .needsSMS)
+        XCTAssertEqual(result.warnings, [.electricityUnavailable])
+    }
+
+    func testVisibleEducationPreservesElectricitySettlementIssueWithPartialData() async throws {
+        let education = PortalVisibleEducationData(
+            grades: [OfflineGrade(id: "grade-settlement", course: "结算保留", credits: 3, point: 4, score: 95)],
+            gpa: 3.8,
+            schedule: PortalCollectionParsers.SchedulePayload(
+                semesters: [OfflineSemester(id: "term-1", startDate: "2026-01-01", endDate: "2026-07-01")],
+                courses: []
+            )
+        )
+        let collector = PortalForegroundCollector(
+            transport: RecordingTransport(responses: [:]),
+            electricityProvider: { throw PortalCollectionFailure.settlement },
+            visibleEducationProvider: { education }
+        )
+
+        let result = try await collector.collect(state: .readyToCollect)
+
+        XCTAssertEqual(result.grades.map(\.course), ["结算保留"])
+        XCTAssertEqual(result.electricityIssue, .settlement)
+        XCTAssertEqual(result.warnings, [.electricityUnavailable])
     }
 
     func testVisibleEducationUnavailableScheduleAddsScheduleWarning() async throws {
@@ -366,6 +433,17 @@ final class PortalForegroundCollectorTests: XCTestCase {
         XCTAssertEqual(result.electricityBalance ?? -1, 2.5, accuracy: 0.0001)
         XCTAssertFalse(result.scheduleAvailable)
         XCTAssertEqual(result.warnings, [.scheduleUnavailable])
+    }
+
+    func testStablePathPreservesElectricityInvalidResponseIssueWithPartialData() async throws {
+        let transport = makeTransport(gpa: .success(json(["gpa": 3.72])))
+        let collector = PortalForegroundCollector(transport: transport) { -1 }
+
+        let result = try await collector.collect(state: .readyToCollect)
+
+        XCTAssertEqual(result.electricityIssue, .invalidResponse("electricity balance invalid"))
+        XCTAssertEqual(result.warnings, [.electricityUnavailable])
+        XCTAssertEqual(result.grades.count, 1)
     }
 
     func testVisibleEducationDataIsKeptWhenElectricityIsUnavailable() async throws {

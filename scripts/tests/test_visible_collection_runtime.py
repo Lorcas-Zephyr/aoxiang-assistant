@@ -38,6 +38,36 @@ class VisibleCollectionRuntimeTest(unittest.TestCase):
         self.assertIsNotNone(match)
         return match.group(1)
 
+    def electricity_capture_script(self):
+        source = SOURCE_FILE.read_text(encoding="utf-8")
+        match = re.search(
+            r"private static let electricityNetworkCaptureScript = #\"\"\"(.*?)\"\"\"#",
+            source,
+            flags=re.DOTALL,
+        )
+        self.assertIsNotNone(match)
+        return match.group(1)
+
+    def electricity_portal_script(self):
+        source = SOURCE_FILE.read_text(encoding="utf-8")
+        match = re.search(
+            r"private static let electricityPortalBootstrapScript = #\"\"\"(.*?)\"\"\"#",
+            source,
+            flags=re.DOTALL,
+        )
+        self.assertIsNotNone(match)
+        return match.group(1)
+
+    def electricity_direct_fallback_script(self):
+        source = SOURCE_FILE.read_text(encoding="utf-8")
+        match = re.search(
+            r"private static let electricityDirectFallbackScript = #\"\"\"(.*?)\"\"\"#",
+            source,
+            flags=re.DOTALL,
+        )
+        self.assertIsNotNone(match)
+        return match.group(1)
+
     def run_electricity_script(self, setup, timeout=5):
         harness = f"""
 {setup}
@@ -51,6 +81,86 @@ execute().then(value => process.stdout.write(JSON.stringify(value))).catch(error
 """
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "electricity-runtime.js"
+            path.write_text(harness, encoding="utf-8")
+            completed = subprocess.run(
+                ["node", str(path)],
+                capture_output=True,
+                check=False,
+                timeout=timeout,
+            )
+        stdout = completed.stdout.decode("utf-8", errors="replace")
+        stderr = completed.stderr.decode("utf-8", errors="replace")
+        self.assertEqual(completed.returncode, 0, stderr or stdout)
+        return json.loads(stdout)
+
+    def run_electricity_capture_script(self, setup, action="", timeout=5):
+        harness = f"""
+{setup}
+{self.electricity_capture_script()}
+{action}
+"""
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "electricity-capture-runtime.js"
+            path.write_text(harness, encoding="utf-8")
+            completed = subprocess.run(
+                ["node", str(path)],
+                capture_output=True,
+                check=False,
+                timeout=timeout,
+            )
+        stdout = completed.stdout.decode("utf-8", errors="replace")
+        stderr = completed.stderr.decode("utf-8", errors="replace")
+        self.assertEqual(completed.returncode, 0, stderr or stdout)
+        return json.loads(stdout)
+
+    def run_electricity_portal_script(self, setup, redirect_attempted=False, timeout=5):
+        attempted = "true" if redirect_attempted else "false"
+        script = self.electricity_portal_script().replace(
+            "__AOXIANG_REDIRECT_ATTEMPTED__", attempted
+        ).strip()
+        harness = f"""
+{setup}
+async function execute() {{
+  return {script};
+}}
+Promise.resolve(execute()).then(value => process.stdout.write(JSON.stringify({{
+  action: value,
+  href: globalThis.location && globalThis.location.href
+}}))).catch(error => {{
+  process.stderr.write(String(error && error.stack || error));
+  process.exit(1);
+}});
+"""
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "electricity-portal-runtime.js"
+            path.write_text(harness, encoding="utf-8")
+            completed = subprocess.run(
+                ["node", str(path)],
+                capture_output=True,
+                check=False,
+                timeout=timeout,
+            )
+        stdout = completed.stdout.decode("utf-8", errors="replace")
+        stderr = completed.stderr.decode("utf-8", errors="replace")
+        self.assertEqual(completed.returncode, 0, stderr or stdout)
+        return json.loads(stdout)
+
+    def run_electricity_direct_fallback_script(self, setup, timeout=5):
+        harness = f"""
+{setup}
+async function execute() {{
+  return {self.electricity_direct_fallback_script().strip()};
+}}
+Promise.resolve(execute()).then(value => process.stdout.write(JSON.stringify({{
+  action: value,
+  href: globalThis.location && globalThis.location.href
+}}))).catch(error => {{
+  process.stderr.write(String(error && error.stack || error));
+  process.exit(1);
+}});
+"""
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "electricity-direct-fallback-runtime.js"
             path.write_text(harness, encoding="utf-8")
             completed = subprocess.run(
                 ["node", str(path)],
@@ -81,6 +191,334 @@ globalThis.fetch = async () => ({
 });
 """)
         self.assertEqual(result, 18.52)
+
+    def test_electricity_portal_uses_token_from_same_origin_iframe_storage(self):
+        # The card portal can render the account card in a same-origin frame.
+        # The bootstrap must read that frame's short-lived token and navigate
+        # the visible top-level WebView through the Android-compatible direct
+        # fee-item route.
+        result = self.run_electricity_portal_script("""
+const location = {
+  href: 'https://yktapp.nwpu.edu.cn/plat',
+  origin: 'https://yktapp.nwpu.edu.cn',
+  replace: target => { location.href = target; }
+};
+const frameDocument = {
+  cookie: '',
+  body: { innerText: '校园卡 账户余额' },
+  querySelectorAll: () => []
+};
+const frameWindow = {
+  document: frameDocument,
+  location: { href: 'https://yktapp.nwpu.edu.cn/plat/card' },
+  sessionStorage: { getItem: key => key === 'access_token' ? 'frame-token' : '' },
+  localStorage: { getItem: () => '' }
+};
+const document = {
+  cookie: '',
+  body: { innerText: '加载中' },
+  querySelectorAll: () => [{ contentWindow: frameWindow, contentDocument: frameDocument }]
+};
+const window = {
+  document,
+  location,
+  sessionStorage: { getItem: () => '' },
+  localStorage: { getItem: () => '' }
+};
+globalThis.document = document;
+globalThis.window = window;
+globalThis.location = location;
+""")
+        self.assertEqual(result.get("action"), "direct_started", result)
+        self.assertIn("/jfdt/charge/feeitem/toAppitem?", result["href"])
+        self.assertIn("feeitemid=182", result["href"])
+        self.assertIn("synjones-auth=frame-token", result["href"])
+
+    def test_electricity_portal_uses_token_from_same_origin_iframe_cookie(self):
+        result = self.run_electricity_portal_script("""
+const location = {
+  href: 'https://yktapp.nwpu.edu.cn/plat',
+  origin: 'https://yktapp.nwpu.edu.cn',
+  replace: target => { location.href = target; }
+};
+const frameDocument = {
+  cookie: 'synjones-auth=frame-cookie-token',
+  body: { innerText: '校园卡 账户余额' },
+  querySelectorAll: () => []
+};
+const frameWindow = {
+  document: frameDocument,
+  location: { href: 'https://yktapp.nwpu.edu.cn/plat/card' },
+  sessionStorage: { getItem: () => '' },
+  localStorage: { getItem: () => '' }
+};
+const document = {
+  cookie: '',
+  body: { innerText: '加载中' },
+  querySelectorAll: () => [{ contentWindow: frameWindow, contentDocument: frameDocument }]
+};
+const window = {
+  document,
+  location,
+  sessionStorage: { getItem: () => '' },
+  localStorage: { getItem: () => '' }
+};
+globalThis.document = document;
+globalThis.window = window;
+globalThis.location = location;
+""")
+        self.assertEqual(result.get("action"), "direct_started", result)
+        self.assertIn("/jfdt/charge/feeitem/toAppitem?", result["href"])
+        self.assertIn("feeitemid=182", result["href"])
+        self.assertIn("synjones-auth=frame-cookie-token", result["href"])
+
+    def test_electricity_portal_uses_direct_fee_page_after_redirect_attempt(self):
+        result = self.run_electricity_portal_script("""
+const location = {
+  href: 'https://yktapp.nwpu.edu.cn/plat',
+  origin: 'https://yktapp.nwpu.edu.cn',
+  replace: target => { location.href = target; }
+};
+const frameDocument = {
+  cookie: '',
+  body: { innerText: '校园卡 账户余额' },
+  querySelectorAll: () => []
+};
+const frameWindow = {
+  document: frameDocument,
+  location: { href: 'https://yktapp.nwpu.edu.cn/plat/card' },
+  sessionStorage: { getItem: key => key === 'synjones-auth' ? 'fallback-token' : '' },
+  localStorage: { getItem: () => '' }
+};
+const document = {
+  cookie: '',
+  body: { innerText: '加载中' },
+  querySelectorAll: () => [{ contentWindow: frameWindow, contentDocument: frameDocument }]
+};
+const window = {
+  document,
+  location,
+  sessionStorage: { getItem: () => '' },
+  localStorage: { getItem: () => '' }
+};
+globalThis.document = document;
+globalThis.window = window;
+globalThis.location = location;
+""", redirect_attempted=True)
+        self.assertEqual(result.get("action"), "direct_started", result)
+        self.assertIn("/jfdt/charge/feeitem/toAppitem?", result["href"])
+        self.assertIn("feeitemid=182", result["href"])
+        self.assertIn("synjones-auth=fallback-token", result["href"])
+
+    def test_electricity_portal_hands_off_top_level_token_while_query_information_shell_is_loading(self):
+        # The deployed /plat page can remain a non-login "querying
+        # information" shell indefinitely, even though its own sessionStorage
+        # already has the short-lived card token. Android hands off at that
+        # point; the visible iOS flow must do the same without waiting for an
+        # account-balance card to render.
+        result = self.run_electricity_portal_script("""
+const location = {
+  href: 'https://yktapp.nwpu.edu.cn/plat',
+  origin: 'https://yktapp.nwpu.edu.cn',
+  replace: target => { location.href = target; }
+};
+const document = {
+  cookie: '',
+  body: { innerText: '查询信息 加载中' },
+  querySelectorAll: () => []
+};
+const window = {
+  document,
+  location,
+  sessionStorage: { getItem: key => key === 'synjones-auth' ? 'loading-shell-token' : '' },
+  localStorage: { getItem: () => '' }
+};
+globalThis.document = document;
+globalThis.window = window;
+globalThis.location = location;
+""")
+        self.assertEqual(result.get("action"), "direct_started", result)
+        self.assertIn("/jfdt/charge/feeitem/toAppitem?", result["href"])
+        self.assertIn("feeitemid=182", result["href"])
+        self.assertIn("synjones-auth=loading-shell-token", result["href"])
+
+    def test_electricity_portal_hands_off_loading_shell_token_to_direct_fee_page_after_redirect_attempt(self):
+        # If the Berserker redirect returned to /plat, the same non-login
+        # loading shell must use its page-owned token for the one bounded
+        # direct fee-page recovery path rather than wait for a balance marker.
+        result = self.run_electricity_portal_script("""
+const location = {
+  href: 'https://yktapp.nwpu.edu.cn/plat',
+  origin: 'https://yktapp.nwpu.edu.cn',
+  replace: target => { location.href = target; }
+};
+const frameDocument = {
+  cookie: '',
+  body: { innerText: '查询信息 正在加载' },
+  querySelectorAll: () => []
+};
+const frameWindow = {
+  document: frameDocument,
+  location: { href: 'https://yktapp.nwpu.edu.cn/plat/card' },
+  sessionStorage: { getItem: key => key === 'access_token' ? 'iframe-loading-token' : '' },
+  localStorage: { getItem: () => '' }
+};
+const document = {
+  cookie: '',
+  body: { innerText: '查询信息 加载中' },
+  querySelectorAll: () => [{ contentWindow: frameWindow, contentDocument: frameDocument }]
+};
+const window = {
+  document,
+  location,
+  sessionStorage: { getItem: () => '' },
+  localStorage: { getItem: () => '' }
+};
+globalThis.document = document;
+globalThis.window = window;
+globalThis.location = location;
+""", redirect_attempted=True)
+        self.assertEqual(result.get("action"), "direct_started", result)
+        self.assertIn("/jfdt/charge/feeitem/toAppitem?", result["href"])
+        self.assertIn("feeitemid=182", result["href"])
+        self.assertIn("synjones-auth=iframe-loading-token", result["href"])
+
+    def test_electricity_portal_never_hands_off_a_stale_token_from_login_shell(self):
+        # A stale token is not authority to bypass a visible login challenge.
+        # The page-owned token must only drive the non-login /plat hand-off.
+        result = self.run_electricity_portal_script("""
+const location = {
+  href: 'https://yktapp.nwpu.edu.cn/plat',
+  origin: 'https://yktapp.nwpu.edu.cn',
+  replace: target => { location.href = target; }
+};
+const document = {
+  cookie: '',
+  body: { innerText: '请登录 查询信息' },
+  querySelectorAll: () => []
+};
+const window = {
+  document,
+  location,
+  sessionStorage: { getItem: key => key === 'synjones-auth' ? 'stale-token' : '' },
+  localStorage: { getItem: () => '' }
+};
+globalThis.document = document;
+globalThis.window = window;
+globalThis.location = location;
+""")
+        self.assertEqual(result.get("action"), "waiting", result)
+        self.assertEqual(result["href"], "https://yktapp.nwpu.edu.cn/plat")
+
+    def test_electricity_direct_fallback_never_hands_off_a_stale_token_from_login_shell(self):
+        # The fallback runs after a redirect stalls. It must still respect a
+        # newly rendered login page instead of recovering with a token left in
+        # WebKit storage from an earlier session.
+        result = self.run_electricity_direct_fallback_script("""
+const location = {
+  href: 'https://yktapp.nwpu.edu.cn/berserker-base/redirect?appId=36',
+  origin: 'https://yktapp.nwpu.edu.cn',
+  replace: target => { location.href = target; }
+};
+const document = {
+  cookie: '',
+  body: { innerText: '请登录，登录信息已失效' }
+};
+const window = {
+  document,
+  location,
+  sessionStorage: { getItem: key => key === 'synjones-auth' ? 'stale-token' : '' },
+  localStorage: { getItem: () => '' }
+};
+globalThis.document = document;
+globalThis.window = window;
+globalThis.location = location;
+""")
+        self.assertEqual(result.get("action"), "needs_login", result)
+        self.assertEqual(
+            result["href"],
+            "https://yktapp.nwpu.edu.cn/berserker-base/redirect?appId=36",
+        )
+
+    def test_electricity_portal_clicks_auth_entry_in_same_origin_iframe(self):
+        result = self.run_electricity_portal_script("""
+const location = {
+  href: 'https://yktapp.nwpu.edu.cn/plat',
+  origin: 'https://yktapp.nwpu.edu.cn',
+  replace: target => { location.href = target; }
+};
+const authEntry = {
+  innerText: '统一身份认证',
+  closest: () => authEntry,
+  click: () => { location.href = 'https://yktapp.nwpu.edu.cn/plat/auth-clicked'; }
+};
+const frameDocument = {
+  cookie: '',
+  body: { innerText: '请登录' },
+  querySelectorAll: () => [authEntry]
+};
+const frameWindow = {
+  document: frameDocument,
+  location: { href: 'https://yktapp.nwpu.edu.cn/plat/card' },
+  sessionStorage: { getItem: () => '' },
+  localStorage: { getItem: () => '' }
+};
+const document = {
+  cookie: '',
+  body: { innerText: '加载中' },
+  querySelectorAll: () => [{ contentWindow: frameWindow, contentDocument: frameDocument }]
+};
+const window = {
+  document,
+  location,
+  sessionStorage: { getItem: () => '' },
+  localStorage: { getItem: () => '' }
+};
+globalThis.document = document;
+globalThis.window = window;
+globalThis.location = location;
+""")
+        self.assertEqual(result.get("action"), "auth_clicked", result)
+        self.assertEqual(result["href"], "https://yktapp.nwpu.edu.cn/plat/auth-clicked")
+
+    def test_electricity_portal_ignores_cross_origin_iframe_token(self):
+        # A frame that is not same-origin must never contribute a token or
+        # trigger a card-platform redirect, even if a test double exposes its
+        # document object.
+        result = self.run_electricity_portal_script("""
+const location = {
+  href: 'https://yktapp.nwpu.edu.cn/plat',
+  origin: 'https://yktapp.nwpu.edu.cn',
+  replace: target => { location.href = target; }
+};
+const frameDocument = {
+  cookie: 'synjones-auth=foreign-token',
+  body: { innerText: '账户余额' },
+  querySelectorAll: () => []
+};
+const frameWindow = {
+  document: frameDocument,
+  location: { href: 'https://untrusted.example/card' },
+  sessionStorage: { getItem: () => 'foreign-token' },
+  localStorage: { getItem: () => '' }
+};
+const document = {
+  cookie: '',
+  body: { innerText: '加载中' },
+  querySelectorAll: () => [{ contentWindow: frameWindow, contentDocument: frameDocument }]
+};
+const window = {
+  document,
+  location,
+  sessionStorage: { getItem: () => '' },
+  localStorage: { getItem: () => '' }
+};
+globalThis.document = document;
+globalThis.window = window;
+globalThis.location = location;
+""")
+        self.assertEqual(result.get("action"), "waiting", result)
+        self.assertEqual(result["href"], "https://yktapp.nwpu.edu.cn/plat")
 
     def test_electricity_script_reads_nested_vue_response_map_show_data(self):
         result = self.run_electricity_script("""
@@ -118,6 +556,205 @@ globalThis.fetch = async () => ({ ok: false, text: async () => '' });
 """)
         self.assertEqual(result, 12.75)
 
+    def test_electricity_script_reads_balance_from_same_origin_iframe(self):
+        result = self.run_electricity_script("""
+const frameDocument = {
+  querySelector: selector => selector === '#app' ? {
+    __vue__: { aboutEleric: { electricInfo: { '当前剩余电量': '33.40' } } }
+  } : null,
+  querySelectorAll: () => [],
+  body: { innerText: '' }
+};
+const frameWindow = { document: frameDocument };
+const document = {
+  querySelector: () => null,
+  querySelectorAll: () => [{ contentWindow: frameWindow, contentDocument: frameDocument }],
+  body: { innerText: '加载中' }
+};
+const window = { document };
+globalThis.document = document;
+globalThis.window = window;
+globalThis.location = { origin: 'https://yktapp.nwpu.edu.cn' };
+globalThis.performance = { getEntriesByType: () => [] };
+globalThis.fetch = async () => ({ ok: false, text: async () => '' });
+""")
+        self.assertEqual(result, 33.4)
+
+    def test_electricity_script_reads_captured_balance_from_same_origin_iframe(self):
+        # A document-start hook runs in subframes too. Its validated scalar
+        # lives on the child window, so the main-frame probe must aggregate it
+        # even when the child has not rendered a Vue root or visible text yet.
+        result = self.run_electricity_script("""
+const frameDocument = {
+  querySelector: () => null,
+  querySelectorAll: () => [],
+  body: { innerText: '加载中' }
+};
+const frameWindow = {
+  document: frameDocument,
+  __aoxiangElectricityBalance: JSON.stringify({
+    data: { map: { showData: { '当前剩余电量': '23.80' } } }
+  })
+};
+const document = {
+  querySelector: () => null,
+  querySelectorAll: () => [{ contentWindow: frameWindow, contentDocument: frameDocument }],
+  body: { innerText: '加载中' }
+};
+const window = { document };
+globalThis.document = document;
+globalThis.window = window;
+globalThis.location = { origin: 'https://yktapp.nwpu.edu.cn' };
+globalThis.performance = { getEntriesByType: () => [] };
+globalThis.fetch = async () => ({ ok: false, text: async () => '' });
+""")
+        self.assertEqual(result, 23.8)
+
+    def test_electricity_script_accepts_balance_captured_from_post_response(self):
+        # The portal can populate the card with a POST/XHR response while the
+        # DOM remains a loading shell. The document-start capture hook stores
+        # only the validated number for the later page probe to read.
+        result = self.run_electricity_script("""
+const document = { querySelector: () => null, body: { innerText: '加载中' } };
+const window = { __aoxiangElectricityBalance: 27.4 };
+globalThis.document = document;
+globalThis.window = window;
+globalThis.location = { origin: 'https://yktapp.nwpu.edu.cn' };
+globalThis.performance = { getEntriesByType: () => [] };
+globalThis.fetch = async () => ({ ok: false, text: async () => '' });
+        """)
+        self.assertEqual(result, 27.4)
+
+    def test_electricity_script_decodes_captured_json_before_reading_status_code(self):
+        # A few portal builds expose the captured response as a JSON string.
+        # The HTTP status/code is not the balance; decode the envelope first.
+        result = self.run_electricity_script("""
+const document = { querySelector: () => null, body: { innerText: '加载中' } };
+const window = {
+  __aoxiangElectricityBalance: JSON.stringify({ code: 200, data: { balance: '18.52' } })
+};
+globalThis.document = document;
+globalThis.window = window;
+globalThis.location = { origin: 'https://yktapp.nwpu.edu.cn' };
+globalThis.performance = { getEntriesByType: () => [] };
+globalThis.fetch = async () => ({ ok: false, text: async () => '' });
+""")
+        self.assertEqual(result, 18.52)
+
+    def test_electricity_script_decodes_json_strings_nested_inside_captured_containers(self):
+        # The card platform sometimes serializes the response payload once
+        # more before putting it under `data`. The collector must unwrap the
+        # JSON string and return the labelled balance, never the envelope's
+        # status code.
+        result = self.run_electricity_script("""
+const document = { querySelector: () => null, body: { innerText: '加载中' } };
+const window = { __aoxiangElectricityBalance: {
+  code: 200,
+  data: JSON.stringify({ map: { showData: { '当前剩余电量': '19.60' } } })
+} };
+globalThis.document = document;
+globalThis.window = window;
+globalThis.location = { origin: 'https://yktapp.nwpu.edu.cn' };
+globalThis.performance = { getEntriesByType: () => [] };
+globalThis.fetch = async () => ({ ok: false, text: async () => '' });
+""")
+        self.assertEqual(result, 19.6)
+
+    def test_electricity_script_rejects_unstructured_status_text_as_balance(self):
+        result = self.run_electricity_script("""
+const document = { querySelector: () => null, body: { innerText: '加载中' } };
+const window = { __aoxiangElectricityBalance: 'code=200; request accepted' };
+globalThis.document = document;
+globalThis.window = window;
+globalThis.location = { origin: 'https://yktapp.nwpu.edu.cn' };
+globalThis.performance = { getEntriesByType: () => [] };
+globalThis.fetch = async () => ({ ok: false, text: async () => '' });
+""")
+        self.assertIsNone(result)
+
+    def test_electricity_script_rejects_json_status_without_balance(self):
+        result = self.run_electricity_script("""
+const document = { querySelector: () => null, body: { innerText: '加载中' } };
+const window = {
+  __aoxiangElectricityBalance: JSON.stringify({ code: 200, message: 'ok' })
+};
+globalThis.document = document;
+globalThis.window = window;
+globalThis.location = { origin: 'https://yktapp.nwpu.edu.cn' };
+globalThis.performance = { getEntriesByType: () => [] };
+globalThis.fetch = async () => ({ ok: false, text: async () => '' });
+""")
+        self.assertIsNone(result)
+
+    def test_electricity_capture_reads_balance_from_post_fetch_response(self):
+        result = self.run_electricity_capture_script("""
+const window = {};
+globalThis.window = window;
+globalThis.location = { hostname: 'yktapp.nwpu.edu.cn' };
+window.fetch = async () => ({
+  clone: () => ({ text: async () => JSON.stringify({
+    map: { showData: { '当前剩余电量': '24.60' } }
+  }) })
+});
+window.XMLHttpRequest = undefined;
+""", action="""
+window.fetch('/jfdt/api/feeitem/balance', { method: 'POST' }).then(() => {
+  setTimeout(() => process.stdout.write(JSON.stringify(window.__aoxiangElectricityBalance)), 0);
+});
+""")
+        self.assertEqual(result, 24.6)
+
+    def test_electricity_capture_clears_stale_balance_at_document_start(self):
+        result = self.run_electricity_capture_script("""
+const window = { __aoxiangElectricityBalance: 99.9 };
+globalThis.window = window;
+globalThis.location = { hostname: 'yktapp.nwpu.edu.cn' };
+window.fetch = async () => ({ clone: () => ({ text: async () => '' }) });
+window.XMLHttpRequest = undefined;
+""", action="""
+process.stdout.write(JSON.stringify(window.__aoxiangElectricityBalance));
+""")
+        self.assertIsNone(result)
+
+    def test_electricity_capture_publishes_iframe_balance_to_top_frame(self):
+        # WKUserScript runs in subframes when forMainFrameOnly is false. The
+        # native probe runs in the main frame, so a same-origin iframe must
+        # publish its validated scalar through the top frame.
+        result = self.run_electricity_capture_script("""
+const topWindow = {};
+const window = { top: topWindow };
+globalThis.window = window;
+globalThis.location = { hostname: 'yktapp.nwpu.edu.cn' };
+window.fetch = async () => ({
+  clone: () => ({ text: async () => JSON.stringify({
+    data: { map: { showData: { balance: '22.10' } } }
+  }) })
+});
+window.XMLHttpRequest = undefined;
+""", action="""
+window.fetch('/jfdt/api/feeitem/balance', { method: 'POST' }).then(() => {
+  setTimeout(() => process.stdout.write(JSON.stringify(topWindow.__aoxiangElectricityBalances)), 0);
+});
+""")
+        self.assertEqual(result, [22.1])
+
+    def test_electricity_script_accepts_nested_json_object_captured_from_xhr(self):
+        # XHR responseType=json exposes an object rather than responseText.
+        # The document-start hook stores the object shape until the page probe
+        # can inspect its response/map/showData containers.
+        result = self.run_electricity_script("""
+const document = { querySelector: () => null, body: { innerText: '加载中' } };
+const window = { __aoxiangElectricityBalance: {
+  response: { data: { map: { showData: { '剩余金额': '￥31.25' } } } }
+} };
+globalThis.document = document;
+globalThis.window = window;
+globalThis.location = { origin: 'https://yktapp.nwpu.edu.cn' };
+globalThis.performance = { getEntriesByType: () => [] };
+globalThis.fetch = async () => ({ ok: false, text: async () => '' });
+""")
+        self.assertEqual(result, 31.25)
+
     def test_electricity_script_reads_dom_balance_without_colon_or_unit(self):
         result = self.run_electricity_script("""
 const document = {
@@ -141,6 +778,28 @@ globalThis.window = window;
 globalThis.performance = { getEntriesByType: () => [] };
 globalThis.fetch = async () => ({ ok: true, text: async () => '' });
 """, timeout=2)
+        self.assertIsNone(result)
+
+    def test_electricity_script_has_a_shared_resource_scan_deadline(self):
+        # A card page can retain several failed fee URLs in the Performance
+        # timeline. The probe must not serially spend 1.8 seconds on every
+        # one, otherwise a later balance retry never gets a chance before the
+        # native foreground watchdog fires.
+        result = self.run_electricity_script("""
+const document = { querySelector: () => null, body: { innerText: '正在加载...' } };
+const window = {};
+globalThis.document = document;
+globalThis.window = window;
+globalThis.location = { origin: 'https://yktapp.nwpu.edu.cn' };
+globalThis.performance = {
+  getEntriesByType: () => Array.from({ length: 6 }, (_, index) => ({
+    name: 'https://yktapp.nwpu.edu.cn/jfdt/api/feeitem/balance/' + index
+  }))
+};
+globalThis.fetch = (_url, options) => new Promise((_resolve, reject) => {
+  options.signal.addEventListener('abort', () => reject(new Error('aborted')));
+});
+""", timeout=4)
         self.assertIsNone(result)
 
     def test_education_script_accepts_data_semester_and_returns_sanitized_success(self):

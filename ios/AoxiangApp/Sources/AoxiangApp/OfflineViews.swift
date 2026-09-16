@@ -192,8 +192,10 @@ public struct ManagementScreen: View {
     @State private var showingAuthentication = false
     @State private var collectionTask: Task<Void, Never>?
     @State private var collectionStatus: String?
+    @State private var electricityIssue: ElectricityCollectionIssue?
     @State private var widgetStatus: String?
     @State private var isCollecting = false
+    @State private var activeCollectionID: UUID?
     @State private var pendingCollectionStart = false
     @State private var authenticationSurfaceMounted = false
     @StateObject private var authenticationModel: VisibleAuthenticationViewModel
@@ -231,6 +233,15 @@ public struct ManagementScreen: View {
                             )
                         }
                         .disabled(isCollecting)
+                    }
+                    if canRetryElectricity {
+                        Button("重试电费") {
+                            requestCollection()
+                        }
+                        .disabled(isCollecting)
+                        Text("将重新刷新成绩、课表和电费")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
                     }
                 }
                 Section("数据") {
@@ -316,8 +327,14 @@ public struct ManagementScreen: View {
                     model: authenticationModel,
                     onPrepareToCollect: requestCollection,
                     isCollecting: isCollecting,
-                    collectionStatus: collectionStatus
+                    collectionStatus: collectionStatus,
+                    electricityRetryAvailable: canRetryElectricity
                 )
+                .safeAreaInset(edge: .top, spacing: 0) {
+                    if isCollecting {
+                        collectionCancellationBar
+                    }
+                }
                 .interactiveDismissDisabled(isCollecting)
                 .onAppear { authenticationSurfaceMounted = true }
                 .onAppear { beginPendingCollectionIfNeeded() }
@@ -367,6 +384,8 @@ public struct ManagementScreen: View {
         showingAuthentication = true
         isCollecting = true
         collectionStatus = "正在读取成绩、课表和电费…"
+        let collectionID = UUID()
+        activeCollectionID = collectionID
         let cookieStore = authenticationModel.webView.configuration.websiteDataStore.httpCookieStore
         let collector = PortalForegroundCollector(
             transport: PortalCollectionTransportAdapter(
@@ -379,31 +398,113 @@ public struct ManagementScreen: View {
         collectionTask?.cancel()
         collectionTask = Task { @MainActor in
             defer {
-                isCollecting = false
-                collectionTask = nil
+                finishCollection(id: collectionID)
             }
             do {
                 let result = try await collector.collect(
                     state: .readyToCollect,
                     isCancelled: { Task.isCancelled }
                 )
-                guard !Task.isCancelled else { return }
+                guard isCurrentCollection(collectionID), !Task.isCancelled else { return }
                 if model.applyPortalCollection(result) {
-                    collectionStatus = collectionStatus(for: result.warnings)
-                    // The local state is the authoritative foreground result.
-                    // Widget publication is best-effort and is surfaced as a
-                    // warning without keeping the authentication sheet open.
-                    showingAuthentication = false
+                    // applyPortalCollection commits result.grades and
+                    // result.schedule before handling an independent
+                    // electricity failure, so partial success is retained.
+                    if result.electricityIssue == nil {
+                        electricityIssue = nil
+                        collectionStatus = collectionStatus(for: result.warnings)
+                        // The local state is the authoritative foreground
+                        // result. Widget publication is best-effort and is
+                        // surfaced as a warning without keeping the sheet open.
+                        showingAuthentication = false
+                    } else if let electricityIssue = result.electricityIssue {
+                        handleElectricityIssue(electricityIssue)
+                    }
                 } else {
                     collectionStatus = "采集结果未能保存；原有数据保持不变"
                 }
             } catch let failure as PortalCollectionFailure {
+                guard isCurrentCollection(collectionID), !Task.isCancelled else { return }
                 authenticationModel.recordCollectionFailure(failure)
                 collectionStatus = failure.localizedDescription
             } catch {
+                guard isCurrentCollection(collectionID), !Task.isCancelled else { return }
                 collectionStatus = error.localizedDescription
             }
         }
+    }
+
+    /// Keeps the successful education commit visible while turning a failed
+    /// electricity read into an actionable foreground state. The electricity
+    /// portal has a separate auth/session boundary, so its failure must not
+    /// discard grades or schedule or be collapsed into a generic warning.
+    private func handleElectricityIssue(_ issue: ElectricityCollectionIssue) {
+        electricityIssue = issue
+        showingAuthentication = true
+        switch issue {
+        case .needsLogin:
+            authenticationModel.recordCollectionFailure(.authenticationRequired)
+            collectionStatus = "成绩和课表已更新；电费需要重新登录"
+        case .needsSMS:
+            authenticationModel.recordCollectionFailure(.smsRequired)
+            collectionStatus = "成绩和课表已更新；电费需要短信验证"
+        case .retryable(let reason):
+            authenticationModel.recordCollectionFailure(.retryable(reason))
+            collectionStatus = "成绩和课表已更新；电费读取失败，可重试"
+        case .invalidResponse(let message):
+            collectionStatus = "成绩和课表已更新；电费读取失败：\(message)，请稍后重试"
+        case .settlement:
+            collectionStatus = "成绩和课表已更新；电费正在结算，请稍后重试"
+        }
+    }
+
+    private var canRetryElectricity: Bool {
+        guard let electricityIssue else { return false }
+        switch electricityIssue {
+        case .needsLogin, .needsSMS:
+            return false
+        case .retryable, .invalidResponse, .settlement:
+            return true
+        }
+    }
+
+    private var collectionCancellationBar: some View {
+        HStack(spacing: 8) {
+            Label("正在采集", systemImage: "arrow.triangle.2.circlepath")
+                .font(.caption)
+                .foregroundColor(.secondary)
+            Spacer()
+            Button(role: .cancel, action: cancelCollection) {
+                Label("取消采集", systemImage: "xmark.circle.fill")
+            }
+            .accessibilityIdentifier("collection.cancel")
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(.ultraThinMaterial)
+    }
+
+    private func cancelCollection() {
+        guard isCollecting || collectionTask != nil else { return }
+
+        pendingCollectionStart = false
+        activeCollectionID = nil
+        collectionTask?.cancel()
+        collectionTask = nil
+        isCollecting = false
+        collectionStatus = "已取消采集"
+        showingAuthentication = false
+    }
+
+    private func isCurrentCollection(_ id: UUID) -> Bool {
+        activeCollectionID == id
+    }
+
+    private func finishCollection(id: UUID) {
+        guard isCurrentCollection(id) else { return }
+        activeCollectionID = nil
+        collectionTask = nil
+        isCollecting = false
     }
 
     private func collectionStatus(for warnings: [PortalCollectionWarning]) -> String {

@@ -152,6 +152,21 @@ final class PortalCollectionParserTests: XCTestCase {
         XCTAssertNil(PortalCollectionParsers.parseElectricityBalance(malformed))
     }
 
+    func testElectricitySettlementWindowUsesAsiaShanghaiAndExcludesOneAM() throws {
+        let formatter = ISO8601DateFormatter()
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+
+        let start = try XCTUnwrap(formatter.date(from: "2026-08-16T00:00:00+08:00"))
+        let lastMinute = try XCTUnwrap(formatter.date(from: "2026-08-16T00:59:00+08:00"))
+        let end = try XCTUnwrap(formatter.date(from: "2026-08-16T01:00:00+08:00"))
+        let utcMidnight = try XCTUnwrap(formatter.date(from: "2026-08-16T00:00:00Z"))
+
+        XCTAssertTrue(OfflineDatePolicy.isElectricitySettlementTime(start))
+        XCTAssertTrue(OfflineDatePolicy.isElectricitySettlementTime(lastMinute))
+        XCTAssertFalse(OfflineDatePolicy.isElectricitySettlementTime(end))
+        XCTAssertFalse(OfflineDatePolicy.isElectricitySettlementTime(utcMidnight))
+    }
+
     func testVisibleEducationPayloadOnlyNeedsSanitizedFields() throws {
         let data = try JSONSerialization.data(withJSONObject: [
             "phase": "success",

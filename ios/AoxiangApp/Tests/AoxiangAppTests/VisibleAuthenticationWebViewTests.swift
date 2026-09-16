@@ -71,6 +71,28 @@ final class VisibleAuthenticationWebViewTests: XCTestCase {
         assertCollectionRetryableState(model)
     }
 
+    func testCancelledNavigationWithoutElectricityHandoffFailsCollection() async throws {
+        let model = makeReadyModel()
+        let task = Task { @MainActor in
+            try await model.collectElectricityBalance()
+        }
+        await yieldToCollectionStart()
+
+        model.webView(
+            model.webView,
+            didFailProvisionalNavigation: nil,
+            withError: NSError(domain: NSURLErrorDomain, code: NSURLErrorCancelled)
+        )
+
+        do {
+            _ = try await task.value
+            XCTFail("expected retryable collection failure")
+        } catch let failure as PortalCollectionFailure {
+            XCTAssertEqual(failure, .retryable(.networkUnavailable))
+        }
+        assertCollectionRetryableState(model)
+    }
+
     private func assertCollectionCancellation(
         _ operation: @escaping @MainActor (VisibleAuthenticationViewModel) async throws -> Void
     ) async {

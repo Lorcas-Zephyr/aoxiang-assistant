@@ -576,3 +576,141 @@
 - Verification: Python 95 tests, AoxiangCore 88 tests, AoxiangApp 35 tests, and
   `git diff --check` passed. Windows cannot replace macOS WebKit/Xcode or real iPadOS
   layout evidence; the next IPA must be built from this exact source.
+
+## 2026-09-16 electricity-first diagnosis
+
+- User explicitly deferred Widget visual work until the foreground electricity reader
+  no longer remains on the loading sheet.
+- Compared the iOS visible WebView against Android `auto_collect.js`: iOS now uses
+  the correct Berserker redirect and document-start capture, but its pending CAS
+  allowance currently ends too early after the page initiates `location.replace`.
+- Next vertical slice: create red tests for retaining the allowance through the
+  hand-off and ignoring only expected `NSURLErrorCancelled` navigation callbacks;
+  then make the minimal state-machine correction and rerun portable suites.
+
+## 2026-09-16 electricity-first repair
+
+- [x] Added a direct Android-compatible fee-item URL builder and kept the
+  Berserker redirect as a one-shot page-side fallback.
+- [x] Added bounded redirect/probe state, numeric bridge normalization, and
+  fail-closed validation for the returned electricity balance.
+- [x] Added same-origin iframe traversal and document-start `postMessage`
+  aggregation for balances captured inside iframe fetch/XHR contexts.
+- [x] Added policy tests for the direct URL and expected WebKit navigation
+  interruptions; added Node runtime coverage for iframe Vue data.
+- [x] Python/Node visible collection tests: 29 passed; Swift App tests: 44
+  passed; Swift Core tests: 89 passed; golden fixture validator passed;
+  `git diff --check` passed.
+- [ ] Build a fresh macOS `iphoneos` archive and validate the re-signed
+  `sideload` IPA on iPad. Widget visual work remains postponed until this
+  electricity path is observed to either commit a balance or fail with a
+  bounded retryable state.
+## 2026-09-16 Electricity-first repair resumed
+
+- Reconfirmed the user-visible failure: electricity collection can remain on
+  the loading page after portal redirection. Widget redesign remains paused.
+- Root-cause audit: `redirect_started` / `direct_started` marked a WebKit
+  hand-off but did not guarantee a subsequent `scheduleElectricityEvaluation()`.
+  A `location.replace` cancellation with no later `didFinish` therefore left
+  the collection continuation pending until timeout.
+- Next: complete the scoped navigation/state-machine patch, add regression
+  coverage for the callback-free hand-off and cancellation boundary, then run
+  Swift/Python/package regressions before producing another sideload artifact.
+
+## 2026-09-16 Electricity repair evidence and Widget resume
+
+- Electricity visible-WebView repair now probes the `/plat` hand-off through
+  same-origin frames, re-schedules after `redirect_started`/`direct_started`,
+  and limits benign `-999`/WK102 handling to an active electricity hand-off.
+- Collection UI now exposes a cancellation control and protects newer work
+  from stale cancelled-task state writes with a collection ID.
+- Focused checks passed: visible collection Python suite (40 tests), AoxiangApp
+  Swift package (45 tests), cancellation UI test (2 tests), and `git diff --check`.
+- Widget work resumed after inspecting the supplied daily large, weekly large,
+  and daily medium references. The next implementation will share their
+  compact pale-glass, course-rail and timetable language across all widgets.
+
+## 2026-09-16 Electricity incident UI audit
+
+- Restored the active electricity-first goal and audited the foreground seam.
+- Confirmed that the collector's 30-second WebKit watchdog exists, but the
+  management sheet still presents a single aggregate loading message while
+  education and electricity work run. Next slice: make electricity stages and
+  bounded retry outcome observable, then validate the hand-off behavior.
+- Identified a concrete redirect dead-end: a `/berserker-base/redirect` page
+  that remains in its loading shell never meets the existing `/jfdt/`-only
+  direct-fallback condition. The next TDD slice adds a bounded direct fallback
+  from that hand-off path and a source-level UI result that users can retry.
+
+## 2026-09-16 bounded redirect fallback slice
+
+- [x] Added `electricityDirectFallbackHandoffProbeLimit = 6` and a pure policy
+  seam that only permits fallback on the allow-listed card redirect host/path,
+  after the limit, and before a direct attempt has already been made.
+- [x] The visible WebView now counts timed redirect-page probes and invokes the
+  existing direct fee-item script after the sixth probe. Token values remain
+  inside page JavaScript; no credential or cookie crosses into Swift.
+- [x] Added Swift policy coverage and a source-level regression for the
+  redirect loading shell escape. `swift test` passes: 48 tests, 0 failures;
+  visible script tests pass: 4 tests, 0 failures.
+
+## 2026-09-16 renewed electricity investigation
+
+- User reports the device still stalls on the electricity information-loading
+  surface. Widget redesign is paused.
+- Logged a stricter acceptance boundary: every foreground electricity run must
+  finish with either a persisted validated balance or an actionable retryable failure;
+  it must not leave the collection sheet pending after the bounded redirect path.
+- Confirmed delivery gap: `HEAD` and `origin/iOS` are both `8a55dcf`, while the
+  electricity redirect repair is still uncommitted. The iPad cannot have tested that
+  local source until it is built and packaged into a new IPA.
+
+## 2026-09-16 Android contract comparison
+
+- Android audit found the iOS `/plat` bridge has an extra `portalReady` body-text
+  gate before it uses a readable same-origin token. The actual Android API collector
+  navigates with the token immediately, including from a "查询信息" loading shell.
+- Next red/green slice: add a script-runtime regression for loading shell + token,
+  retain the login-shell no-navigation guard, then make the token-first correction.
+
+## 2026-09-16 loading-shell token hand-off repair
+
+- Ran the new runtime seam before the fix: it deterministically returned `waiting`
+  and remained at `/plat` for `查询信息` plus a same-origin session token.
+- Removed the extra body-marker gate. The bridge now blocks only an explicit login
+  shell or a missing token, then uses the established Android redirect/direct URL.
+- Red/green proof: the exact runtime test now passes; full visible collection runtime
+  suite (40), static script suite (4), and Swift navigation-policy suite (14) pass.
+
+## 2026-09-16 bounded electricity completion and build 4
+
+- Added `electricityMissingBalanceProbeLimit` plus a pure policy seam. After a direct
+  fee-page attempt and ten invalid balance probes, the foreground continuation returns
+  a retryable `serverUnavailable` result; the collector preserves valid education data
+  as an electricity warning.
+- The new policy test was first compiled red, then passed after the minimal handler path
+  was added. Full AoxiangApp XCTest passes 49 tests; AoxiangCore XCTest passes 90 tests;
+  focused visible runtime/script suites pass 40 and 5 tests; golden validation and
+  `git diff --check` pass. Windows still cannot replace a real iPadOS WebKit run.
+- Updated both targets and the macOS re-signable IPA workflow to `1.0.1 (4)`. The fresh
+  artifact must be built from a committed electricity-only subset; Widget visual work
+  remains intentionally unstaged for the device validation package.
+
+## 2026-09-16 review-driven electricity hardening
+
+- Before committing, a focused read-only review identified direct-fallback redirect-shell,
+  slow sequential resource-fetch, stale-login-token, and token-bearing URL cache risks.
+- Electricity packaging is paused while these paths receive small TDD slices. The existing
+  staged subset will be refreshed after the additional tests and implementation pass.
+
+## 2026-09-16 electricity repair readiness check
+
+- [x] Added the Asia/Shanghai electricity settlement guard: 00:00-00:59 ends
+  immediately with a structured settlement issue; 01:00 is eligible for collection.
+- [x] Propagated the settlement case through the foreground collector and UI without
+  discarding valid grades, schedule data, or the previous Widget snapshot.
+- [x] Re-ran Python tests (123), AoxiangCore tests (91), AoxiangApp tests (59),
+  visible WebView script tests, golden fixture validation (15 scenarios/32 files),
+  and `git diff --check`; all passed on Windows.
+- [ ] A fresh macOS `iphoneos` archive and user-side sideload/iPad observation are still
+  required before claiming the electricity reader is usable on-device.

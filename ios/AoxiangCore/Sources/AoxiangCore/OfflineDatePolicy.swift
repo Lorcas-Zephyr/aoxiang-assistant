@@ -13,4 +13,12 @@ public enum OfflineDatePolicy {
         }
         return calendar
     }
+
+    /// The card provider settles electricity readings during the first local
+    /// hour of each business day. Keep this rule in the portable date policy
+    /// so iOS and Android adapters do not accidentally use the device locale
+    /// or UTC when deciding whether a read can be completed.
+    public static func isElectricitySettlementTime(_ date: Date = Date()) -> Bool {
+        businessCalendar.component(.hour, from: date) == 0
+    }
 }

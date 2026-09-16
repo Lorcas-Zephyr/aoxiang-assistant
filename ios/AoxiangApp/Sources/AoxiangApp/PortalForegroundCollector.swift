@@ -94,24 +94,15 @@ public struct PortalForegroundCollector {
                     }
                 }
                 var electricity: Double?
+                var electricityIssue: ElectricityCollectionIssue?
                 var warnings: [PortalCollectionWarning] = []
                 if !education.scheduleAvailable {
                     warnings.append(.scheduleUnavailable)
                 }
-                do {
-                    let value = try await electricityProvider()
-                    guard value.isFinite, value >= 0, value < 100000 else {
-                        throw PortalCollectionFailure.invalidResponse("electricity balance invalid")
-                    }
-                    electricity = value
-                } catch let failure as PortalCollectionFailure {
-                    switch failure {
-                    case .cancelled:
-                        throw failure
-                    case .authenticationRequired, .smsRequired, .retryable, .invalidResponse:
-                        warnings.append(.electricityUnavailable)
-                    }
-                } catch {
+                let electricityReading = try await readElectricity()
+                electricity = electricityReading.balance
+                electricityIssue = electricityReading.issue
+                if electricityIssue != nil {
                     warnings.append(.electricityUnavailable)
                 }
                 return PortalCollectedData(
@@ -119,6 +110,7 @@ public struct PortalForegroundCollector {
                     gpa: PortalCollectionParsers.selectGPA(api: education.gpa, portrait: portraitGPA),
                     schedule: education.schedule,
                     electricityBalance: electricity,
+                    electricityIssue: electricityIssue,
                     warnings: warnings,
                     scheduleAvailable: education.scheduleAvailable
                 )
@@ -129,7 +121,7 @@ public struct PortalForegroundCollector {
                     // shape. Keep the authenticated cookie store and fall back
                     // to the allow-listed HTTP path before failing the run.
                     break
-                case .authenticationRequired, .smsRequired, .cancelled:
+                case .authenticationRequired, .smsRequired, .settlement, .cancelled:
                     throw failure
                 }
             }
@@ -257,16 +249,13 @@ public struct PortalForegroundCollector {
             // an empty schedule instead of masking the success with a generic
             // grade error; the next foreground run can refresh the schedule.
             switch failure {
-            case .authenticationRequired, .smsRequired, .cancelled:
+            case .authenticationRequired, .smsRequired, .settlement, .cancelled:
                 throw failure
             case .retryable, .invalidResponse:
-                return PortalCollectedData(
-                    grades: PortalCollectionParsers.keepHighest(parsedGrades.grades),
+                return try await partialResult(
+                    grades: parsedGrades.grades,
                     gpa: selectedGPA,
-                    schedule: emptySchedulePayload(),
-                    electricityBalance: try await optionalElectricityBalance(),
-                    warnings: [.scheduleUnavailable],
-                    scheduleAvailable: false
+                    warnings: [.scheduleUnavailable]
                 )
             }
         }
@@ -328,7 +317,7 @@ public struct PortalForegroundCollector {
                 case .invalidResponse:
                     // Keep the course-table semester object when the enrichment endpoint is absent.
                     break
-                case .authenticationRequired, .smsRequired, .cancelled:
+                case .authenticationRequired, .smsRequired, .settlement, .cancelled:
                     throw failure
                 case .retryable:
                     return try await partialResult(
@@ -344,7 +333,7 @@ public struct PortalForegroundCollector {
                 ).0
             } catch let failure as PortalCollectionFailure {
                 switch failure {
-                case .authenticationRequired, .smsRequired, .cancelled:
+                case .authenticationRequired, .smsRequired, .settlement, .cancelled:
                     throw failure
                 case .retryable, .invalidResponse:
                     return try await partialResult(
@@ -378,21 +367,12 @@ public struct PortalForegroundCollector {
         }
 
         var electricity: Double?
+        var electricityIssue: ElectricityCollectionIssue?
         var warnings: [PortalCollectionWarning] = []
-        do {
-            let value = try await electricityProvider()
-            guard value.isFinite, value >= 0, value < 100000 else {
-                throw PortalCollectionFailure.invalidResponse("electricity balance invalid")
-            }
-            electricity = value
-        } catch let failure as PortalCollectionFailure {
-            switch failure {
-            case .cancelled:
-                throw failure
-            case .authenticationRequired, .smsRequired, .retryable, .invalidResponse:
-                warnings.append(.electricityUnavailable)
-            }
-        } catch {
+        let electricityReading = try await readElectricity()
+        electricity = electricityReading.balance
+        electricityIssue = electricityReading.issue
+        if electricityIssue != nil {
             warnings.append(.electricityUnavailable)
         }
         return PortalCollectedData(
@@ -400,6 +380,7 @@ public struct PortalForegroundCollector {
             gpa: selectedGPA,
             schedule: schedule,
             electricityBalance: electricity,
+            electricityIssue: electricityIssue,
             warnings: warnings
         )
     }
@@ -411,19 +392,38 @@ public struct PortalForegroundCollector {
         )
     }
 
-    private func optionalElectricityBalance() async throws -> Double? {
+    private struct ElectricityReading {
+        let balance: Double?
+        let issue: ElectricityCollectionIssue?
+    }
+
+    private func readElectricity() async throws -> ElectricityReading {
         do {
             let value = try await electricityProvider()
-            return value.isFinite && value >= 0 && value < 100000 ? value : nil
+            guard value.isFinite, value >= 0, value < 100000 else {
+                return ElectricityReading(
+                    balance: nil,
+                    issue: .invalidResponse("electricity balance invalid")
+                )
+            }
+            return ElectricityReading(balance: value, issue: nil)
         } catch let failure as PortalCollectionFailure {
             switch failure {
             case .cancelled:
                 throw failure
-            case .authenticationRequired, .smsRequired, .retryable, .invalidResponse:
-                return nil
+            case .authenticationRequired:
+                return ElectricityReading(balance: nil, issue: .needsLogin)
+            case .smsRequired:
+                return ElectricityReading(balance: nil, issue: .needsSMS)
+            case .retryable(let reason):
+                return ElectricityReading(balance: nil, issue: .retryable(reason))
+            case .invalidResponse(let message):
+                return ElectricityReading(balance: nil, issue: .invalidResponse(message))
+            case .settlement:
+                return ElectricityReading(balance: nil, issue: .settlement)
             }
         } catch {
-            return nil
+            return ElectricityReading(balance: nil, issue: .retryable(.networkUnavailable))
         }
     }
 
@@ -432,12 +432,18 @@ public struct PortalForegroundCollector {
         gpa: Double?,
         warnings: [PortalCollectionWarning]
     ) async throws -> PortalCollectedData {
-        PortalCollectedData(
+        let electricity = try await readElectricity()
+        var combinedWarnings = warnings
+        if electricity.issue != nil, !combinedWarnings.contains(.electricityUnavailable) {
+            combinedWarnings.append(.electricityUnavailable)
+        }
+        return PortalCollectedData(
             grades: PortalCollectionParsers.keepHighest(grades),
             gpa: gpa,
             schedule: emptySchedulePayload(),
-            electricityBalance: try await optionalElectricityBalance(),
-            warnings: warnings,
+            electricityBalance: electricity.balance,
+            electricityIssue: electricity.issue,
+            warnings: combinedWarnings,
             scheduleAvailable: false
         )
     }

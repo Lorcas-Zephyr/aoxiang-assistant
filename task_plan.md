@@ -550,6 +550,41 @@ iOS 迁移保留清晰的存储/备份 seam。
   the three WebView continuations deterministically and classify navigation failures as
   collection failures when a collection is active.
 - [x] Add static layout coverage and lifecycle regression seams.
+
+## 2026-09-16 electricity-first continuation
+
+The Widget visual redesign remains the active goal, but the user has explicitly
+prioritized a blocking foreground electricity collection failure first. Do not
+change Widget layouts until the following focused repair is verified.
+
+- [x] Phase 1: Compare the iOS visible-WebView flow to Android's card portal hand-off
+  and capture the supplied loading-state evidence.
+- [ ] Phase 2: Add red regression seams for the redirect lifecycle and benign WebKit
+  cancellation behavior, then repair the iOS navigation state machine.
+- [ ] Phase 3: Run the focused Swift/Node/Python suites and update the delivery record.
+- [ ] Phase 4: Resume the requested Widget layouts and Liquid Glass styling only after
+  the electricity regression suite is green.
+
+### Current hypotheses
+
+1. **Most likely:** the iOS model clears its expected-electricity-SSO allowance as
+   soon as `/plat` has asked the browser to navigate to `/berserker-base/redirect`.
+   The server may still visit CAS/SSO before `/jfdt` has a session, so the following
+   callback can be misclassified as expired authentication.
+2. **Likely:** `WKWebView` reports `NSURLErrorCancelled` / frame-load-interrupted
+   during an intentional `location.replace`; treating every navigation failure as
+   network loss aborts a healthy card redirect.
+3. **Covered fallback:** the final Vue page can remain a loading shell even after
+   a POST/XHR balance response. The document-start capture seam must remain installed
+   before that request and may only export a validated numeric balance.
+
+### Constraints
+
+- Keep password, Cookie values, SMS codes, request bodies and raw response bodies
+  inside WebKit. Only a finite `0...<100000` electricity balance may cross into the
+  app state and Widget snapshot.
+- Do not claim real-device success until a fresh Widget-preserving `sideload` IPA is
+  built from the repair and observed on the iPad.
 - [x] Run Python 95 tests, AoxiangCore 88 tests, AoxiangApp 35 tests and
   `git diff --check`; all pass on Windows. A real iPadOS/Xcode archive remains the
   platform-specific delivery gate.
@@ -735,3 +770,42 @@ goal can close. Structify remains out of scope.
   contracts use `group.cn.nwpu.aoxiang-assistant`.
 - [ ] User-side re-sign, install, foreground collection and Widget gallery
   evidence remain required before closing the goal.
+
+## 2026-09-16 electricity-first repair phase
+
+- [x] Restore the Android direct fee-item contract (`feeitemid=182`) and add a
+  one-shot Berserker redirect fallback without moving the token into Swift.
+- [x] Aggregate validated balances from same-origin iframe pages and iframe
+  fetch/XHR capture into the visible main-frame probe.
+- [x] Normalize WebKit numeric bridge values and classify expected navigation
+  replacement errors through a pure policy seam.
+- [x] Run Python/Node, Swift App/Core, golden fixture, and diff checks.
+- [ ] Require a fresh macOS archive and real iPad observation before claiming
+  the electricity repair is complete; defer Widget redesign until then.
+
+## 2026-09-16 device report: electricity still stalls
+
+- User reports that the sideloaded iPad build still remains on the electricity
+  "reading information" screen after the previously implemented redirect fallback.
+- Widget visual work is paused. The immediate acceptance gate is no longer merely
+  reaching a fee page: foreground collection must either persist a validated balance
+  within its bounded attempt or leave the sheet with a visible, retryable failure.
+- Next TDD slice: reproduce the missing terminal state at the public
+  `VisibleAuthenticationWebView` completion seam, then make the smallest state-machine
+  or page-bridge correction and verify the original hand-off scenario.
+
+## 2026-09-16 electricity loading-shell repair
+
+- [x] Reproduced the actual Android/iOS divergence with the extracted WebView script:
+  a `/plat` page containing `查询信息` and a same-origin token returned `waiting` instead
+  of leaving the loading shell.
+- [x] Removed the iOS-only balance-label gate. A non-login shell with a page-owned token
+  now uses the Android-compatible Berserker hand-off, while a login shell keeps the
+  visible authentication path and never forwards a stale token.
+- [x] Added a bounded terminal policy after a direct fee-page attempt has no valid balance;
+  foreground collection now returns a retryable electricity warning instead of leaving the
+  continuation pending behind the 30-second watchdog.
+- [x] Bumped both iPhone/iPad app and Widget build settings to `1.0.1 (4)` and updated the
+  workflow artifact expectation.
+- [ ] Commit only the electricity/runtime/version subset, produce a fresh `sideload` IPA,
+  and verify it on iPad before resuming unfinished Widget visual changes.

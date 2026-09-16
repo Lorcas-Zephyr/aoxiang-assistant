@@ -54,8 +54,74 @@ public struct VisibleCollectionNavigationPolicy {
     public static let electricityCASBootstrapURL = URL(
         string: "https://yktapp.nwpu.edu.cn/berserker-auth/cas/login/supwisdom?targetUrl=https%3A%2F%2Fyktapp.nwpu.edu.cn%2Fplat"
     )!
+    /// The card portal's authenticated hand-off. The `/plat` page must pass
+    /// its `synjones-auth` token through this endpoint before the server can
+    /// establish the `/jfdt` page session. Keep these values aligned with the
+    /// Android `auto_collect.js` flow.
+    public static let electricityRedirectPath = "/berserker-base/redirect"
+    /// The currently deployed fee page. Keep this separate from the CAS
+    /// hand-off because both routes are used by the Android collector: the
+    /// direct route is the stable data entry point, while the redirect is a
+    /// recovery path for deployments that first need a card-session cookie.
+    public static let electricityPagePath = "/jfdt/charge/feeitem/toAppitem"
+    public static let electricityFeeItemID = "182"
+    public static let electricityRedirectAppID = "36"
+    public static let electricityRedirectType = "app"
+    public static let electricityRedirectLoginFrom = "h5"
+    public static let electricityRedirectTokenParameter = "synjones-auth"
+    /// Number of independent probes allowed on the redirect loading shell
+    /// before trying the Android-compatible direct fee page. This keeps a
+    /// page-owned redirect from consuming the whole foreground watchdog.
+    public static let electricityDirectFallbackHandoffProbeLimit = 6
+    /// Once the direct fee page has been tried, a further bounded set of
+    /// no-balance probes is enough to distinguish a delayed render from a
+    /// portal that cannot return data during this foreground attempt.
+    public static let electricityMissingBalanceProbeLimit = 10
+    /// A direct fee-page recovery that leaves the WebView on the redirect
+    /// family of loading shells has not actually navigated. Do not let that
+    /// page-owned failure consume the foreground watchdog.
+    public static let electricityDirectFallbackRedirectProbeLimit = 4
+    /// Names accepted by the card portal for the in-page hand-off token.
+    /// Values stay inside JavaScript/WebKit and are never returned to Swift.
+    public static let electricityTokenCookieNames = [
+        "synjones-auth", "access_token", "accessToken", "synjonesAuth", "token"
+    ]
+    public static let electricityAuthEntryLabels = ["统一身份认证", "统一登录", "更多登录方式"]
 
     public init() {}
+
+    public static func electricityRedirectURL(token: String) -> URL? {
+        let normalizedToken = token.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedToken.isEmpty else { return nil }
+        var components = URLComponents()
+        components.scheme = "https"
+        components.host = "yktapp.nwpu.edu.cn"
+        components.path = electricityRedirectPath
+        components.queryItems = [
+            URLQueryItem(name: "appId", value: electricityRedirectAppID),
+            URLQueryItem(name: "type", value: electricityRedirectType),
+            URLQueryItem(name: electricityRedirectTokenParameter, value: normalizedToken),
+            URLQueryItem(name: "loginFrom", value: electricityRedirectLoginFrom),
+        ]
+        return components.url
+    }
+
+    public static func electricityPageURL(token: String) -> URL? {
+        let normalizedToken = token.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedToken.isEmpty else { return nil }
+        var components = URLComponents()
+        components.scheme = "https"
+        components.host = "yktapp.nwpu.edu.cn"
+        components.path = electricityPagePath
+        components.queryItems = [
+            URLQueryItem(name: "feeitemid", value: electricityFeeItemID),
+            URLQueryItem(name: electricityRedirectTokenParameter, value: normalizedToken),
+            URLQueryItem(name: "appId", value: electricityRedirectAppID),
+            URLQueryItem(name: "loginFrom", value: electricityRedirectLoginFrom),
+            URLQueryItem(name: "type", value: electricityRedirectType),
+        ]
+        return components.url
+    }
 
     public func isAuthenticationRedirect(
         _ url: URL?,
@@ -64,7 +130,8 @@ public struct VisibleCollectionNavigationPolicy {
     ) -> Bool {
         if target == .electricity,
            allowsExpectedElectricityCASBootstrap,
-           isExpectedElectricityCASBootstrap(url) {
+           (isExpectedElectricityCASBootstrap(url) ||
+            isExpectedElectricityAuthenticationIntermediate(url)) {
             return false
         }
         guard let url else { return false }
@@ -77,6 +144,135 @@ public struct VisibleCollectionNavigationPolicy {
             || path.contains("error")
             || path.contains("unauthorized")
             || path.contains("forbidden")
+    }
+
+    /// The card flow may pass through the university SSO host before it
+    /// returns to `/plat`. These are expected hops while the initial CAS
+    /// bootstrap is pending; malformed/error destinations still fail closed
+    /// through `isAuthenticationRedirect` above.
+    public func isExpectedElectricityAuthenticationIntermediate(_ url: URL?) -> Bool {
+        guard let url,
+              url.scheme?.lowercased() == "https",
+              let host = url.host?.lowercased() else { return false }
+        let path = url.path.lowercased()
+        let text = url.absoluteString.lowercased()
+        if path.contains("error") || path.contains("unauthorized") || path.contains("forbidden") ||
+            text.contains("error=") || text.contains("error%3d") {
+            return false
+        }
+        if host == "yktapp.nwpu.edu.cn" {
+            if path == Self.electricityRedirectPath || path.hasPrefix("/berserker-auth/") {
+                return true
+            }
+            let isPortalPage = path == "/plat" || path.hasPrefix("/plat/") || path.hasPrefix("/jfdt/")
+            return isPortalPage && !path.contains("login")
+        }
+        guard ["uis.nwpu.edu.cn", "authserver.nwpu.edu.cn", "passport.nwpu.edu.cn"].contains(host) else {
+            return false
+        }
+        return path.contains("login") || path.contains("/cas/") ||
+            path.contains("/sso/") || path.contains("/auth")
+    }
+
+    /// Keeps the initial electricity authentication allowance open while the
+    /// card portal is still establishing its session. The final `/jfdt` page
+    /// is deliberately excluded because a later login redirect is then a real
+    /// authentication failure rather than a bootstrap hop.
+    public func shouldMaintainElectricityBootstrapAllowance(after url: URL?) -> Bool {
+        guard let url,
+              isExpectedElectricityAuthenticationIntermediate(url) else { return false }
+        return !url.path.lowercased().hasPrefix("/jfdt/")
+    }
+
+    /// A redirect page is a valid hand-off only while it is making progress.
+    /// Once the bounded probe count is reached, the caller may try the direct
+    /// fee-item route using the token already owned by that same page.
+    public func shouldStartElectricityDirectFallback(
+        afterHandoffProbes: Int,
+        at url: URL?,
+        hasAlreadyTriedDirectPage: Bool
+    ) -> Bool {
+        guard !hasAlreadyTriedDirectPage,
+              afterHandoffProbes >= Self.electricityDirectFallbackHandoffProbeLimit,
+              isElectricityRedirectLoadingShell(url) else { return false }
+        return true
+    }
+
+    /// A direct fee-page attempt that repeatedly produces no validated
+    /// balance is terminal for this foreground collection. The caller turns
+    /// it into a retryable result so already collected education data remains
+    /// usable instead of leaving the visible sheet indefinitely pending.
+    public func shouldFinishElectricityAfterMissingBalance(
+        afterBalanceProbes: Int,
+        hasAlreadyTriedDirectPage: Bool
+    ) -> Bool {
+        hasAlreadyTriedDirectPage &&
+            afterBalanceProbes >= Self.electricityMissingBalanceProbeLimit
+    }
+
+    /// The redirect endpoint can rebound to `/plat` after a failed direct
+    /// route. Both paths are loading shells once a direct fee-page hand-off
+    /// has already been attempted, so they share one short terminal window.
+    public func shouldFinishElectricityAfterDirectFallbackRedirect(
+        afterFallbackProbes: Int,
+        at url: URL?,
+        hasAlreadyTriedDirectPage: Bool
+    ) -> Bool {
+        guard hasAlreadyTriedDirectPage,
+              afterFallbackProbes >= Self.electricityDirectFallbackRedirectProbeLimit,
+              isElectricityDirectFallbackLoadingShell(url) else { return false }
+        return true
+    }
+
+    public func isElectricityDirectFallbackLoadingShell(_ url: URL?) -> Bool {
+        guard let url,
+              url.scheme?.lowercased() == "https",
+              url.host?.lowercased() == "yktapp.nwpu.edu.cn" else { return false }
+        let path = url.path.lowercased()
+        return path == Self.electricityRedirectPath || path == "/plat" || path.hasPrefix("/plat/")
+    }
+
+    /// A page inspection only needs its origin and path. Never retain query
+    /// values or fragments, because the card flow can place `synjones-auth`
+    /// in the current URL while the page completes its same-origin hand-off.
+    public static func sanitizedInspectionURLKey(for url: URL) -> String? {
+        guard let scheme = url.scheme?.lowercased(),
+              let host = url.host?.lowercased() else { return nil }
+        let port = url.port.map { ":\($0)" } ?? ""
+        return "\(scheme)://\(host)\(port)\(url.path)"
+    }
+
+    /// Deliberately narrow: only the first-party hand-off endpoint is allowed
+    /// to trigger a fee-page fallback. SSO and final `/jfdt` pages retain their
+    /// normal behavior.
+    public func isElectricityRedirectLoadingShell(_ url: URL?) -> Bool {
+        guard let url,
+              url.scheme?.lowercased() == "https",
+              url.host?.lowercased() == "yktapp.nwpu.edu.cn" else { return false }
+        return url.path.lowercased() == Self.electricityRedirectPath
+    }
+
+    /// WebKit can report a page-owned `location.replace` as a cancelled or
+    /// frame-interrupted navigation. The caller decides whether the current
+    /// operation is an expected electricity hand-off; this pure helper only
+    /// classifies the narrow WebKit error shapes.
+    public static func isExpectedWebViewNavigationInterruption(_ error: Error) -> Bool {
+        let nsError = error as NSError
+        if nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorCancelled {
+            return true
+        }
+        return nsError.domain == "WKErrorDomain" && nsError.code == 102
+    }
+
+    /// A cancellation-shaped WebKit error is only safe to ignore after this
+    /// collector has intentionally started the card-platform hand-off. The
+    /// same error before that point can otherwise leave a continuation waiting
+    /// until its watchdog fires.
+    public static func isExpectedWebViewNavigationInterruption(
+        _ error: Error,
+        duringElectricityHandoff: Bool
+    ) -> Bool {
+        duringElectricityHandoff && isExpectedWebViewNavigationInterruption(error)
     }
 
     public func isExpectedElectricityCASBootstrap(_ url: URL?) -> Bool {
@@ -132,13 +328,19 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
     private let loginURL: URL
     private let successRule: AuthenticationSuccessRule
     private let sessionStore: AuthenticationSessionStore
-    private var lastInspectedURL: URL?
+    private var lastInspectedURLKey: String?
     private var stateDetectionInFlight = false
     private var electricityContinuation: CheckedContinuation<Double, Error>?
     private var electricityTimeoutTask: Task<Void, Never>?
     private var electricityPollTask: Task<Void, Never>?
     private var electricityEvaluationInFlight = false
     private var electricityCASBootstrapPending = false
+    private var electricityRedirectAttempted = false
+    private var electricityDirectFallbackAttempted = false
+    private var electricityNavigationHandoffPending = false
+    private var electricityBalanceProbeCount = 0
+    private var electricityHandoffProbeCount = 0
+    private var electricityDirectFallbackRedirectProbeCount = 0
     private var portraitContinuation: CheckedContinuation<String?, Error>?
     private var portraitTimeoutTask: Task<Void, Never>?
     private var educationContinuation: CheckedContinuation<PortalVisibleEducationData, Error>?
@@ -163,6 +365,11 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
         self.machine = AuthenticationStateMachine(initialState: initialState)
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = websiteDataStore
+        configuration.userContentController.addUserScript(WKUserScript(
+            source: Self.electricityNetworkCaptureScript,
+            injectionTime: .atDocumentStart,
+            forMainFrameOnly: false
+        ))
         webView = WKWebView(frame: .zero, configuration: configuration)
         super.init()
         webView.navigationDelegate = self
@@ -174,7 +381,7 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
         state = machine.state
         sessionStore.set(state)
         lastError = nil
-        lastInspectedURL = nil
+        lastInspectedURLKey = nil
         stateDetectionInFlight = false
         webView.load(URLRequest(url: loginURL))
     }
@@ -244,6 +451,12 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
         guard electricityContinuation == nil, portraitContinuation == nil else {
             throw PortalCollectionFailure.retryable(.invalidResponse)
         }
+        // Match Android's business-time guard. A settlement-window attempt
+        // must finish immediately with an actionable result instead of
+        // opening a WebView that can only remain on its loading shell.
+        guard !OfflineDatePolicy.isElectricitySettlementTime() else {
+            throw PortalCollectionFailure.settlement
+        }
         return try await withTaskCancellationHandler(operation: {
             try await withCheckedThrowingContinuation { continuation in
                 guard !Task.isCancelled else {
@@ -251,22 +464,42 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
                     return
                 }
                 electricityContinuation = continuation
+                // Cancellation can arrive between the guard above and the
+                // continuation assignment. Recheck after ownership exists so
+                // the cancellation handler cannot leave this task suspended.
+                guard !Task.isCancelled else {
+                    finishElectricity(.failure(PortalCollectionFailure.cancelled))
+                    return
+                }
                 electricityCASBootstrapPending = true
                 electricityPollTask?.cancel()
                 electricityPollTask = nil
                 electricityEvaluationInFlight = false
+                electricityRedirectAttempted = false
+                electricityDirectFallbackAttempted = false
+                electricityNavigationHandoffPending = false
+                electricityBalanceProbeCount = 0
+                electricityHandoffProbeCount = 0
+                electricityDirectFallbackRedirectProbeCount = 0
                 electricityTimeoutTask?.cancel()
                 electricityTimeoutTask = Task { [weak self] in
-                    // A missing balance must not hold the complete foreground
-                    // collection open indefinitely. Grades and the schedule are
-                    // committed independently when this bounded probe expires.
-                    try? await Task.sleep(nanoseconds: 12_000_000_000)
+                    // The card portal may need several redirects and a
+                    // settlement API round trip. Keep the foreground probe
+                    // bounded without leaving the collection sheet looking
+                    // stuck for a full minute when the portal is unavailable.
+                    try? await Task.sleep(nanoseconds: 30_000_000_000)
                     guard !Task.isCancelled else { return }
                     await MainActor.run {
                         self?.finishElectricity(.failure(PortalCollectionFailure.retryable(.serverUnavailable)))
                     }
                 }
                 webView.load(URLRequest(url: electricityLoginURL))
+                // WebKit may omit didCommit/didFinish when a page-owned
+                // location.replace supersedes the bootstrap request. Start a
+                // callback-independent probe immediately so the collection
+                // cannot remain suspended just because that navigation event
+                // was coalesced.
+                scheduleElectricityEvaluation()
             }
         }, onCancel: { [weak self] in
             Task { @MainActor [weak self] in
@@ -292,6 +525,10 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
                     return
                 }
                 portraitContinuation = continuation
+                guard !Task.isCancelled else {
+                    finishPortrait(.failure(PortalCollectionFailure.cancelled))
+                    return
+                }
                 portraitTimeoutTask?.cancel()
                 portraitTimeoutTask = Task { [weak self] in
                     try? await Task.sleep(nanoseconds: 12_000_000_000)
@@ -327,6 +564,10 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
                     return
                 }
                 educationContinuation = continuation
+                guard !Task.isCancelled else {
+                    finishEducation(.failure(PortalCollectionFailure.cancelled))
+                    return
+                }
                 educationEvaluationInFlight = false
                 educationTimeoutTask?.cancel()
                 educationTimeoutTask = Task { [weak self] in
@@ -398,8 +639,11 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
             return
         }
         if electricityContinuation != nil,
-           navigationPolicy.isExpectedElectricityCASBootstrap(webView.url) {
-            electricityCASBootstrapPending = false
+           electricityCASBootstrapPending,
+           navigationPolicy.isExpectedElectricityAuthenticationIntermediate(webView.url) {
+            // Keep the bootstrap gate open across CAS/SSO intermediate pages.
+            // It closes only after the card portal returns to /plat or /jfdt.
+            scheduleElectricityEvaluation()
         }
         if portraitContinuation != nil,
            navigationPolicy.isAuthenticationRedirect(
@@ -415,11 +659,21 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
         handleElectricityNavigation(in: webView)
     }
 
+    public func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
+        // Some portal redirects commit a new document but never deliver a
+        // normal didFinish callback before the page-owned replacement starts.
+        // The electricity handler is idempotent and will either probe the
+        // committed page or schedule a bounded retry.
+        guard electricityContinuation != nil else { return }
+        handleElectricityNavigation(in: webView)
+    }
+
     public func webView(
         _ webView: WKWebView,
         didFail navigation: WKNavigation!,
         withError error: Error
     ) {
+        guard !isExpectedNavigationCancellation(error) else { return }
         recordNavigationFailure(error)
         if electricityContinuation != nil {
             finishElectricity(.failure(PortalCollectionFailure.retryable(.networkUnavailable)))
@@ -437,6 +691,7 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
         didFailProvisionalNavigation navigation: WKNavigation!,
         withError error: Error
     ) {
+        guard !isExpectedNavigationCancellation(error) else { return }
         recordNavigationFailure(error)
         if electricityContinuation != nil {
             finishElectricity(.failure(PortalCollectionFailure.retryable(.networkUnavailable)))
@@ -459,6 +714,18 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
             operation: operation,
             reason: .networkUnavailable
         )))
+    }
+
+    /// `location.replace` is deliberately used during the card portal hand-
+    /// off. WebKit can report the superseded navigation as -999 even though
+    /// the replacement is proceeding normally; treating it as a network
+    /// failure aborts collection before `/jfdt` has a chance to load.
+    private func isExpectedNavigationCancellation(_ error: Error) -> Bool {
+        VisibleCollectionNavigationPolicy.isExpectedWebViewNavigationInterruption(
+            error,
+            duringElectricityHandoff: electricityContinuation != nil &&
+                electricityNavigationHandoffPending
+        )
     }
 
     private func handleEducationNavigation(in webView: WKWebView) {
@@ -530,48 +797,88 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
         guard electricityContinuation != nil, !electricityEvaluationInFlight, let url = webView.url,
               url.host?.lowercased() == "yktapp.nwpu.edu.cn" else { return }
         let path = url.path.lowercased()
-        if path.hasPrefix("/plat") {
-            electricityEvaluationInFlight = true
-            webView.evaluateJavaScript("""
-            (() => {
-              const readStorage = (keys) => {
-                for (const name of ['sessionStorage', 'localStorage']) {
-                  let storage = null;
-                  try {
-                    storage = window[name];
-                  } catch (_) {}
-                  if (!storage) continue;
-                  try {
-                    for (const key of keys) {
-                      const value = storage.getItem(key);
-                      if (value) return value;
-                    }
-                  } catch (_) {}
+        if navigationPolicy.shouldFinishElectricityAfterDirectFallbackRedirect(
+            afterFallbackProbes: electricityDirectFallbackRedirectProbeCount,
+            at: url,
+            hasAlreadyTriedDirectPage: electricityDirectFallbackAttempted
+        ) {
+            finishElectricity(.failure(PortalCollectionFailure.retryable(.serverUnavailable)))
+            return
+        }
+        if path == VisibleCollectionNavigationPolicy.electricityRedirectPath ||
+            path.hasPrefix("/berserker-auth/") {
+            // The redirect endpoint can spend a few seconds establishing the
+            // /jfdt session. Keep a bounded poll alive across this hop, then
+            // use the same-origin token to escape a redirect loading shell.
+            electricityNavigationHandoffPending = true
+            if path == VisibleCollectionNavigationPolicy.electricityRedirectPath {
+                if navigationPolicy.shouldStartElectricityDirectFallback(
+                    afterHandoffProbes: electricityHandoffProbeCount,
+                    at: url,
+                    hasAlreadyTriedDirectPage: electricityDirectFallbackAttempted
+                ) {
+                    startElectricityDirectFallback(in: webView)
+                } else {
+                    scheduleElectricityEvaluation()
                 }
-                return '';
-              };
-              const query = new URL(location.href).searchParams;
-              const token = query.get('synjones-auth') ||
-                readStorage(['access_token', 'accessToken', 'synjones-auth', 'synjonesAuth', 'token']) ||
-                '';
-              if (!token) return false;
-              const target = new URL('/jfdt/charge/feeitem/toAppitem', location.origin);
-              target.searchParams.set('feeitemid', query.get('feeitemid') || '182');
-              target.searchParams.set('synjones-auth', token);
-              target.searchParams.set('appId', query.get('appId') || '36');
-              target.searchParams.set('loginFrom', query.get('loginFrom') || 'h5');
-              target.searchParams.set('type', query.get('type') || 'app');
-              if (location.href !== target.href) location.replace(target.href);
-              return true;
-            })()
-            """) { [weak self] value, error in
+            } else {
+                scheduleElectricityEvaluation()
+            }
+            return
+        }
+        if path.hasPrefix("/plat") {
+            // `location.replace` can cancel the current navigation before its
+            // JavaScript completion callback runs. Mark this narrow hand-off
+            // before evaluation so the expected -999/WK102 callback does not
+            // abort an otherwise valid same-origin transition.
+            electricityNavigationHandoffPending = true
+            electricityEvaluationInFlight = true
+            let script = Self.electricityPortalBootstrapScript.replacingOccurrences(
+                of: "__AOXIANG_REDIRECT_ATTEMPTED__",
+                with: electricityRedirectAttempted ? "true" : "false"
+            )
+            webView.evaluateJavaScript(script) { [weak self] value, error in
                 Task { @MainActor in
                     guard let self else { return }
                     self.electricityEvaluationInFlight = false
                     if let error {
-                        self.finishElectricity(.failure(PortalCollectionFailure.retryable(.serverUnavailable)))
-                        self.lastError = error.localizedDescription
-                    } else if (value as? NSNumber)?.boolValue != true {
+                        if VisibleCollectionNavigationPolicy.isExpectedWebViewNavigationInterruption(error) {
+                            // A page-owned location.replace can interrupt the
+                            // JavaScript evaluation itself. The replacement
+                            // navigation remains the source of truth.
+                            self.electricityNavigationHandoffPending = true
+                            self.electricityRedirectAttempted = true
+                            self.scheduleElectricityEvaluation()
+                        } else {
+                            self.finishElectricity(.failure(PortalCollectionFailure.retryable(.serverUnavailable)))
+                            self.lastError = error.localizedDescription
+                        }
+                    } else if let action = value as? String, action == "auth_clicked" {
+                        // The card page has sent us into another visible SSO
+                        // hop. Keep the bootstrap allowance until a token is
+                        // obtained or the final /jfdt page is reached.
+                        self.electricityNavigationHandoffPending = true
+                        self.scheduleElectricityEvaluation()
+                    } else if let action = value as? String, action == "redirect_started" {
+                        self.electricityNavigationHandoffPending = true
+                        self.electricityRedirectAttempted = true
+                        // The Android-compatible session hand-off has started.
+                        // Navigation callbacks normally move the probe to
+                        // /jfdt, but keep a bounded poll in case WebKit omits
+                        // one during a page-owned replacement.
+                        self.scheduleElectricityEvaluation()
+                    } else if let action = value as? String, action == "direct_started" {
+                        self.electricityNavigationHandoffPending = true
+                        // The direct fee page is the Android-compatible
+                        // primary path. Once it starts, a later CAS redirect
+                        // is a real authentication failure rather than an
+                        // expected bootstrap hop.
+                        self.electricityCASBootstrapPending = false
+                        self.electricityDirectFallbackAttempted = true
+                        self.electricityDirectFallbackRedirectProbeCount = 0
+                        self.scheduleElectricityEvaluation()
+                    } else {
+                        self.electricityNavigationHandoffPending = false
                         self.scheduleElectricityEvaluation()
                     }
                 }
@@ -579,6 +886,10 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
             return
         }
         guard path.hasPrefix("/jfdt/") else { return }
+        electricityCASBootstrapPending = false
+        electricityNavigationHandoffPending = false
+        electricityHandoffProbeCount = 0
+        electricityDirectFallbackRedirectProbeCount = 0
         electricityEvaluationInFlight = true
         Task { @MainActor [weak self, weak webView] in
             guard let self, let webView else { return }
@@ -595,18 +906,90 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
                 )
                 guard self.electricityContinuation != nil else { return }
                 self.electricityEvaluationInFlight = false
-                if let number = value as? NSNumber {
-                    self.finishElectricity(.success(number.doubleValue))
+                if let balance = self.javascriptNumber(value),
+                   balance.isFinite, balance >= 0, balance < 100000 {
+                    self.finishElectricity(.success(balance))
                 } else {
-                    self.scheduleElectricityEvaluation()
+                    self.handleMissingElectricityBalance(in: webView)
                 }
             } catch {
                 guard self.electricityContinuation != nil else { return }
                 self.electricityEvaluationInFlight = false
                 self.lastError = error.localizedDescription
-                self.scheduleElectricityEvaluation()
+                self.handleMissingElectricityBalance(in: webView)
             }
         }
+    }
+
+    private func handleMissingElectricityBalance(in webView: WKWebView) {
+        electricityBalanceProbeCount += 1
+        if electricityBalanceProbeCount >= VisibleCollectionNavigationPolicy.electricityDirectFallbackHandoffProbeLimit,
+           !electricityDirectFallbackAttempted {
+            startElectricityDirectFallback(in: webView)
+        } else if navigationPolicy.shouldFinishElectricityAfterMissingBalance(
+            afterBalanceProbes: electricityBalanceProbeCount,
+            hasAlreadyTriedDirectPage: electricityDirectFallbackAttempted
+        ) {
+            finishElectricity(.failure(PortalCollectionFailure.retryable(.serverUnavailable)))
+        } else {
+            scheduleElectricityEvaluation()
+        }
+    }
+
+    private func startElectricityDirectFallback(in webView: WKWebView) {
+        guard electricityContinuation != nil,
+              !electricityDirectFallbackAttempted,
+              !electricityEvaluationInFlight else { return }
+        // The initial fee-page probe decides whether recovery is needed; it
+        // must not consume the direct page's own bounded render window. The
+        // direct page can still need a few client-side Vue/API turns after its
+        // navigation has committed.
+        electricityBalanceProbeCount = 0
+        electricityDirectFallbackAttempted = true
+        electricityDirectFallbackRedirectProbeCount = 0
+        electricityNavigationHandoffPending = true
+        electricityEvaluationInFlight = true
+        webView.evaluateJavaScript(Self.electricityDirectFallbackScript) { [weak self] value, error in
+            Task { @MainActor in
+                guard let self, self.electricityContinuation != nil else { return }
+                self.electricityEvaluationInFlight = false
+                if let error {
+                    self.lastError = error.localizedDescription
+                    if VisibleCollectionNavigationPolicy.isExpectedWebViewNavigationInterruption(error) {
+                        self.scheduleElectricityEvaluation()
+                    } else {
+                        self.finishElectricity(.failure(PortalCollectionFailure.retryable(.serverUnavailable)))
+                    }
+                } else if self.javascriptString(value) == "needs_login" {
+                    self.finishElectricity(.failure(PortalCollectionFailure.authenticationRequired))
+                } else if self.javascriptString(value) != "direct_started" {
+                    // No page token was available for the direct recovery
+                    // route. Further polling cannot create one, so make the
+                    // failure actionable instead of waiting for the watchdog.
+                    self.finishElectricity(.failure(PortalCollectionFailure.retryable(.serverUnavailable)))
+                } else {
+                    // A page-owned replacement can omit a normal navigation
+                    // callback. Poll the visible WebView once more so the
+                    // terminal fee page is still probed.
+                    self.scheduleElectricityEvaluation()
+                }
+            }
+        }
+    }
+
+    private func javascriptString(_ value: Any?) -> String? {
+        if let value = value as? String { return value }
+        if let value = value as? NSString { return value as String }
+        return nil
+    }
+
+    private func javascriptNumber(_ value: Any?) -> Double? {
+        if let value = value as? Bool { return nil }
+        if let value = value as? NSNumber { return value.doubleValue }
+        if let value = value as? Double { return value }
+        if let value = value as? Int { return Double(value) }
+        if let value = value as? String { return Double(value.trimmingCharacters(in: .whitespacesAndNewlines)) }
+        return nil
     }
 
     private func scheduleElectricityEvaluation() {
@@ -617,10 +1000,220 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
             await MainActor.run {
                 guard let self, self.electricityContinuation != nil else { return }
                 self.electricityPollTask = nil
+                if self.navigationPolicy.isElectricityRedirectLoadingShell(self.webView.url) {
+                    self.electricityHandoffProbeCount += 1
+                }
+                if self.electricityDirectFallbackAttempted,
+                   let url = self.webView.url,
+                   self.navigationPolicy.isElectricityDirectFallbackLoadingShell(url) {
+                    self.electricityDirectFallbackRedirectProbeCount += 1
+                }
                 self.handleElectricityNavigation(in: self.webView)
+                // Keep a bounded heartbeat while the WebView is between
+                // documents or has not delivered a navigation callback yet.
+                // A handler that starts JavaScript or schedules its own poll
+                // leaves `electricityEvaluationInFlight`/`electricityPollTask`
+                // set, so this does not create duplicate evaluations.
+                if self.electricityContinuation != nil,
+                   !self.electricityEvaluationInFlight,
+                   self.electricityPollTask == nil {
+                    self.scheduleElectricityEvaluation()
+                }
             }
         }
     }
+
+    /// Keeps the card-platform hand-off entirely in the visible WebView. The
+    /// account card is sometimes rendered in a same-origin iframe, so inspect
+    /// only accessible documents for its readiness marker and short-lived
+    /// token. No credential, cookie, token, or raw page response crosses into
+    /// Swift.
+    private static let electricityPortalBootstrapScript = #"""
+        (() => {
+          const tokenKeys = ['synjones-auth', 'access_token', 'accessToken', 'synjonesAuth', 'token'];
+          const frameWindows = [];
+          const sameOrigin = currentWindow => {
+            try {
+              const href = currentWindow && currentWindow.location && currentWindow.location.href;
+              return !href || new URL(String(href), location.href).origin === location.origin;
+            } catch (_) {
+              return false;
+            }
+          };
+          const collectFrames = (currentWindow, depth = 0) => {
+            if (!currentWindow || depth > 4 || frameWindows.includes(currentWindow) || !sameOrigin(currentWindow)) {
+              return;
+            }
+            let currentDocument = null;
+            try {
+              currentDocument = currentWindow.document;
+              if (!currentDocument || typeof currentDocument.querySelectorAll !== 'function') return;
+            } catch (_) {
+              return;
+            }
+            frameWindows.push(currentWindow);
+            try {
+              for (const frame of Array.from(currentDocument.querySelectorAll('iframe,frame'))) {
+                try {
+                  if (frame.contentWindow && frame.contentDocument) {
+                    collectFrames(frame.contentWindow, depth + 1);
+                  }
+                } catch (_) {}
+              }
+            } catch (_) {}
+          };
+          collectFrames(window);
+          const documentText = currentDocument => String(
+            currentDocument && currentDocument.body &&
+              (currentDocument.body.innerText || currentDocument.body.textContent) || ''
+          ).replace(/\s+/g, ' ');
+          const bodyText = frameWindows.map(currentWindow => {
+            try { return documentText(currentWindow.document); } catch (_) { return ''; }
+          }).join(' ');
+          const readStorage = keys => {
+            for (const currentWindow of frameWindows) {
+              for (const name of ['sessionStorage', 'localStorage']) {
+                try {
+                  const storage = currentWindow[name];
+                  if (!storage) continue;
+                  for (const key of keys) {
+                    const value = storage.getItem(key);
+                    if (value) return String(value).trim();
+                  }
+                } catch (_) {}
+              }
+            }
+            return '';
+          };
+          const readCookie = keys => {
+            for (const currentWindow of frameWindows) {
+              let raw = '';
+              try { raw = currentWindow.document.cookie || ''; } catch (_) {}
+              for (const item of raw.split(';')) {
+                const separator = item.indexOf('=');
+                if (separator < 0) continue;
+                let name = item.slice(0, separator).trim();
+                let value = item.slice(separator + 1).trim();
+                try { name = decodeURIComponent(name); } catch (_) {}
+                if (!keys.includes(name)) continue;
+                try { value = decodeURIComponent(value); } catch (_) {}
+                if (value) return value;
+              }
+            }
+            return '';
+          };
+          const readQueryToken = () => {
+            for (const currentWindow of frameWindows) {
+              try {
+                const href = currentWindow.location && currentWindow.location.href;
+                const query = new URL(String(href || location.href), location.href).searchParams;
+                for (const key of tokenKeys) {
+                  const value = query.get(key);
+                  if (value) return value;
+                }
+              } catch (_) {}
+            }
+            return '';
+          };
+          const clickAuthEntry = () => {
+            for (const currentWindow of frameWindows) {
+              try {
+                if (currentWindow.__aoxiangElectricityAuthEntryClicked) return true;
+                const currentDocument = currentWindow.document;
+                const candidates = Array.from(currentDocument.querySelectorAll(
+                  'a,button,[role="button"],li,.menu-item,.van-grid-item__content,.van-grid-item,.weui-grid'
+                ));
+                for (const candidate of candidates) {
+                  const label = String(candidate.innerText || candidate.textContent || candidate.value || '')
+                    .replace(/\s+/g, ' ').trim();
+                  if (!/^(?:统一身份认证|统一登录|更多登录方式)$/.test(label)) continue;
+                  const target = typeof candidate.closest === 'function'
+                    ? candidate.closest(
+                      'a,button,[role="button"],li,.menu-item,.van-grid-item__content,.van-grid-item,.weui-grid'
+                    ) || candidate
+                    : candidate;
+                  try {
+                    target.click();
+                    currentWindow.__aoxiangElectricityAuthEntryClicked = true;
+                    window.__aoxiangElectricityAuthEntryClicked = true;
+                    return true;
+                  } catch (_) {}
+                }
+              } catch (_) {}
+            }
+            return false;
+          };
+          const loginShell = /(?:请登录|登录信息已失效|会话.{0,8}(?:失效|过期)|身份认证已过期)/.test(bodyText);
+          const token = readQueryToken() || readStorage(tokenKeys) || readCookie(tokenKeys);
+          // Android uses the card session token as the readiness signal. The
+          // deployed /plat page can remain a "查询信息" loading shell even
+          // after that token exists, so waiting for a balance label here
+          // leaves foreground collection stranded on that shell.
+          if (loginShell) return clickAuthEntry() ? 'auth_clicked' : 'waiting';
+          if (!token) return clickAuthEntry() ? 'auth_clicked' : 'waiting';
+          try { sessionStorage.setItem('synjones-auth', token); } catch (_) {}
+          // Keep the iOS path identical to Android: once the authenticated
+          // card page exposes its token, enter the fee item directly. The
+          // redirect shell is not a data page and can remain on "查询信息"
+          // without ever publishing the Vue response.
+          const target = new URL('/jfdt/charge/feeitem/toAppitem', location.origin);
+          target.searchParams.set('feeitemid', '182');
+          target.searchParams.set('synjones-auth', token);
+          target.searchParams.set('appId', '36');
+          target.searchParams.set('loginFrom', 'h5');
+          target.searchParams.set('type', 'app');
+          if (location.href !== target.href) location.replace(target.href);
+          return 'direct_started';
+        })()
+    """#
+
+    private static let electricityDirectFallbackScript = #"""
+        (() => {
+          const readStorage = keys => {
+            for (const name of ['sessionStorage', 'localStorage']) {
+              try {
+                const storage = window[name];
+                for (const key of keys) {
+                  const value = storage && storage.getItem(key);
+                  if (value) return value;
+                }
+              } catch (_) {}
+            }
+            return '';
+          };
+          const readCookie = keys => {
+            let raw = '';
+            try { raw = document.cookie || ''; } catch (_) {}
+            for (const item of raw.split(';')) {
+              const separator = item.indexOf('=');
+              if (separator < 0) continue;
+              const name = item.slice(0, separator).trim();
+              if (!keys.includes(name)) continue;
+              const value = item.slice(separator + 1).trim();
+              if (value) return value;
+            }
+            return '';
+          };
+          const bodyText = String(
+            document && document.body && (document.body.innerText || document.body.textContent) || ''
+          ).replace(/\s+/g, ' ');
+          const loginShell = /(?:请登录|登录信息已失效|会话.{0,8}(?:失效|过期)|身份认证已过期)/.test(bodyText);
+          if (loginShell) return 'needs_login';
+          const query = new URL(location.href).searchParams;
+          const token = query.get('synjones-auth') ||
+            readStorage(['synjones-auth', 'access_token', 'accessToken', 'synjonesAuth', 'token']) ||
+            readCookie(['synjones-auth', 'access_token', 'accessToken', 'synjonesAuth', 'token']) || '';
+          if (!token) return 'unavailable';
+          const target = new URL('/jfdt/charge/feeitem/toAppitem', location.origin);
+          target.searchParams.set('feeitemid', '182');
+          target.searchParams.set('synjones-auth', token);
+          target.searchParams.set('appId', '36');
+          target.searchParams.set('loginFrom', 'h5');
+          target.searchParams.set('type', 'app');
+          if (location.href !== target.href) location.replace(target.href);
+          return 'direct_started';
+        })()
+    """#
 
     private func finishElectricity(_ result: Result<Double, Error>) {
         electricityTimeoutTask?.cancel()
@@ -629,6 +1222,12 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
         electricityPollTask = nil
         electricityEvaluationInFlight = false
         electricityCASBootstrapPending = false
+        electricityRedirectAttempted = false
+        electricityDirectFallbackAttempted = false
+        electricityNavigationHandoffPending = false
+        electricityBalanceProbeCount = 0
+        electricityHandoffProbeCount = 0
+        electricityDirectFallbackRedirectProbeCount = 0
         guard let continuation = electricityContinuation else { return }
         electricityContinuation = nil
         continuation.resume(with: result)
@@ -651,6 +1250,171 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
         continuation.resume(with: result)
     }
 
+    /// Captures only a validated electricity number from page-owned network
+    /// responses. This runs at document start so POST/XHR requests are covered
+    /// even when the portal leaves its visible Vue state in a loading shell.
+    /// Response bodies, request bodies, cookies and credentials never cross the
+    /// WebKit boundary or remain in the page after the number is extracted.
+    private static let electricityNetworkCaptureScript = #"""
+        (() => {
+          try {
+            // A new navigation can reuse the same WebKit process. Do not let
+            // a previous page's validated balance satisfy this page.
+            window.__aoxiangElectricityBalance = null;
+            try {
+              if (window === window.top) window.__aoxiangElectricityBalances = [];
+            } catch (_) {}
+            if (location.hostname.toLowerCase() !== 'yktapp.nwpu.edu.cn' ||
+                window.__aoxiangElectricityCaptureInstalled) return;
+            window.__aoxiangElectricityCaptureInstalled = true;
+            const labels = /(?:当前剩余电量|剩余电量|电费余额|剩余电费|剩余金额|电量余额)/;
+            const keys = /(?:balance|electric(?:ity)?|remaining|remain|surplus|amount|余额|剩余|电费|电量|金额)/i;
+            const containers = /(?:response|data|map|showdata|result|payload|electric|eleric|fee|charge|info|setup|state)/i;
+            const publish = value => {
+              const number = Number(value);
+              if (!Number.isFinite(number) || number < 0 || number >= 100000) return;
+              window.__aoxiangElectricityBalance = number;
+              try {
+                const top = window.top;
+                if (top && top !== window) {
+                  const values = Array.isArray(top.__aoxiangElectricityBalances)
+                    ? top.__aoxiangElectricityBalances : [];
+                  if (!values.includes(number)) values.push(number);
+                  top.__aoxiangElectricityBalances = values.slice(-8);
+                }
+              } catch (_) {}
+            };
+            const receive = event => {
+              try {
+                if (event.origin !== location.origin) return;
+                const data = event.data;
+                if (!data || data.type !== 'aoxiang-electricity-balance') return;
+                publish(data.value);
+                // Forward nested-frame messages one level at a time so the
+                // main frame also sees a value produced by a nested iframe.
+                if (window.parent && window.parent !== window) {
+                  window.parent.postMessage(data, location.origin);
+                }
+              } catch (_) {}
+            };
+            try { window.addEventListener('message', receive); } catch (_) {}
+            const valid = value => {
+              const number = Number(value);
+              return Number.isFinite(number) && number >= 0 && number < 100000
+                ? number : null;
+            };
+            const fromValue = (value, depth = 0, seen = new Set()) => {
+              if (value == null || depth > 7) return null;
+              if (typeof value === 'string') {
+                // Decode JSON envelopes before reading a scalar. A response
+                // with code=200 and data.balance must not report 200.
+                try {
+                  const decoded = JSON.parse(value);
+                  const parsed = fromValue(decoded, depth + 1, seen);
+                  if (parsed !== null) return parsed;
+                } catch (_) {}
+                if (labels.test(value)) {
+                  return valid((value.match(labels.source + '[^\\d-]*(-?\\d+(?:\\.\\d+)?)') || [])[1]);
+                }
+                // Only accept a scalar string when the whole value is a
+                // number (optionally currency/unit decorated). Arbitrary
+                // error text such as `code=200` must remain invalid.
+                const scalarMatch = value.match(/^\\s*(?:¥|￥|\\$)?\\s*(-?\\d+(?:\\.\\d+)?)\\s*(?:元|度)?\\s*$/);
+                return scalarMatch ? valid(scalarMatch[1]) : null;
+              }
+              const scalar = valid(value);
+              if (scalar !== null && typeof value !== 'object') return scalar;
+              if (typeof value !== 'object' || seen.has(value)) return null;
+              seen.add(value);
+              let entries = [];
+              try {
+                entries = Array.isArray(value)
+                  ? value.map((candidate, index) => [String(index), candidate])
+                  : Object.entries(value);
+              } catch (_) { return null; }
+              for (const [key, child] of entries) {
+                if (labels.test(String(key)) || keys.test(String(key))) {
+                  const parsed = fromValue(child, depth + 1, seen);
+                  if (parsed !== null) return parsed;
+                } else if (containers.test(String(key)) || Array.isArray(value)) {
+                  const parsed = fromValue(child, depth + 1, seen);
+                  if (parsed !== null) return parsed;
+                }
+              }
+              return null;
+            };
+            const remember = value => {
+              const parsed = fromValue(value);
+              if (parsed === null) return;
+              publish(parsed);
+              try {
+                if (window.parent && window.parent !== window) {
+                  window.parent.postMessage({
+                    type: 'aoxiang-electricity-balance', value: parsed
+                  }, location.origin);
+                }
+              } catch (_) {}
+            };
+            const inspectText = text => {
+              if (text && typeof text === 'object') {
+                remember(text);
+                return;
+              }
+              if (typeof text !== 'string' || !text) return;
+              let parsed = null;
+              try { parsed = JSON.parse(text); } catch (_) {}
+              if (parsed !== null) remember(parsed);
+              if (window.__aoxiangElectricityBalance == null && labels.test(text)) {
+                const match = text.match(labels.source + '[^\\d-]*(-?\\d+(?:\\.\\d+)?)');
+                if (match) remember(match[1]);
+              }
+            };
+            const installFetch = () => {
+              try {
+                const original = window.fetch;
+                if (typeof original !== 'function' || original.__aoxiangElectricityWrapped) return;
+                const wrapped = function(...args) {
+                  return original.apply(this, args).then(response => {
+                    try { response.clone().text().then(inspectText).catch(() => {}); } catch (_) {}
+                    return response;
+                  });
+                };
+                wrapped.__aoxiangElectricityWrapped = true;
+                window.fetch = wrapped;
+              } catch (_) {}
+            };
+            const installXHR = () => {
+              try {
+                const prototype = window.XMLHttpRequest && window.XMLHttpRequest.prototype;
+                if (!prototype || prototype.send.__aoxiangElectricityWrapped) return;
+                const originalSend = prototype.send;
+                prototype.send = function(...args) {
+                  const xhr = this;
+                  const capture = () => {
+                    try { inspectText(xhr.responseType === 'json' ? xhr.response : xhr.responseText); } catch (_) {}
+                  };
+                  try {
+                    if (typeof xhr.addEventListener === 'function') xhr.addEventListener('load', capture, { once: true });
+                    else {
+                      const previous = xhr.onload;
+                      xhr.onload = function(...events) {
+                        capture();
+                        return previous && previous.apply(this, events);
+                      };
+                    }
+                  } catch (_) {}
+                  return originalSend.apply(this, args);
+                };
+                prototype.send.__aoxiangElectricityWrapped = true;
+              } catch (_) {}
+            };
+            installFetch();
+            installXHR();
+            setTimeout(() => { installFetch(); installXHR(); }, 0);
+          } catch (_) {}
+        })();
+    """#
+
     private static let electricityBalanceScript = #"""
         return (async () => {
           const labels = ['当前剩余电量','剩余电量','电费余额','剩余电费','剩余金额','电量余额'];
@@ -664,7 +1428,19 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
           };
           const inspect = (value, depth = 0, seen = new Set()) => {
             try {
-              if (!value || typeof value !== 'object' || depth > 8 || seen.has(value)) return null;
+              if (value == null || depth > 8) return null;
+              if (typeof value === 'string') {
+                // The fee API occasionally serializes a nested response into
+                // a string-valued `data` field. Decode it before considering
+                // any scalar so an envelope's `code` is never a balance.
+                try {
+                  const decoded = JSON.parse(value);
+                  return inspect(decoded, depth + 1, seen);
+                } catch (_) {
+                  return null;
+                }
+              }
+              if (typeof value !== 'object' || seen.has(value)) return null;
               seen.add(value);
               const entries = Array.isArray(value)
                 ? value.map((candidate, index) => [String(index), candidate])
@@ -672,6 +1448,21 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
               for (const [label, candidate] of entries) {
                 const name = String(label);
                 if (labels.includes(name) || balanceKeyPattern.test(name)) {
+                  if (typeof candidate === 'string') {
+                    try {
+                      const decoded = JSON.parse(candidate);
+                      if (decoded && typeof decoded === 'object') {
+                        const nested = inspect(decoded, depth + 1, seen);
+                        if (nested !== null) return nested;
+                        continue;
+                      }
+                      const parsed = parse(decoded);
+                      if (parsed !== null) return parsed;
+                      continue;
+                    } catch (_) {}
+                  }
+                  const nested = inspect(candidate, depth + 1, seen);
+                  if (nested !== null) return nested;
                   const parsed = parse(candidate);
                   if (parsed !== null) return parsed;
                 }
@@ -683,6 +1474,100 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
             } catch (_) {}
             return null;
           };
+          const inspectCaptured = value => {
+            if (typeof value === 'string') {
+              try {
+                const decoded = JSON.parse(value);
+                const nested = inspect(decoded);
+                if (nested !== null) return nested;
+                if (typeof decoded === 'number') return parse(decoded);
+              } catch (_) {}
+              if (/^\\s*(?:¥|￥|\\$)?\\s*-?\\d+(?:\\.\\d+)?\\s*(?:元|度)?\\s*$/.test(value)) {
+                return parse(value);
+              }
+              return null;
+            }
+            const direct = parse(value);
+            if (direct !== null && (typeof value === 'number' || typeof value === 'bigint')) return direct;
+            return inspect(value);
+          };
+          const capturedValues = [];
+          try {
+            if (typeof window !== 'undefined' && window) {
+              capturedValues.push(window.__aoxiangElectricityBalance);
+              if (Array.isArray(window.__aoxiangElectricityBalances)) {
+                capturedValues.push(...window.__aoxiangElectricityBalances);
+              }
+            }
+          } catch (_) {}
+          for (const capturedValue of capturedValues) {
+            const captured = inspectCaptured(capturedValue);
+            if (captured !== null) return captured;
+          }
+          // The card page has shipped its balance card inside a same-origin
+          // iframe. WebKit's page content world can inspect such frames, but
+          // the main-frame Vue lookup alone cannot. Check every accessible
+          // frame before trying the main document's component tree.
+          const frameWindows = [];
+          const collectFrames = (currentWindow, depth = 0) => {
+            if (!currentWindow || depth > 4 || frameWindows.includes(currentWindow)) return;
+            frameWindows.push(currentWindow);
+            try {
+              const currentDocument = currentWindow.document;
+              if (!currentDocument || typeof currentDocument.querySelectorAll !== 'function') return;
+              for (const frame of Array.from(currentDocument.querySelectorAll('iframe,frame'))) {
+                try {
+                  if (frame.contentWindow && frame.contentDocument) {
+                    collectFrames(frame.contentWindow, depth + 1);
+                  }
+                } catch (_) {}
+              }
+            } catch (_) {}
+          };
+          try { collectFrames(window); } catch (_) {}
+          for (const frameWindow of frameWindows) {
+            if (frameWindow === window) continue;
+            try {
+              // `WKUserScript` also runs in same-origin subframes. When the
+              // fee page's XHR is owned by one of those frames, its capture
+              // value is not automatically visible on the main window.
+              // Aggregate only the validated scalar/structured capture that
+              // the document-start hook keeps in page memory.
+              const frameCapturedValues = [frameWindow.__aoxiangElectricityBalance];
+              if (Array.isArray(frameWindow.__aoxiangElectricityBalances)) {
+                frameCapturedValues.push(...frameWindow.__aoxiangElectricityBalances);
+              }
+              for (const frameCapturedValue of frameCapturedValues) {
+                const captured = inspectCaptured(frameCapturedValue);
+                if (captured !== null) return captured;
+              }
+              const frameDocument = frameWindow.document;
+              const frameApp = frameDocument && frameDocument.querySelector('#app');
+              const frameRoots = [
+                frameApp && frameApp.__vue__,
+                frameApp && frameApp.__vueParentComponent,
+                frameApp && frameApp.__vueParentComponent && frameApp.__vueParentComponent.proxy,
+                frameApp && frameApp.__vue_app__ && frameApp.__vue_app__._instance,
+                frameApp && frameApp.__vue_app__ && frameApp.__vue_app__._instance && frameApp.__vue_app__._instance.proxy,
+                frameWindow.aboutEleric,
+                frameWindow.electricInfo,
+                frameWindow.__INITIAL_STATE__
+              ].filter(Boolean);
+              for (const root of frameRoots) {
+                const parsed = inspect(root);
+                if (parsed !== null) return parsed;
+              }
+              const frameText = String(
+                frameDocument && (frameDocument.body && (frameDocument.body.innerText || frameDocument.body.textContent) || '')
+              ).replace(/\s+/g, ' ');
+              const direct = frameText.match(/(?:当前剩余电量|剩余电量|电量余额|剩余电费|电费余额|剩余金额)\s*[：:]?\s*(?:¥|￥)?\s*(-?\d+(?:\.\d+)?)/) ||
+                frameText.match(/(?:¥|￥)?\s*(-?\d+(?:\.\d+)?)\s*(?:元|度)\s*[：:]?\s*(?:剩余电费|电费余额|剩余金额|当前剩余电量|剩余电量|电量余额)/);
+              if (direct) {
+                const parsed = parse(direct[1]);
+                if (parsed !== null) return parsed;
+              }
+            } catch (_) {}
+          }
           const app = document.querySelector('#app');
           const appInstance = app && app.__vue_app__ && app.__vue_app__._instance;
           const parentInstance = app && app.__vueParentComponent;
@@ -757,6 +1642,7 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
           // response is already represented in a same-origin resource. Read
           // only candidate JSON bodies inside WebKit; raw bodies never cross
           // the native bridge.
+          const resourceScanDeadline = Date.now() + 1_800;
           let resources = [];
           try {
             resources = performance.getEntriesByType('resource').map(entry => String(entry.name || ''))
@@ -772,10 +1658,12 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
               .filter((url, index, values) => values.indexOf(url) === index).slice(-6);
           } catch (_) {}
           for (const url of resources) {
+            const remaining = resourceScanDeadline - Date.now();
+            if (remaining <= 0) break;
             let timer = null;
             try {
               const controller = typeof AbortController === 'function' ? new AbortController() : null;
-              timer = setTimeout(() => controller && controller.abort(), 1800);
+              timer = setTimeout(() => controller && controller.abort(), Math.min(900, remaining));
               const options = { credentials: 'include', cache: 'no-store' };
               if (controller) options.signal = controller.signal;
               const response = await fetch(url, options);
@@ -1611,15 +2499,6 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
     private func detectAuthenticationState(in webView: WKWebView) {
         guard let url = webView.url else { return }
         guard !stateDetectionInFlight else { return }
-        if lastInspectedURL == url {
-            switch state {
-            case .authenticated, .readyToCollect, .needsUserAttention:
-                return
-            case .needsLogin, .needsSMS, .retryableFailure:
-                break
-            }
-        }
-        lastInspectedURL = url
         let urlText = url.absoluteString.lowercased()
         if (urlText.contains("sms") || urlText.contains("verify")), state != .needsSMS {
             transition(.smsRequired)
@@ -1632,6 +2511,18 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
         guard let host = url.host?.lowercased(), isAllowedHost(host) else {
             return
         }
+        guard let inspectionKey = VisibleCollectionNavigationPolicy.sanitizedInspectionURLKey(for: url) else {
+            return
+        }
+        if lastInspectedURLKey == inspectionKey {
+            switch state {
+            case .authenticated, .readyToCollect, .needsUserAttention:
+                return
+            case .needsLogin, .needsSMS, .retryableFailure:
+                break
+            }
+        }
+        lastInspectedURLKey = inspectionKey
         stateDetectionInFlight = true
         // The page remains visible. JavaScript is only a read-only marker check;
         // it never receives credentials or emits a hardware/network command.
@@ -1727,12 +2618,14 @@ public struct AuthenticationScreen: View {
     private let onPrepareToCollect: () -> Void
     private let isCollecting: Bool
     private let collectionStatus: String?
+    private let electricityRetryAvailable: Bool
 
     public init(
         model: VisibleAuthenticationViewModel,
         onPrepareToCollect: (() -> Void)? = nil,
         isCollecting: Bool = false,
-        collectionStatus: String? = nil
+        collectionStatus: String? = nil,
+        electricityRetryAvailable: Bool = false
     ) {
         self.model = model
         self.onPrepareToCollect = onPrepareToCollect ?? {
@@ -1744,6 +2637,7 @@ public struct AuthenticationScreen: View {
         }
         self.isCollecting = isCollecting
         self.collectionStatus = collectionStatus
+        self.electricityRetryAvailable = electricityRetryAvailable
     }
 
     public var body: some View {
@@ -1760,7 +2654,12 @@ public struct AuthenticationScreen: View {
             HStack {
                 Text(statusText).font(.caption)
                 Spacer()
-                if model.state == .authenticated || model.state == .readyToCollect {
+                if electricityRetryAvailable {
+                    Button(isCollecting ? "正在采集" : "重试电费") {
+                        onPrepareToCollect()
+                    }
+                    .disabled(isCollecting)
+                } else if model.state == .authenticated || model.state == .readyToCollect {
                     Button(isCollecting ? "正在采集" : (model.state == .readyToCollect ? "开始采集" : "准备采集")) {
                         onPrepareToCollect()
                     }

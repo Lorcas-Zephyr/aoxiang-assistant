@@ -510,3 +510,158 @@
   conditional view tree.
 - The fix is source-level and statically covered. Actual iPadOS rendering still needs
   confirmation from the next re-signed IPA because Windows cannot run SwiftUI/UIKit.
+
+## 2026-09-16 electricity collection diagnosis
+
+- The provided collection screenshot shows the foreground authentication sheet still
+  mounted with the app status `正在读取成绩、课表和电费…`; it is not a completed data
+  commit. This is consistent with a WebView navigation/lifecycle wait rather than a
+  persisted invalid balance.
+- Android's working card path does not jump directly to the fee-item page. It passes
+  the card token through `https://yktapp.nwpu.edu.cn/berserker-base/redirect?appId=36&type=app&synjones-auth=…&loginFrom=h5`, then waits for the `/jfdt/` session page.
+- The current iOS source had already added that redirect and a document-start
+  fetch/XHR capture, but it cleared `electricityCASBootstrapPending` immediately
+  after requesting the redirect. That can reject the remaining valid CAS/SSO hops.
+- `WKWebView` can report a cancelled/frame-interrupted navigation for a page-owned
+  `location.replace`; collection code must distinguish that expected replacement from
+  a real transport failure. The repair needs a pure, deterministic policy seam for
+  both cases.
+
+## 2026-09-16 electricity-first repair findings
+
+- The Android contract still exposes the direct fee-item route with
+  `feeitemid=182`, `synjones-auth`, `appId=36`, `loginFrom=h5`, and `type=app`.
+  iOS now tries that route first and retains `/berserker-base/redirect` as a
+  bounded fallback when the fee page remains empty.
+- The electricity page can render its balance in a same-origin iframe. The
+  WebKit document-start hook now forwards only a validated numeric balance to
+  the main frame, and the page probe recursively checks accessible iframe
+  Vue/DOM state. No token, cookie, response body, or credential crosses the
+  page/native boundary.
+- Navigation cancellation classification is shared by the pure policy seam and
+  the delegate. Only expected `NSURLErrorCancelled`/WebKit frame-interruption
+  shapes are ignored during the visible hand-off; other failures remain
+  retryable.
+- The real iPad/WebKit path remains an external gate: Windows cannot prove the
+  final redirect, anti-bot challenge, Vue timing, or signed App Group runtime.
+## 2026-09-16 Electricity collection incident follow-up
+
+- User reports the visible electricity collector still stays on the portal's
+  loading screen. The current priority is this blocking flow; Widget visual
+  work is deliberately paused.
+- The active failure boundary is the WebKit hand-off from `/plat` to the
+  electricity card portal. A page-owned `location.replace` can interrupt the
+  probe with `NSURLErrorCancelled` / `WKErrorDomain 102` and then omit a
+  later `didFinish`; without an explicit retry schedule, the async collection
+  continuation remains pending until its watchdog.
+- The repair acceptance seam is: after `redirect_started` or `direct_started`,
+  a bounded foreground probe must continue independently of another navigation
+  callback; intentional interruption is ignored only while that electricity
+  hand-off is active. User cancellation must immediately finish the pending
+  continuation and release the visible collection UI.
+- This flow must remain visible-WebView only. A non-authenticated external
+  request receives HTTP 412, so ordinary background HTTP cannot replace the
+  authenticated page/session path.
+
+## 2026-09-16 Widget visual reference audit
+
+- The supplied daily large reference uses a restrained pale glass surface,
+  a compact header (weekday plus academic week), a time column, and discrete
+  white course rows with a narrow semantic color rail. It prioritizes readable
+  course, section/location/teacher metadata over decoration.
+- The supplied weekly large reference is a compact five-column timetable with
+  a left time axis, restrained pastel course cells, one clearly selected day,
+  and four small directional affordances along the bottom edge.
+- The supplied medium reference is a two-row daily summary: time at left,
+  color rail, course title, metadata, and an explicit remaining-course count.
+- Preserve system Dynamic Type, dark-mode colors and snapshot-only data flow.
+  Liquid Glass must be a capability enhancement on supported iOS/iPadOS, not
+  a new storage, authentication, or Widget interaction dependency.
+
+## 2026-09-16 Electricity incident, current UI boundary
+
+- The foreground UI currently exposes only one aggregate string,
+  `正在读取成绩、课表和电费…`, for the complete collector run. Electricity
+  failures become `electricityUnavailable` warnings after the collector
+  returns, so a live WebKit hand-off has no separately observable phase.
+- The user-facing regression seam for this repair is explicit: starting
+  collection must show the active electricity stage, and a missing balance must
+  settle to an actionable retry result within the bounded foreground window
+  without rolling back already collected grades or schedule data.
+- The redirect-first implementation has a concrete dead-end: while the current
+  URL remains `/berserker-base/redirect`, `handleElectricityNavigation` only
+  schedules another poll. Its direct fee-page fallback is currently reachable
+  only after six probes on `/jfdt/`, so a stuck redirect/loading page cannot
+  reach that fallback before the 30-second watchdog fires. Android's API
+  collector can use the direct fee-item route from `/plat`; iOS needs the same
+  bounded escape route from the redirect hand-off.
+
+## 2026-09-16 bounded redirect fallback result
+
+- The dead-end is now closed with a six-probe policy gate on the exact
+  `yktapp.nwpu.edu.cn/berserker-base/redirect` path. The fallback reuses the
+  existing page-side token lookup and `/jfdt/charge/feeitem/toAppitem` query
+  contract, and remains fail-closed when the token is absent or a different
+  host/path is loaded.
+- This is still a source-level repair until a fresh macOS `iphoneos` archive is
+  re-signed and observed on the iPad; WebKit server behavior cannot be proven
+  by the Windows package runner.
+
+## 2026-09-16 renewed device failure report
+
+- The user confirms the real iPad path still does not leave the electricity
+  information-loading screen. Existing unit/runtime coverage proves redirect probing,
+  but does not yet prove a public completion result when the portal never exposes a
+  valid balance.
+- The repaired public seam must settle `collectElectricity` to either a validated
+  balance or a retryable terminal result. Keeping the collector continuation pending
+  after the bounded hand-off is a user-visible failure even if WebKit remains alive.
+- `HEAD` and `origin/iOS` are both `8a55dcf`; the newer electricity changes are
+  currently uncommitted local work. Any IPA installed from the pushed branch cannot
+  contain those changes. Before another device check, the eventual repair needs a
+  committed source revision and a fresh macOS artifact.
+- The current public collection method has a 30-second watchdog. That bounds an
+  orphaned continuation in theory but is too slow and too opaque for the reported
+  loading-screen failure; its pre-timeout hand-off needs a deterministic terminal path.
+
+## 2026-09-16 Android/iOS electricity contract divergence
+
+- Android's actual `/plat` collector reads a same-origin `synjones-auth` or
+  `access_token` and immediately uses the direct fee-item URL. It does not wait for
+  a balance-related body marker. It treats a missing value as a bounded polling state.
+- iOS currently requires `/账户余额|电费|电量|余额/` before it uses the same page-side
+  token. A real `/plat` loading shell headed "查询信息" can therefore retain a valid
+  token but never start the redirect. This is the leading, testable root cause of
+  the device report.
+- Regression contract: a same-origin loading shell plus a valid token must emit the
+  existing redirect/direct action; a recognizable login shell plus that token must
+  remain on the visible authentication path. Tokens remain entirely in page JavaScript.
+- The script-runtime test reproduced the exact old behavior (`waiting` at `/plat`)
+  and passed after changing the token-first gate. The full visible-collection runtime
+  suite now passes 40 cases; the static script suite passes 4 cases.
+
+## 2026-09-16 electricity review follow-up
+
+- Review found three remaining paths that can violate the bounded foreground contract:
+  a successful direct-fallback JavaScript call can leave `WKWebView.url` on the redirect
+  shell; the balance script can wait sequentially across six 1.8-second resource fetches;
+  and the direct-fallback script could reuse a stale token from an explicit login shell.
+- Required follow-up behavior: a direct attempt that remains on the redirect shell must
+  reach a retryable terminal state; one page-side balance probe needs a shared deadline;
+  and a login shell must return an explicit no-handoff result before storage/cookie token
+  lookup. The raw token remains inside WebKit in every case.
+- The reviewer also noted that `lastInspectedURL` can retain a token-bearing URL before
+  host filtering. Cache only a sanitized URL key for state-detection de-duplication.
+
+## 2026-09-16 electricity repair readiness
+
+- The direct fee-item hand-off, loading-shell token path, bounded redirect probes,
+  stale-login guard, shared resource deadline, and sanitized inspection key are now
+  covered by the local runtime/Swift seams.
+- The portable collector also recognizes the Android-compatible Asia/Shanghai
+  00:00-01:00 settlement window and returns a structured retryable settlement result;
+  it does not leave the WebView continuation pending during that window.
+- Local evidence is green: Python 123 tests, AoxiangCore 91 tests, AoxiangApp 59 tests,
+  15 golden scenarios/32 referenced files, and `git diff --check`.
+- This remains source-level evidence only until GitHub Actions produces a fresh
+  `sideload` IPA from the committed source and the user observes a real iPadOS run.
