@@ -163,7 +163,11 @@ public class BackgroundSyncService extends Service {
         settings.setAllowFileAccess(false);
         settings.setAllowContentAccess(false);
         settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
-        CookieManager.getInstance().setAcceptCookie(true);
+        CookieManager cookies = CookieManager.getInstance();
+        cookies.setAcceptCookie(true);
+        // CAS authentication crosses the uis.nwpu.edu.cn and target service
+        // domains. Explicitly allow those cookies in the headless WebView.
+        cookies.setAcceptThirdPartyCookies(web, true);
         web.setWebViewClient(new WebViewClient() {
             @Override public void onPageStarted(WebView view, String url, Bitmap favicon) {
                 unifiedAuthTracker.record(url);
@@ -263,6 +267,12 @@ public class BackgroundSyncService extends Service {
                             finishAttempt(false);
                             return;
                         } else if ("grade_api_raw".equals(phase) && "grades".equals(target)) {
+                            if (!payload.optBoolean("complete", true)) {
+                                // Never overwrite a complete local transcript with a
+                                // partial response, which would create false updates.
+                                finishAttempt(false);
+                                return;
+                            }
                             JSONArray rows = PortalApiParsers.gradeRows(payload.optJSONArray("gradeResponses"));
                             double gpa = PortalApiParsers.gpa(payload.optJSONObject("gpaResponse"));
                             if (rows.length() > 0) {
@@ -641,10 +651,8 @@ public class BackgroundSyncService extends Service {
             for (int i = 0; i < grades.length(); i++) {
                 JSONObject grade = grades.optJSONObject(i);
                 if (grade == null) continue;
-                String course = grade.optString("course");
-                String signature = course + "|" + grade.optDouble("credits") + "|" + grade.opt("point")
-                        + "|" + grade.opt("score") + "|" + grade.optString("detail");
-                items.add(new UpdateDiff.Item(course, course, signature));
+                GradeRecord record = GradeRecord.from(grade);
+                items.add(new UpdateDiff.Item(record.diffKey(), record.course, record.diffSignature()));
             }
         } catch (Exception ignored) {}
         return items;

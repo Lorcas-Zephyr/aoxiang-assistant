@@ -47,6 +47,7 @@
 
   const body = text(documents.map((doc) => (doc.body ? doc.body.innerText : "")).join(" "));
   const host = location.hostname;
+  const sessionError = /登录信息已失效|登录状态已失效|会话.{0,8}(?:失效|过期)|身份认证已过期/.test(body);
 
   if ((mode === "validate" || mode === "bootstrap") && unifiedAuthExited) {
     return JSON.stringify({ phase: "credentials_valid", rows: [] });
@@ -189,6 +190,14 @@
     if (!canAutofill && usernameInput && passwordInput) {
       return JSON.stringify({ phase: "credentials_pending", rows: [] });
     }
+    return JSON.stringify({ phase: "credentials_required", rows: [] });
+  }
+
+  // An expired JWXT session can render an error page without the login form.
+  // Report it explicitly so the caller can ask for credentials instead of
+  // looping on the home-page redirect until it looks like a timeout.
+  if ((mode === "validate" || mode === "bootstrap") && host === "jwxt.nwpu.edu.cn"
+      && sessionError) {
     return JSON.stringify({ phase: "credentials_required", rows: [] });
   }
 

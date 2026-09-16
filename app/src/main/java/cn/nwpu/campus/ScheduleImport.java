@@ -7,10 +7,13 @@ import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.Comparator;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -122,7 +125,7 @@ public final class ScheduleImport {
             ScheduleModels.Course existing = grouped.get(key);
             if (existing != null) {
                 existing.timeSlots.addAll(timeSlots);
-                existing.timeSlots = mergeSlots(existing.timeSlots);
+                existing.timeSlots = mergeContinuousSlots(existing.timeSlots);
                 existing.location = mergeLocations(existing.location, location);
                 existing.teacher = mergeTeachers(existing.teacher, teacher);
                 continue;
@@ -207,12 +210,53 @@ public final class ScheduleImport {
                 slots.add(new ScheduleModels.TimeSlot(weekRange.range, weekRange.rule, day, sections));
             }
         }
-        return mergeSlots(slots);
+        return mergeContinuousSlots(slots);
     }
 
-    private static List<ScheduleModels.TimeSlot> mergeSlots(List<ScheduleModels.TimeSlot> slots) {
-        Map<String, List<ScheduleModels.TimeSlot>> grouped = new LinkedHashMap<>();
+    /**
+     * Normalizes timetable rows without losing teacher/location differences.
+     * The portal sometimes emits adjacent sections as separate rows even
+     * though they are one continuous meeting. Such rows are merged only when
+     * their day, repeat rule, metadata and effective week set match exactly.
+     */
+    public static List<ScheduleModels.TimeSlot> mergeContinuousSlots(List<ScheduleModels.TimeSlot> slots) {
+        if (slots == null || slots.isEmpty()) return new ArrayList<>();
+        Map<String, List<ScheduleModels.TimeSlot>> bySchedule = new LinkedHashMap<>();
         for (ScheduleModels.TimeSlot slot : slots) {
+            if (slot == null || slot.classSections == null || slot.classSections.isEmpty()) continue;
+            List<Integer> sections = new ArrayList<>(new HashSet<>(slot.classSections));
+            Collections.sort(sections);
+            slot.classSections = sections;
+            String key = slot.dayOfWeek + ":" + slot.repeatRule.name()
+                    + ":" + nullToEmpty(slot.teacher) + ":" + nullToEmpty(slot.location)
+                    + ":" + effectiveWeekKey(slot);
+            bySchedule.computeIfAbsent(key, unused -> new ArrayList<>()).add(slot);
+        }
+        List<ScheduleModels.TimeSlot> sectionMerged = new ArrayList<>();
+        for (List<ScheduleModels.TimeSlot> group : bySchedule.values()) {
+            group.sort(Comparator.comparingInt(slot -> Collections.min(slot.classSections)));
+            for (ScheduleModels.TimeSlot slot : group) {
+                if (sectionMerged.isEmpty()) {
+                    sectionMerged.add(slot);
+                    continue;
+                }
+                ScheduleModels.TimeSlot previous = sectionMerged.get(sectionMerged.size() - 1);
+                if (sameSchedule(previous, slot)
+                        && sectionsTouch(previous.classSections, slot.classSections)) {
+                    Set<Integer> mergedSections = new HashSet<>(previous.classSections);
+                    mergedSections.addAll(slot.classSections);
+                    previous.classSections = new ArrayList<>(mergedSections);
+                    Collections.sort(previous.classSections);
+                } else {
+                    sectionMerged.add(slot);
+                }
+            }
+        }
+
+        // Keep the existing behavior of coalescing adjacent week ranges after
+        // section rows have been normalized.
+        Map<String, List<ScheduleModels.TimeSlot>> grouped = new LinkedHashMap<>();
+        for (ScheduleModels.TimeSlot slot : sectionMerged) {
             String key = slot.dayOfWeek + ":" + slot.classSections.toString() + ":" + slot.repeatRule.name()
                     + ":" + nullToEmpty(slot.teacher) + ":" + nullToEmpty(slot.location);
             grouped.computeIfAbsent(key, unused -> new ArrayList<>()).add(slot);
@@ -250,6 +294,28 @@ public final class ScheduleImport {
         return merged;
     }
 
+    private static boolean sameSchedule(ScheduleModels.TimeSlot first, ScheduleModels.TimeSlot second) {
+        return first.dayOfWeek == second.dayOfWeek
+                && first.repeatRule == second.repeatRule
+                && nullToEmpty(first.teacher).equals(nullToEmpty(second.teacher))
+                && nullToEmpty(first.location).equals(nullToEmpty(second.location))
+                && effectiveWeekKey(first).equals(effectiveWeekKey(second));
+    }
+
+    private static boolean sectionsTouch(List<Integer> first, List<Integer> second) {
+        int firstMin = Collections.min(first);
+        int firstMax = Collections.max(first);
+        int secondMin = Collections.min(second);
+        int secondMax = Collections.max(second);
+        return secondMin <= firstMax + 1 && firstMin <= secondMax + 1;
+    }
+
+    private static String effectiveWeekKey(ScheduleModels.TimeSlot slot) {
+        List<Integer> weeks = ScheduleUtils.parseWeeks(slot.weekRange);
+        Collections.sort(weeks);
+        return weeks.toString();
+    }
+
     private static List<Integer> parseSections(String text) {
         Matcher m = CHINESE_SECTION_RANGE.matcher(text);
         if (m.find()) return range(chineseNumber(m.group(1)), chineseNumber(m.group(2) == null ? m.group(1) : m.group(2)));
@@ -279,7 +345,14 @@ public final class ScheduleImport {
     }
 
     private static List<WeekRangeRule> extractWeekRangesWithRules(String text) {
-        String converted = text;
+        // JWXT has returned several visually equivalent punctuation variants
+        // across portal versions. Normalize them before applying the numeric
+        // range patterns so the repeat marker is retained consistently.
+        String converted = text == null ? "" : text
+                .replace('～', '~')
+                .replace('－', '-')
+                .replace('–', '-')
+                .replace('—', '-');
         for (Map.Entry<String, Integer> entry : CHINESE_NUMBERS.entrySet()) {
             converted = converted.replace("第" + entry.getKey() + "周", String.valueOf(entry.getValue()));
         }

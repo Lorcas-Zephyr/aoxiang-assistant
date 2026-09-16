@@ -34,6 +34,17 @@ final class GradeRecord {
         return score == null ? "--" : String.format(Locale.US, "%.0f", score);
     }
 
+    /** Values used for change detection, independent of portal formatting. */
+    String diffKey() {
+        return normalizeCourseName(course);
+    }
+
+    String diffSignature() {
+        return diffKey() + "|" + numberSignature(credits) + "|"
+                + numberSignature(point) + "|" + numberSignature(score) + "|"
+                + cleanDetail(detail);
+    }
+
     JSONObject json() {
         JSONObject object = new JSONObject();
         try {
@@ -111,6 +122,14 @@ final class GradeRecord {
         }
         if (candidate.point == null) return false;
         return current.point == null || candidate.point > current.point;
+    }
+
+    private static String numberSignature(Double value) {
+        return value == null ? "" : String.format(Locale.US, "%.6f", value);
+    }
+
+    private static String numberSignature(double value) {
+        return String.format(Locale.US, "%.6f", value);
     }
 
     private static double parse(String value) {

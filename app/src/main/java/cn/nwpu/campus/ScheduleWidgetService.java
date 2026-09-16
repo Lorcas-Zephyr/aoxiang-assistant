@@ -34,8 +34,14 @@ public class ScheduleWidgetService extends RemoteViewsService {
         }
         @Override public RemoteViews getLoadingView() { return null; }
         @Override public int getViewTypeCount() { return 1; }
-        @Override public long getItemId(int position) { return position; }
-        @Override public boolean hasStableIds() { return false; }
+        @Override public long getItemId(int position) {
+            Row row = rows.get(position);
+            if (row.spacer) return Long.MIN_VALUE;
+            ScheduleWidgetData.Item item = row.today != null ? row.today : row.tomorrow;
+            if (item == null) return Integer.toUnsignedLong(row.message == null ? position : row.message.hashCode());
+            return ((long) item.name.hashCode() << 32) ^ item.startSection;
+        }
+        @Override public boolean hasStableIds() { return true; }
 
         private void reload() {
             ScheduleWidgetContext.set(context);
@@ -89,6 +95,7 @@ public class ScheduleWidgetService extends RemoteViewsService {
         private RemoteViews largeView(Row row) {
             RemoteViews view = new RemoteViews(context.getPackageName(), R.layout.widget_large_row);
             // Keep the two day columns independent collection items.
+            view.setOnClickFillInIntent(R.id.widget_large_row_root, new Intent());
             view.setOnClickFillInIntent(R.id.widget_today_column, new Intent().putExtra("widget_column", "today"));
             view.setOnClickFillInIntent(R.id.widget_tomorrow_column, new Intent().putExtra("widget_column", "tomorrow"));
             view.setInt(R.id.widget_column_divider, "setBackgroundColor", dark ? 0xFF3B4654 : 0xFFE5EDF5);
@@ -137,9 +144,12 @@ public class ScheduleWidgetService extends RemoteViewsService {
             // A day without courses can share rows with the other day. Keep
             // the first row for the empty-state message, but make subsequent
             // empty cells transparent so they do not look like extra courses.
-            view.setInt(column, "setBackgroundColor", message.isEmpty()
-                    ? android.graphics.Color.TRANSPARENT
-                    : (dark ? 0xFF1C222B : 0xFFF6FAFF));
+            if (message.isEmpty()) {
+                view.setInt(column, "setBackgroundColor", android.graphics.Color.TRANSPARENT);
+            } else {
+                view.setInt(column, "setBackgroundResource",
+                        dark ? R.drawable.widget_row_background_dark : R.drawable.widget_row_background);
+            }
             view.setViewVisibility(dot, android.view.View.GONE);
             view.setTextViewText(name, message);
             view.setTextViewText(time, "");
@@ -154,7 +164,8 @@ public class ScheduleWidgetService extends RemoteViewsService {
         }
 
         private void applyBackground(RemoteViews view, int id) {
-            view.setInt(id, "setBackgroundColor", dark ? 0xFF1C222B : 0xFFF6FAFF);
+            view.setInt(id, "setBackgroundResource",
+                    dark ? R.drawable.widget_row_background_dark : R.drawable.widget_row_background);
         }
 
         private int parseColor(String value, String fallback) {

@@ -144,9 +144,10 @@
     const studentId = extractStudentId(sheetHtml) || await fetchStudentId();
     if (!studentId) throw new Error("Student id unavailable");
     const semesters = extractSemesters(sheetHtml);
-    // Keep a bad semester endpoint from blocking the entire background update.
-    // A small batch also avoids overwhelming the portal when many semesters exist.
+    // A small batch avoids overwhelming the portal. Track failures so a partial
+    // transcript is never mistaken for a complete update by the caller.
     const gradeResponses = [];
+    let failedSemesters = 0;
     for (let offset = 0; offset < semesters.length; offset += 4) {
       const batch = semesters.slice(offset, offset + 4).filter((semester) =>
         semester && semester.id);
@@ -156,6 +157,7 @@
             "/student/for-std/grade/sheet/info/" + encodeURIComponent(studentId) +
             "?semester=" + encodeURIComponent(semester.id));
         } catch (ignored) {
+          failedSemesters++;
           return null;
         }
       }));
@@ -169,7 +171,13 @@
       gpaResponse = await fetchJson(
         "/student/for-std/student-portrait/getMyGpa?studentAssoc=" + encodeURIComponent(studentId));
     } catch (ignored) {}
-    return { phase: "grade_api_raw", gradeResponses, gpaResponse };
+    return {
+      phase: "grade_api_raw",
+      gradeResponses,
+      gpaResponse,
+      complete: failedSemesters === 0,
+      failedSemesterCount: failedSemesters
+    };
   };
 
   const collectSchedule = async () => {

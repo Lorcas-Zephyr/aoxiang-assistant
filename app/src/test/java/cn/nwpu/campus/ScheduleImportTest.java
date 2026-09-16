@@ -172,6 +172,58 @@ public class ScheduleImportTest {
         assertEquals(ScheduleModels.RepeatRule.ODD, slots.get(1).repeatRule);
     }
 
+    @Test public void parsesRepeatMarkerAfterTheWeekSuffix() {
+        List<ScheduleModels.TimeSlot> slots = ScheduleImport.parseScheduleText(
+                "1-16周(单周) 周六 1-2节; 1-16周(单周) 周六 3-4节");
+
+        assertEquals(1, slots.size());
+        assertEquals("1-16", slots.get(0).weekRange);
+        assertEquals(ScheduleModels.RepeatRule.ODD, slots.get(0).repeatRule);
+        assertEquals(Arrays.asList(1, 2, 3, 4), slots.get(0).classSections);
+    }
+
+    @Test public void mergesThreeAdjacentSectionsIntoOneMeeting() {
+        List<ScheduleModels.TimeSlot> slots = Arrays.asList(
+                new ScheduleModels.TimeSlot("1-17", ScheduleModels.RepeatRule.ALL, 6, Arrays.asList(1)),
+                new ScheduleModels.TimeSlot("1-17", ScheduleModels.RepeatRule.ALL, 6, Arrays.asList(2)),
+                new ScheduleModels.TimeSlot("1-17", ScheduleModels.RepeatRule.ALL, 6, Arrays.asList(3)));
+
+        List<ScheduleModels.TimeSlot> merged = ScheduleImport.mergeContinuousSlots(slots);
+
+        assertEquals(1, merged.size());
+        assertEquals(Arrays.asList(1, 2, 3), merged.get(0).classSections);
+    }
+
+    @Test public void doesNotMergeAdjacentMeetingsWithDifferentTeachers() {
+        ScheduleModels.TimeSlot first = new ScheduleModels.TimeSlot(
+                "1-17", ScheduleModels.RepeatRule.ALL, 6, Arrays.asList(1), "甲", "教室A");
+        ScheduleModels.TimeSlot second = new ScheduleModels.TimeSlot(
+                "1-17", ScheduleModels.RepeatRule.ALL, 6, Arrays.asList(2), "乙", "教室A");
+
+        List<ScheduleModels.TimeSlot> merged = ScheduleImport.mergeContinuousSlots(Arrays.asList(first, second));
+
+        assertEquals(2, merged.size());
+    }
+
+    @Test public void parsesChineseWeekPrefixAndFullWidthSeparators() {
+        List<ScheduleModels.TimeSlot> slots = ScheduleImport.parseScheduleText(
+                "第1~4周（双） 周六 第1-4节");
+
+        assertEquals(1, slots.size());
+        assertEquals("1-4", slots.get(0).weekRange);
+        assertEquals(ScheduleModels.RepeatRule.EVEN, slots.get(0).repeatRule);
+        assertEquals(Arrays.asList(1, 2, 3, 4), slots.get(0).classSections);
+    }
+
+    @Test public void parsesPortalFullWidthWeekRangePunctuation() {
+        List<ScheduleModels.TimeSlot> slots = ScheduleImport.parseScheduleText(
+                "1～4周（双） 周六 1-2节");
+
+        assertEquals(1, slots.size());
+        assertEquals("1-4", slots.get(0).weekRange);
+        assertEquals(ScheduleModels.RepeatRule.EVEN, slots.get(0).repeatRule);
+    }
+
     private static ScheduleImport.RawCourse rawCourse(String name, String code, String schedule, String semester) {
         ScheduleImport.RawCourse course = new ScheduleImport.RawCourse();
         course.name = name;

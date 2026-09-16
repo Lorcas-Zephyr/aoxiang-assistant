@@ -3,6 +3,7 @@
     android:description="@string/widget_today_description"
     android:previewImage="@drawable/widget_preview_small"
     android:previewLayout="@layout/widget_small_preview"
+    android:initialLayout="@layout/widget_small"
     android:minWidth="110dp"
     android:minHeight="110dp"
     android:minResizeWidth="110dp"

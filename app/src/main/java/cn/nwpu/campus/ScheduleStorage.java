@@ -47,7 +47,13 @@ public final class ScheduleStorage {
             JSONArray array = new JSONArray(raw);
             for (int i = 0; i < array.length(); i++) {
                 JSONObject item = array.optJSONObject(i);
-                if (item != null) courses.add(ScheduleModels.Course.from(item));
+                if (item != null) {
+                    ScheduleModels.Course course = ScheduleModels.Course.from(item);
+                    // Normalize schedules saved by older builds where one
+                    // continuous meeting could be stored as adjacent slots.
+                    course.timeSlots = ScheduleImport.mergeContinuousSlots(course.timeSlots);
+                    courses.add(course);
+                }
             }
         } catch (Exception ignored) {}
         return courses;

@@ -15,11 +15,17 @@ public class SmallScheduleWidgetProvider extends AppWidgetProvider {
             RemoteViews views = new RemoteViews(context.getPackageName(), R.layout.widget_small);
             // Keep a distinct service identity from the four-column widget.
             Intent service = new Intent(context, ScheduleWidgetService.class)
-                    .setData(Uri.parse("cn.nwpu.campus://widget/small"))
+                    .setData(Uri.parse("cn.nwpu.campus://widget/small/" + id))
                     .putExtra("small", true);
             views.setRemoteAdapter(R.id.widget_course_list, service);
+            views.setEmptyView(R.id.widget_course_list, R.id.widget_blank_click);
             views.setPendingIntentTemplate(R.id.widget_course_list, ScheduleWidgetProvider.openSchedule(context));
             views.setOnClickPendingIntent(R.id.widget_root, ScheduleWidgetProvider.openSchedule(context));
+            android.content.SharedPreferences store = context.getSharedPreferences(
+                    "campus_private", Context.MODE_PRIVATE);
+            boolean dark = ScheduleStorage.loadDarkMode(store);
+            views.setInt(R.id.widget_root, "setBackgroundResource",
+                    dark ? R.drawable.widget_background_dark : R.drawable.widget_background);
             manager.updateAppWidget(id, views);
         }
         ScheduleWidgetProvider.scheduleNextHour(context);

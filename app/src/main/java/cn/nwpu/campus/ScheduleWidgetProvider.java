@@ -41,17 +41,21 @@ public class ScheduleWidgetProvider extends AppWidgetProvider {
         // Distinguish the large and small collection services so Android does
         // not reuse a RemoteViewsFactory created for the other widget size.
         Intent service = new Intent(context, ScheduleWidgetService.class)
-                .setData(Uri.parse("cn.nwpu.campus://widget/large"))
+                .setData(Uri.parse("cn.nwpu.campus://widget/large/" + id))
                 .putExtra("small", false);
         views.setRemoteAdapter(R.id.widget_course_list, service);
+        views.setEmptyView(R.id.widget_course_list, R.id.widget_blank_click);
         views.setPendingIntentTemplate(R.id.widget_course_list, openSchedule(context));
         views.setOnClickPendingIntent(R.id.widget_root, openSchedule(context));
         android.content.SharedPreferences store = context.getSharedPreferences("campus_private", Context.MODE_PRIVATE);
         boolean dark = ScheduleStorage.loadDarkMode(store);
+        views.setInt(R.id.widget_root, "setBackgroundResource",
+                dark ? R.drawable.widget_background_dark : R.drawable.widget_background);
         views.setInt(R.id.widget_header_divider, "setBackgroundColor", dark ? 0xFF3B4654 : 0xFFE5EDF5);
         views.setInt(R.id.widget_content_divider, "setBackgroundColor", dark ? 0xFF718096 : 0xFFB6C4D2);
         views.setTextColor(R.id.widget_today_title, dark ? 0xFF9CB0C7 : 0xFF5E7185);
         views.setTextColor(R.id.widget_tomorrow_title, dark ? 0xFF9CB0C7 : 0xFF5E7185);
+        views.setTextColor(R.id.widget_blank_click, dark ? 0xFF9CB0C7 : 0xFF5E7185);
         views.setTextViewText(R.id.widget_today_title, "今天 " + dateLabel(0));
         views.setTextViewText(R.id.widget_tomorrow_title, "明天 " + dateLabel(1));
         manager.updateAppWidget(id, views);

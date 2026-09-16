@@ -9,6 +9,8 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 
+import org.json.JSONObject;
+
 public class UpdateDiffTest {
     @Test public void returnsNoNamesWhenNothingChanged() {
         List<UpdateDiff.Item> values = Collections.singletonList(item("math", "高等数学", "90"));
@@ -53,6 +55,27 @@ public class UpdateDiffTest {
                 UpdateDiff.notificationText(Arrays.asList("大学英语", "离散数学"), true));
         assertEquals("大学英语、离散数学等 3 门排课有更新",
                 UpdateDiff.notificationText(Arrays.asList("大学英语", "离散数学", "高等数学"), false));
+    }
+
+    @Test public void ignoresCourseWhitespaceAndEquivalentDetailFormatting() throws Exception {
+        GradeRecord before = GradeRecord.from(new JSONObject()
+                .put("course", " 数据库 ")
+                .put("credits", 3)
+                .put("point", 4)
+                .put("score", 95)
+                .put("detail", "<span>期末成绩:95</span>"));
+        GradeRecord after = GradeRecord.from(new JSONObject()
+                .put("course", "数据库")
+                .put("credits", 3.0)
+                .put("point", 4.0)
+                .put("score", 95.0)
+                .put("detail", "&lt;span&gt;期末成绩:95&lt;/span&gt;"));
+
+        assertTrue(UpdateDiff.changedNames(
+                Collections.singletonList(new UpdateDiff.Item(before.diffKey(), before.course,
+                        before.diffSignature())),
+                Collections.singletonList(new UpdateDiff.Item(after.diffKey(), after.course,
+                        after.diffSignature()))).isEmpty());
     }
 
     private static UpdateDiff.Item item(String key, String name, String signature) {

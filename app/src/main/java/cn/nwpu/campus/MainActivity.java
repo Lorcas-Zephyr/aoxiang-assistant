@@ -28,6 +28,7 @@ import android.os.Looper;
 import android.security.keystore.KeyGenParameterSpec;
 import android.security.keystore.KeyProperties;
 import android.text.InputType;
+import android.text.TextUtils;
 import android.util.Base64;
 import android.util.TypedValue;
 import android.view.Gravity;
@@ -78,8 +79,10 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Set;
 
 import javax.crypto.Cipher;
 import javax.crypto.KeyGenerator;
@@ -128,6 +131,7 @@ public class MainActivity extends Activity {
     private static final String UNIT_HOURS = "小时";
     private static final String UNIT_DAYS = "天";
     private static final long PORTRAIT_TIMEOUT_MS = 15_000L;
+    private static final long COLLECTION_RETRY_DELAY_MS = 5 * 60_000L;
     private static final int SCHEDULE_SECTION_HEIGHT_DP = 48;
 
     private static volatile boolean activityVisible;
@@ -538,6 +542,7 @@ public class MainActivity extends Activity {
         bottom.setGravity(Gravity.CENTER);
         bottom.setPadding(dp(8), dp(5), dp(8), dp(6));
         bottom.setBackground(border(panelColor(), lineColor(), 0));
+        bottom.setElevation(dp(5));
         mainShell.addView(bottom, new LinearLayout.LayoutParams(-1, dp(62)));
 
         String[] labels = {"首页", "课表", "成绩", "管理", "设置"};
@@ -556,6 +561,7 @@ public class MainActivity extends Activity {
             TextView text = label(labels[i], 10, currentTab == tab ? primaryColor() : mutedColor());
             text.setGravity(Gravity.CENTER);
             if (currentTab == tab) text.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+            if (currentTab == tab) item.setBackground(bg(primaryColorWithAlpha(24), 7));
             item.addView(icon, new LinearLayout.LayoutParams(-1, dp(29)));
             item.addView(text, new LinearLayout.LayoutParams(-1, dp(19)));
             item.setOnClickListener(v -> {
@@ -652,12 +658,20 @@ public class MainActivity extends Activity {
         scroll.addView(l);
         content.addView(scroll);
 
-        l.addView(title("翱翔助手"));
         ScheduleModels.Semester semester = selectedSemester();
-        if (semester != null) {
-            TextView sub = label(semester.name + "  第 " + currentScheduleWeek(semester) + " 周", 12, mutedColor());
-            l.addView(sub);
-        }
+        String subtitle = semester == null ? "" : semester.name + "  第 "
+                + currentScheduleWeek(semester) + " 周";
+        LinearLayout homeHeader = pageHeader("翱翔助手", subtitle);
+        ImageView themeToggle = iconButton(R.drawable.ic_theme,
+                darkMode ? "切换浅色模式" : "切换深色模式");
+        themeToggle.setOnClickListener(v -> {
+            darkMode = !darkMode;
+            saveTheme();
+            applyWindowTheme();
+            showTab(TAB_HOME, true);
+        });
+        homeHeader.addView(themeToggle, new LinearLayout.LayoutParams(dp(40), dp(40)));
+        l.addView(homeHeader);
         LinearLayout overviewHeader = sectionHeader("数据概览");
         Button gradeUpdate = syncButton("成绩", "更新成绩");
         gradeUpdate.setOnClickListener(v -> openPortal("grades", false));
@@ -671,6 +685,7 @@ public class MainActivity extends Activity {
         LinearLayout summary = card(panelColor());
         LinearLayout firstMetrics = new LinearLayout(this);
         firstMetrics.addView(metric("GPA", portraitGpaText(), "绩点"), new LinearLayout.LayoutParams(0, dp(70), 1));
+        firstMetrics.addView(metricDivider());
         firstMetrics.addView(metric("加权成绩", grades.isEmpty() ? "--" : weightedScore(), "分"), new LinearLayout.LayoutParams(0, dp(70), 1));
         summary.addView(firstMetrics);
         View divider = new View(this);
@@ -678,15 +693,22 @@ public class MainActivity extends Activity {
         summary.addView(divider, new LinearLayout.LayoutParams(-1, dp(1)));
         LinearLayout secondMetrics = new LinearLayout(this);
         secondMetrics.addView(metric("课程", String.valueOf(grades.size()), "门"), new LinearLayout.LayoutParams(0, dp(70), 1));
+        secondMetrics.addView(metricDivider());
         secondMetrics.addView(metric("剩余电费", Double.isNaN(electricityBalance) ? "--" : scoreDf.format(electricityBalance), "度"), new LinearLayout.LayoutParams(0, dp(70), 1));
         summary.addView(secondMetrics);
         l.addView(summary);
 
-        l.addView(section("今日课程"));
         ScheduleModels.Semester todaySemester = selectedSemester();
         List<CourseMeeting> todayMeetings = todaySemester == null
                 ? new ArrayList<>()
                 : courseMeetingsForDate(coursesForSemester(todaySemester.id), todaySemester, LocalDate.now());
+        LinearLayout todayHeader = sectionHeader("今日课程");
+        if (!todayMeetings.isEmpty()) {
+            TextView count = label(todayMeetings.size() + " 门", 11, mutedColor());
+            count.setGravity(Gravity.CENTER_VERTICAL | Gravity.END);
+            todayHeader.addView(count, new LinearLayout.LayoutParams(dp(48), dp(54)));
+        }
+        l.addView(todayHeader);
         if (todayMeetings.isEmpty()) {
             l.addView(emptyHint("今天没有课程"));
         } else {
@@ -701,12 +723,16 @@ public class MainActivity extends Activity {
         scheduleSwipeIncoming = null;
         ScrollView scroll = page();
         LinearLayout l = column();
-        l.setPadding(dp(8), dp(18), dp(8), dp(26));
+        // Keep the app bar baseline aligned with the other top-level pages.
+        l.setPadding(dp(8), dp(14), dp(8), dp(26));
         scroll.addView(l);
         content.addView(scroll);
 
         LinearLayout header = pageHeader("课表", "一周课程总览");
         header.setPadding(dp(8), 0, dp(8), dp(12));
+        ImageView updateSchedule = iconButton(R.drawable.ic_sync, "手动更新课表");
+        updateSchedule.setOnClickListener(v -> openPortal("schedule", false));
+        header.addView(updateSchedule, new LinearLayout.LayoutParams(dp(40), dp(40)));
         l.addView(header);
 
         if (semesters.isEmpty()) {
@@ -728,6 +754,7 @@ public class MainActivity extends Activity {
         LinearLayout topRow = new LinearLayout(this);
         topRow.setGravity(Gravity.CENTER_VERTICAL);
         Button semesterButton = action(semester.name, false);
+        styleScheduleToolbarButton(semesterButton, false);
         semesterButton.setOnClickListener(v -> showSemesterPicker("选择学期", picked -> {
             selectedSemesterId = picked.id;
             ScheduleStorage.saveSelectedSemester(store, selectedSemesterId);
@@ -737,35 +764,45 @@ public class MainActivity extends Activity {
             replaceScheduleContent(picked);
         }));
         topRow.addView(semesterButton, new LinearLayout.LayoutParams(0, dp(42), 1));
-        addHorizontalGap(topRow, 10);
-        Button monthButton = action(scheduleShowMonth ? "周视图" : "月历视图", false);
-        Button courseModeButton = action(scheduleShowAllCourses ? "本周课程" : "全部课程", false);
-        monthButton.setOnClickListener(v -> {
-            ScheduleModels.Semester active = selectedSemester();
-            scheduleShowMonth = !scheduleShowMonth;
-            scheduleMonthAnchor = weekStartForCurrentSelection(active);
-            monthButton.setText(scheduleShowMonth ? "周视图" : "月历视图");
-            courseModeButton.setVisibility(scheduleShowMonth ? View.GONE : View.VISIBLE);
-            if (scheduleNavigationRow != null) {
-                scheduleNavigationRow.setVisibility(scheduleShowAllCourses && !scheduleShowMonth
-                        ? View.GONE : View.VISIBLE);
-            }
-            replaceScheduleContent(active);
-        });
-        topRow.addView(monthButton, new LinearLayout.LayoutParams(dp(96), dp(40)));
-        addHorizontalGap(topRow, 8);
-        courseModeButton.setVisibility(scheduleShowMonth ? View.GONE : View.VISIBLE);
-        courseModeButton.setOnClickListener(v -> {
-            scheduleShowAllCourses = !scheduleShowAllCourses;
-            courseModeButton.setText(scheduleShowAllCourses ? "本周课程" : "全部课程");
-            if (scheduleNavigationRow != null) {
-                scheduleNavigationRow.setVisibility(scheduleShowAllCourses ? View.GONE : View.VISIBLE);
-            }
-            replaceScheduleContent(selectedSemester());
-        });
-        topRow.addView(courseModeButton, new LinearLayout.LayoutParams(dp(96), dp(40)));
         tools.addView(topRow);
 
+        addGap(tools, 8);
+        LinearLayout modeRow = new LinearLayout(this);
+        modeRow.setGravity(Gravity.CENTER_VERTICAL);
+        modeRow.setPadding(dp(3), dp(3), dp(3), dp(3));
+        modeRow.setBackground(border(colorWithAlpha(primaryColor(), 10), lineColor(), 8));
+        Button weekMode = scheduleModeButton("本周", !scheduleShowMonth && !scheduleShowAllCourses);
+        Button allMode = scheduleModeButton("全部课程", !scheduleShowMonth && scheduleShowAllCourses);
+        Button monthMode = scheduleModeButton("月历", scheduleShowMonth);
+        weekMode.setOnClickListener(v -> {
+            scheduleShowMonth = false;
+            scheduleShowAllCourses = false;
+            refreshScheduleModeButtons(weekMode, allMode, monthMode);
+            if (scheduleNavigationRow != null) scheduleNavigationRow.setVisibility(View.VISIBLE);
+            replaceScheduleContent(selectedSemester());
+        });
+        allMode.setOnClickListener(v -> {
+            scheduleShowMonth = false;
+            scheduleShowAllCourses = true;
+            refreshScheduleModeButtons(weekMode, allMode, monthMode);
+            if (scheduleNavigationRow != null) scheduleNavigationRow.setVisibility(View.GONE);
+            replaceScheduleContent(selectedSemester());
+        });
+        monthMode.setOnClickListener(v -> {
+            ScheduleModels.Semester active = selectedSemester();
+            scheduleShowMonth = true;
+            scheduleShowAllCourses = false;
+            scheduleMonthAnchor = weekStartForCurrentSelection(active);
+            refreshScheduleModeButtons(weekMode, allMode, monthMode);
+            if (scheduleNavigationRow != null) scheduleNavigationRow.setVisibility(View.VISIBLE);
+            replaceScheduleContent(active);
+        });
+        modeRow.addView(weekMode, new LinearLayout.LayoutParams(0, dp(38), 1));
+        addHorizontalGap(modeRow, 4);
+        modeRow.addView(allMode, new LinearLayout.LayoutParams(0, dp(38), 1));
+        addHorizontalGap(modeRow, 4);
+        modeRow.addView(monthMode, new LinearLayout.LayoutParams(0, dp(38), 1));
+        tools.addView(modeRow);
         addGap(tools, 8);
         LinearLayout switchRow = new LinearLayout(this);
         scheduleNavigationRow = switchRow;
@@ -773,6 +810,9 @@ public class MainActivity extends Activity {
         Button prev = stepButton("‹");
         Button next = stepButton("›");
         Button today = action("本周", false);
+        styleScheduleToolbarButton(prev, false);
+        styleScheduleToolbarButton(next, false);
+        styleScheduleToolbarButton(today, false);
         today.setOnClickListener(v -> {
             ScheduleModels.Semester active = selectedSemester();
             scheduleWeekOffset = 0;
@@ -817,9 +857,30 @@ public class MainActivity extends Activity {
 
         LinearLayout summary = card(panelColor());
         summary.setOrientation(LinearLayout.HORIZONTAL);
-        summary.addView(metric("GPA", portraitGpaText(), "绩点"), new LinearLayout.LayoutParams(0, dp(76), 1));
-        summary.addView(metric("加权成绩", grades.isEmpty() ? "--" : weightedScore(), "分"), new LinearLayout.LayoutParams(0, dp(76), 1));
-        summary.addView(metric("课程", String.valueOf(grades.size()), "门"), new LinearLayout.LayoutParams(0, dp(76), 1));
+        LinearLayout gpaMetric = new LinearLayout(this);
+        gpaMetric.setOrientation(LinearLayout.VERTICAL);
+        gpaMetric.setGravity(Gravity.CENTER_VERTICAL);
+        gpaMetric.setPadding(dp(8), dp(4), dp(8), dp(4));
+        gpaMetric.addView(label("总 GPA", 11, mutedColor()));
+        TextView gpaValue = label(portraitGpaText(), 30, primaryColor());
+        gpaValue.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        gpaMetric.addView(gpaValue);
+        gpaMetric.addView(label("学生画像数据", 10, mutedColor()));
+        summary.addView(gpaMetric, new LinearLayout.LayoutParams(0, dp(94), 6));
+        View summaryDivider = new View(this);
+        summaryDivider.setBackgroundColor(lineColor());
+        LinearLayout.LayoutParams dividerParams = new LinearLayout.LayoutParams(dp(1), dp(72));
+        dividerParams.gravity = Gravity.CENTER_VERTICAL;
+        summary.addView(summaryDivider, dividerParams);
+        LinearLayout secondaryMetrics = new LinearLayout(this);
+        secondaryMetrics.setOrientation(LinearLayout.VERTICAL);
+        secondaryMetrics.addView(compactMetric("加权成绩",
+                grades.isEmpty() ? "--" : weightedScore(), "分"),
+                new LinearLayout.LayoutParams(-1, 0, 1));
+        secondaryMetrics.addView(compactMetric("课程",
+                String.valueOf(grades.size()), "门"),
+                new LinearLayout.LayoutParams(-1, 0, 1));
+        summary.addView(secondaryMetrics, new LinearLayout.LayoutParams(0, dp(94), 5));
         l.addView(summary);
 
         l.addView(section("成绩明细"));
@@ -839,30 +900,28 @@ public class MainActivity extends Activity {
         scroll.addView(l);
         content.addView(scroll);
 
-        l.addView(pageHeader("管理", "维护课表与学期数据"));
+        l.addView(pageHeader("管理", "课程、学期与数据工具"));
 
-        l.addView(section("课表同步"));
+        l.addView(section("课程数据"));
         LinearLayout syncCard = card(panelColor());
-        LinearLayout actionRow = new LinearLayout(this);
-        Button importSchedule = action("导入课表", true);
-        importSchedule.setOnClickListener(v -> openPortal("schedule", false));
-        actionRow.addView(importSchedule, new LinearLayout.LayoutParams(0, dp(46), 1));
-        addHorizontalGap(actionRow, 8);
-        Button updateSchedule = action("手动更新", false);
-        updateSchedule.setOnClickListener(v -> openPortal("schedule", false));
-        actionRow.addView(updateSchedule, new LinearLayout.LayoutParams(0, dp(46), 1));
-        syncCard.addView(actionRow);
+        syncCard.setPadding(dp(14), 0, dp(8), 0);
+        addActionNavigation(syncCard, "手动更新课表", "从教务系统读取当前学期",
+                R.drawable.ic_sync, () -> openPortal("schedule", false), false);
         l.addView(syncCard);
 
         LinearLayout semesterHeader = sectionHeader("学期");
-        Button addSemester = action("新增", false);
-        addSemester.setOnClickListener(v -> showSemesterDialog(null));
-        semesterHeader.addView(addSemester, new LinearLayout.LayoutParams(dp(76), dp(36)));
         l.addView(semesterHeader);
         if (semesters.isEmpty()) {
             l.addView(emptyHint("还没有学期"));
         } else {
-            for (ScheduleModels.Semester semester : semesters) l.addView(semesterCard(semester));
+            LinearLayout semesterList = card(panelColor());
+            semesterList.setPadding(dp(14), 0, dp(8), 0);
+            for (int i = 0; i < semesters.size(); i++) {
+                ScheduleModels.Semester value = semesters.get(i);
+                semesterList.addView(semesterManageRow(value));
+                if (i < semesters.size() - 1) semesterList.addView(settingDivider());
+            }
+            l.addView(semesterList);
         }
 
         LinearLayout courseHeader = sectionHeader("课程");
@@ -883,7 +942,13 @@ public class MainActivity extends Activity {
             if (semesterCourses.isEmpty()) {
                 l.addView(emptyHint("该学期还没有课程"));
             } else {
-                for (ScheduleModels.Course course : semesterCourses) l.addView(courseManageCard(course));
+                LinearLayout courseList = card(panelColor());
+                courseList.setPadding(dp(14), 0, dp(8), 0);
+                for (int i = 0; i < semesterCourses.size(); i++) {
+                    courseList.addView(courseManageRow(semesterCourses.get(i)));
+                    if (i < semesterCourses.size() - 1) courseList.addView(settingDivider());
+                }
+                l.addView(courseList);
             }
         }
 
@@ -1195,8 +1260,7 @@ public class MainActivity extends Activity {
         startupRow.addView(startupTitle, new LinearLayout.LayoutParams(0, dp(52), 1));
         String[] startupLabels = {"首页", "课表", "成绩", "管理", "设置"};
         Spinner startupPicker = new Spinner(this);
-        ArrayAdapter<String> startupAdapter = new ArrayAdapter<>(this,
-                android.R.layout.simple_spinner_dropdown_item, startupLabels);
+        ArrayAdapter<String> startupAdapter = themedSpinnerAdapter(startupLabels);
         startupPicker.setAdapter(startupAdapter);
         startupPicker.setSelection(startupTab());
         final boolean[] startupInitialized = {false};
@@ -1311,9 +1375,12 @@ public class MainActivity extends Activity {
         head.addView(dayHeader("", ""), new LinearLayout.LayoutParams(dp(44), dp(48)));
         for (int day = 1; day <= 7; day++) {
             LocalDate date = weekStart.plusDays(day - 1);
-            head.addView(dayHeader(dayLabel(day).substring(1),
-                            scheduleShowAllCourses ? "" : monthDayFormatter.format(date)),
-                    new LinearLayout.LayoutParams(0, dp(48), 1));
+            View dayHeader = dayHeader(dayLabel(day).substring(1),
+                    scheduleShowAllCourses ? "" : monthDayFormatter.format(date));
+            if (date.equals(LocalDate.now()) && !scheduleShowAllCourses) {
+                dayHeader.setBackground(border(primaryColorWithAlpha(24), primaryColorWithAlpha(88), 6));
+            }
+            head.addView(dayHeader, new LinearLayout.LayoutParams(0, dp(48), 1));
         }
         board.addView(head);
 
@@ -2544,7 +2611,11 @@ public class MainActivity extends Activity {
         settings.setAllowFileAccess(false);
         settings.setAllowContentAccess(false);
         settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
-        CookieManager.getInstance().setAcceptCookie(true);
+        CookieManager cookies = CookieManager.getInstance();
+        cookies.setAcceptCookie(true);
+        // The unified authentication cookie is set on uis.nwpu.edu.cn and
+        // then consumed by JWXT/YKT on another subdomain.
+        cookies.setAcceptThirdPartyCookies(web, true);
         web.setWebViewClient(new SafeClient());
         web.setWebChromeClient(new WebChromeClient() {
             @Override
@@ -2743,6 +2814,34 @@ public class MainActivity extends Activity {
                             handleCredentialsValidated();
                             return;
                         } else if ("grade_api_raw".equals(phase) && "grades".equals(target)) {
+                            if (!payload.optBoolean("complete", true)) {
+                                if (initialSyncInProgress) {
+                                    cancelAutomation();
+                                    finishInitialSyncStep(target, false);
+                                    return;
+                                }
+                                status.setText("成绩数据暂时不完整，请稍后重试");
+                                boolean wasAutomatic = automaticRun;
+                                cancelAutomation();
+                                if (wasAutomatic) {
+                                    // Keep the retry delay in both the in-process scheduler and
+                                    // the alarm-backed scheduler. A missing timestamp means
+                                    // "due now" to BackgroundSyncScheduler, so removing it here
+                                    // would immediately start another collection attempt.
+                                    long retryAt = System.currentTimeMillis()
+                                            + COLLECTION_RETRY_DELAY_MS;
+                                    store.edit().putLong("auto_last_grades",
+                                            retryAt - intervalMillis("grades")).apply();
+                                    scheduleAllAutomaticUpdates(0L);
+                                    syncBackgroundService();
+                                }
+                                if (!wasAutomatic) {
+                                    showTab(currentTab);
+                                    Toast.makeText(MainActivity.this,
+                                            "成绩数据暂时不完整，本次未更新，请稍后重试", Toast.LENGTH_LONG).show();
+                                }
+                                return;
+                            }
                             JSONArray rows = PortalApiParsers.gradeRows(payload.optJSONArray("gradeResponses"));
                             double apiGpa = PortalApiParsers.gpa(payload.optJSONObject("gpaResponse"));
                             if (rows.length() > 0) {
@@ -3253,7 +3352,11 @@ public class MainActivity extends Activity {
             List<ScheduleModels.Course> importedCourses = new ArrayList<>();
             for (int i = 0; i < courseArray.length(); i++) {
                 JSONObject item = courseArray.optJSONObject(i);
-                if (item != null) importedCourses.add(ScheduleModels.Course.from(item));
+                if (item != null) {
+                    ScheduleModels.Course course = ScheduleModels.Course.from(item);
+                    course.timeSlots = ScheduleImport.mergeContinuousSlots(course.timeSlots);
+                    importedCourses.add(course);
+                }
             }
             List<ScheduleModels.Semester> importedSemesters = new ArrayList<>();
             JSONArray semesterArray = settings.optJSONArray("semesters");
@@ -3454,13 +3557,16 @@ public class MainActivity extends Activity {
             cipher.init(Cipher.ENCRYPT_MODE, credentialKey());
             String payload = Base64.encodeToString(cipher.getIV(), Base64.NO_WRAP) + ":" +
                     Base64.encodeToString(cipher.doFinal((username + "\n" + password).getBytes(StandardCharsets.UTF_8)), Base64.NO_WRAP);
-            store.edit()
+            boolean saved = store.edit()
                     .putString("login_credentials", payload)
                     .putBoolean("credentials_verified", false)
                     .remove(INTERACTIVE_AUTH_REQUIRED)
                     .remove(INTERACTIVE_AUTH_TARGET)
-                    .apply();
-            return true;
+                    .commit();
+            if (!saved) {
+                Toast.makeText(this, "无法安全保存账号，请重试", Toast.LENGTH_LONG).show();
+            }
+            return saved;
         } catch (Exception error) {
             Toast.makeText(this, "无法安全保存账号，请重试", Toast.LENGTH_LONG).show();
             return false;
@@ -3795,15 +3901,17 @@ public class MainActivity extends Activity {
     }
 
     private int backgroundColor() {
-        return darkMode ? Color.rgb(17, 21, 28) : Color.rgb(247, 249, 252);
+        return darkMode ? Color.rgb(13, 18, 24) : Color.rgb(242, 247, 251);
     }
 
     private int surfaceColor() {
-        return darkMode ? Color.rgb(28, 34, 43) : Color.rgb(239, 244, 249);
+        return darkMode ? Color.rgb(24, 34, 44) : Color.rgb(232, 240, 246);
     }
 
     private int panelColor() {
-        return darkMode ? Color.rgb(24, 29, 37) : Color.WHITE;
+        // Keep panels slightly separated from the page so the native layout
+        // has a glass-like hierarchy without requiring a device blur API.
+        return darkMode ? Color.rgb(27, 38, 49) : Color.rgb(252, 254, 255);
     }
 
     private int textColor() {
@@ -3824,6 +3932,15 @@ public class MainActivity extends Activity {
         } catch (Exception ignored) {
             return Color.rgb(47, 128, 237);
         }
+    }
+
+    private int electricityAccentColor() {
+        return darkMode ? Color.rgb(91, 192, 145) : Color.rgb(39, 124, 90);
+    }
+
+    private int colorWithAlpha(int color, int alpha) {
+        return Color.argb(Math.max(0, Math.min(255, alpha)),
+                Color.red(color), Color.green(color), Color.blue(color));
     }
 
     private ScrollView page() {
@@ -3896,6 +4013,14 @@ public class MainActivity extends Activity {
         LinearLayout row = new LinearLayout(this);
         row.setGravity(Gravity.CENTER_VERTICAL);
         row.setPadding(0, dp(8), 0, dp(8));
+        ImageView leading = new ImageView(this);
+        leading.setImageResource(settingsPanelIcon(panel));
+        leading.setColorFilter(primaryColor());
+        leading.setPadding(dp(9), dp(9), dp(9), dp(9));
+        leading.setBackground(bg(primaryColorWithAlpha(22), 7));
+        leading.setContentDescription(null);
+        row.addView(leading, new LinearLayout.LayoutParams(dp(36), dp(36)));
+        addHorizontalGap(row, 11);
         LinearLayout text = new LinearLayout(this);
         text.setOrientation(LinearLayout.VERTICAL);
         text.setGravity(Gravity.CENTER_VERTICAL);
@@ -3918,6 +4043,46 @@ public class MainActivity extends Activity {
         });
         parent.addView(row);
         if (divider) parent.addView(settingDivider());
+    }
+
+    private void addActionNavigation(LinearLayout parent, String heading, String summary,
+                                     int icon, Runnable action, boolean divider) {
+        LinearLayout row = navigationRow(heading, summary, icon);
+        row.setOnClickListener(v -> action.run());
+        parent.addView(row);
+        if (divider) parent.addView(settingDivider());
+    }
+
+    private LinearLayout navigationRow(String heading, String summary, int icon) {
+        LinearLayout row = new LinearLayout(this);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(0, dp(8), 0, dp(8));
+        ImageView leading = new ImageView(this);
+        leading.setImageResource(icon);
+        leading.setColorFilter(primaryColor());
+        leading.setPadding(dp(9), dp(9), dp(9), dp(9));
+        leading.setBackground(bg(primaryColorWithAlpha(22), 7));
+        row.addView(leading, new LinearLayout.LayoutParams(dp(36), dp(36)));
+        addHorizontalGap(row, 11);
+        LinearLayout text = new LinearLayout(this);
+        text.setOrientation(LinearLayout.VERTICAL);
+        text.setGravity(Gravity.CENTER_VERTICAL);
+        TextView title = label(heading, 14, textColor());
+        title.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        text.addView(title);
+        if (summary != null && !summary.isEmpty()) {
+            TextView note = label(summary, 11, mutedColor());
+            note.setMaxLines(2);
+            note.setEllipsize(TextUtils.TruncateAt.END);
+            text.addView(note);
+        }
+        row.addView(text, new LinearLayout.LayoutParams(0, dp(58), 1));
+        ImageView arrow = new ImageView(this);
+        arrow.setImageResource(R.drawable.ic_chevron_right);
+        arrow.setColorFilter(mutedColor());
+        arrow.setPadding(dp(7), dp(7), dp(7), dp(7));
+        row.addView(arrow, new LinearLayout.LayoutParams(dp(32), dp(32)));
+        return row;
     }
 
     private String automaticUpdateSummary() {
@@ -4163,26 +4328,57 @@ public class MainActivity extends Activity {
         return metric;
     }
 
+    private View metricDivider() {
+        View divider = new View(this);
+        divider.setBackgroundColor(lineColor());
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(dp(1), dp(48));
+        params.gravity = Gravity.CENTER_VERTICAL;
+        divider.setLayoutParams(params);
+        return divider;
+    }
+
+    private LinearLayout compactMetric(String caption, String value, String unit) {
+        LinearLayout metric = new LinearLayout(this);
+        metric.setGravity(Gravity.CENTER_VERTICAL);
+        metric.setPadding(dp(12), dp(2), dp(4), dp(2));
+        TextView label = label(caption, 10, mutedColor());
+        metric.addView(label, new LinearLayout.LayoutParams(0, -1, 1));
+        TextView number = label(value + " " + unit, 15, textColor());
+        number.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        number.setSingleLine(true);
+        metric.addView(number);
+        return metric;
+    }
+
     private ImageView iconButton(int resource, String description) {
         ImageView button = new ImageView(this);
         button.setImageResource(resource);
         button.setColorFilter(primaryColor());
         button.setContentDescription(description);
         button.setPadding(dp(9), dp(9), dp(9), dp(9));
-        button.setBackground(border(panelColor(), lineColor(), 5));
+        button.setBackground(border(panelColor(), lineColor(), 8));
+        applyRoundedOutline(button, 8, 2);
         return button;
     }
 
     private Button syncButton(String text, String description) {
         Button button = action(text, false);
-        android.graphics.drawable.Drawable icon = getDrawable(R.drawable.ic_sync);
+        boolean electricity = "电费".equals(text);
+        int accent = electricity ? electricityAccentColor() : primaryColor();
+        int iconResource = electricity ? R.drawable.ic_electricity : R.drawable.ic_grades;
+        android.graphics.drawable.Drawable icon = getDrawable(iconResource);
         if (icon != null) {
             icon = icon.mutate();
-            icon.setTint(primaryColor());
+            icon.setTint(accent);
             icon.setBounds(0, 0, dp(16), dp(16));
             button.setCompoundDrawables(icon, null, null, null);
             button.setCompoundDrawablePadding(dp(4));
         }
+        button.setTextColor(accent);
+        button.setBackgroundTintList(null);
+        button.setBackground(border(colorWithAlpha(accent, 20), colorWithAlpha(accent, 76), 7));
+        button.setStateListAnimator(null);
+        applyRoundedOutline(button, 7, 0);
         button.setContentDescription(description);
         button.setMinWidth(0);
         button.setPadding(dp(7), 0, dp(7), 0);
@@ -4199,6 +4395,49 @@ public class MainActivity extends Activity {
         return value;
     }
 
+    private ArrayAdapter<String> themedSpinnerAdapter(String[] values) {
+        return new ArrayAdapter<String>(this, android.R.layout.simple_spinner_item, values) {
+            {
+                setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+            }
+
+            private View style(View view, boolean dropdown) {
+                if (view instanceof TextView) {
+                    TextView text = (TextView) view;
+                    text.setTextColor(textColor());
+                    text.setTextSize(13);
+                    text.setGravity(Gravity.CENTER_VERTICAL);
+                    if (dropdown) {
+                        text.setBackgroundColor(panelColor());
+                        text.setPadding(dp(14), dp(10), dp(14), dp(10));
+                    }
+                }
+                return view;
+            }
+
+            @Override public View getView(int position, View convertView, ViewGroup parent) {
+                return style(super.getView(position, convertView, parent), false);
+            }
+
+            @Override public View getDropDownView(int position, View convertView, ViewGroup parent) {
+                return style(super.getDropDownView(position, convertView, parent), true);
+            }
+        };
+    }
+
+    private int settingsPanelIcon(String panel) {
+        switch (panel) {
+            case "account": return R.drawable.ic_account;
+            case "updates": return R.drawable.ic_sync;
+            case "manual_updates": return R.drawable.ic_nav_schedule;
+            case "notifications": return R.drawable.ic_notifications;
+            case "electricity": return R.drawable.ic_electricity;
+            case "appearance": return R.drawable.ic_palette;
+            case "data": return R.drawable.ic_data;
+            default: return R.drawable.ic_info;
+        }
+    }
+
     private View settingDivider() {
         View divider = new View(this);
         divider.setBackgroundColor(lineColor());
@@ -4209,8 +4448,10 @@ public class MainActivity extends Activity {
     private LinearLayout card(int color) {
         LinearLayout c = new LinearLayout(this);
         c.setOrientation(LinearLayout.VERTICAL);
-        c.setBackground(border(color, lineColor(), 5));
+        c.setBackground(border(color, lineColor(), 8));
         c.setPadding(dp(14), dp(12), dp(14), dp(12));
+        c.setElevation(dp(2));
+        applyRoundedOutline(c, 8, 2);
         return c;
     }
 
@@ -4239,9 +4480,39 @@ public class MainActivity extends Activity {
         b.setTextColor(filled ? Color.WHITE : primaryColor());
         b.setMinHeight(dp(42));
         b.setPadding(dp(12), 0, dp(12), 0);
-        b.setBackground(border(filled ? primaryColor() : panelColor(), filled ? primaryColor() : lineColor(), 5));
-        applyRoundedButtonOutline(b, 5);
+        b.setBackgroundTintList(null);
+        b.setBackground(border(filled ? primaryColor() : surfaceColor(), filled ? primaryColor() : lineColor(), 7));
+        applyRoundedButtonOutline(b, 7);
         return b;
+    }
+
+    private Button scheduleModeButton(String text, boolean selected) {
+        Button button = action(text, false);
+        styleScheduleModeButton(button, selected);
+        return button;
+    }
+
+    private void styleScheduleToolbarButton(Button button, boolean selected) {
+        button.setBackgroundTintList(null);
+        button.setTextColor(selected ? primaryColor() : primaryColor());
+        button.setBackground(border(selected ? panelColor() : surfaceColor(),
+                selected ? primaryColorWithAlpha(70) : lineColor(), 7));
+        button.setStateListAnimator(null);
+        applyRoundedOutline(button, 7, 0);
+    }
+
+    private void refreshScheduleModeButtons(Button week, Button all, Button month) {
+        styleScheduleModeButton(week, !scheduleShowMonth && !scheduleShowAllCourses);
+        styleScheduleModeButton(all, !scheduleShowMonth && scheduleShowAllCourses);
+        styleScheduleModeButton(month, scheduleShowMonth);
+    }
+
+    private void styleScheduleModeButton(Button button, boolean selected) {
+        button.setTypeface(Typeface.DEFAULT, selected ? Typeface.BOLD : Typeface.NORMAL);
+        button.setTextColor(selected ? primaryColor() : mutedColor());
+        button.setBackground(border(selected ? panelColor() : Color.TRANSPARENT,
+                selected ? lineColor() : Color.TRANSPARENT, 6));
+        applyRoundedOutline(button, 6, selected ? 2 : 0);
     }
 
     private Button stepButton(String mark) {
@@ -4252,8 +4523,9 @@ public class MainActivity extends Activity {
         b.setPadding(0, 0, 0, 0);
         b.setMinWidth(0);
         b.setMinHeight(0);
-        b.setBackground(border(panelColor(), lineColor(), 5));
-        applyRoundedButtonOutline(b, 5);
+        b.setBackgroundTintList(null);
+        b.setBackground(border(surfaceColor(), lineColor(), 7));
+        applyRoundedButtonOutline(b, 7);
         return b;
     }
 
@@ -4263,7 +4535,10 @@ public class MainActivity extends Activity {
     }
 
     private void applyRoundedOutline(View view, int radiusDp, int elevationDp) {
-        view.setElevation(dp(elevationDp));
+        // Native elevation shadows are much darker and sharper than the
+        // light glass surfaces used by the app. Keep only a restrained lift;
+        // the border and surface contrast provide the primary separation.
+        view.setElevation(elevationDp <= 0 ? 0f : dp(elevationDp) * 0.35f);
         view.setOutlineProvider(new ViewOutlineProvider() {
             @Override
             public void getOutline(View target, Outline outline) {
@@ -4296,28 +4571,43 @@ public class MainActivity extends Activity {
         LinearLayout row = new LinearLayout(this);
         row.setBaselineAligned(false);
         row.setGravity(Gravity.CENTER_VERTICAL);
-        row.setPadding(0, dp(11), 0, dp(11));
+        row.setPadding(0, dp(10), 0, dp(10));
         LinearLayout left = new LinearLayout(this);
         left.setOrientation(LinearLayout.VERTICAL);
         TextView name = label(grade.course, 15, textColor());
         name.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        name.setMaxLines(2);
+        name.setEllipsize(TextUtils.TruncateAt.END);
         left.addView(name);
-        left.addView(label(grade.category + " · " + grade.credits + " 学分", 12, mutedColor()));
-        if (!grade.detail.isEmpty()) left.addView(label(grade.detail, 11, mutedColor()));
-        row.addView(left, new LinearLayout.LayoutParams(0, dp(64), 1));
+        TextView category = label(grade.category + " · " + grade.credits + " 学分", 11, mutedColor());
+        category.setSingleLine(true);
+        category.setEllipsize(TextUtils.TruncateAt.END);
+        left.addView(category);
+        if (!grade.detail.isEmpty()) {
+            TextView detail = label(grade.detail, 10, mutedColor());
+            detail.setSingleLine(true);
+            detail.setEllipsize(TextUtils.TruncateAt.END);
+            left.addView(detail);
+        }
+        row.addView(left, new LinearLayout.LayoutParams(0, dp(68), 1));
         LinearLayout right = new LinearLayout(this);
         right.setOrientation(LinearLayout.VERTICAL);
         right.setGravity(Gravity.CENTER);
-        TextView point = label("绩点 " + grade.pointText(), 15, primaryColor());
+        right.setPadding(dp(8), dp(5), dp(8), dp(5));
+        right.setBackground(border(primaryColorWithAlpha(20), primaryColorWithAlpha(72), 8));
+        TextView pointLabel = label("绩点", 10, mutedColor());
+        pointLabel.setGravity(Gravity.CENTER);
+        right.addView(pointLabel, new LinearLayout.LayoutParams(-1, dp(16)));
+        TextView point = label(grade.pointText(), 22, primaryColor());
         point.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
         point.setSingleLine(true);
         point.setGravity(Gravity.CENTER);
-        right.addView(point, new LinearLayout.LayoutParams(-1, 0, 1));
-        TextView score = label("成绩 " + grade.scoreText(), 11, mutedColor());
+        right.addView(point, new LinearLayout.LayoutParams(-1, dp(29)));
+        TextView score = label("分数 " + grade.scoreText(), 10, mutedColor());
         score.setSingleLine(true);
         score.setGravity(Gravity.CENTER);
-        right.addView(score, new LinearLayout.LayoutParams(-1, 0, 1));
-        row.addView(right, new LinearLayout.LayoutParams(dp(96), dp(64)));
+        right.addView(score, new LinearLayout.LayoutParams(-1, dp(16)));
+        row.addView(right, new LinearLayout.LayoutParams(dp(82), dp(68)));
         LinearLayout wrap = new LinearLayout(this);
         wrap.setOrientation(LinearLayout.VERTICAL);
         wrap.addView(row);
@@ -4328,16 +4618,60 @@ public class MainActivity extends Activity {
     }
 
     private LinearLayout schedulePreviewRow(CourseMeeting meeting, LocalDate date) {
-        LinearLayout card = card(surfaceColor());
         ScheduleModels.Course course = meeting.course;
         ScheduleModels.TimeSlot slot = meeting.slot;
+        LinearLayout card = card(panelColor());
+        card.setOrientation(LinearLayout.HORIZONTAL);
+        card.setGravity(Gravity.CENTER_VERTICAL);
+        card.setPadding(dp(10), dp(10), dp(12), dp(10));
+        LinearLayout.LayoutParams cardParams = new LinearLayout.LayoutParams(-1, -2);
+        cardParams.bottomMargin = dp(7);
+        card.setLayoutParams(cardParams);
+
+        int fill = parseColorSafe(course.color, primaryColor());
+        View accent = new View(this);
+        accent.setBackground(bg(fill, 3));
+        card.addView(accent, new LinearLayout.LayoutParams(dp(4), dp(46)));
+        addHorizontalGap(card, 10);
+
+        LinearLayout details = new LinearLayout(this);
+        details.setOrientation(LinearLayout.VERTICAL);
         TextView name = label(course.name, 15, textColor());
         name.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
-        card.addView(name);
+        name.setMaxLines(2);
+        name.setEllipsize(TextUtils.TruncateAt.END);
+        details.addView(name);
         ScheduleModels.Semester semester = selectedSemester();
-        card.addView(label(ScheduleUtils.formatMeetingTime(semester, slot, course.location, date), 12, mutedColor()));
         String location = slot.location != null ? slot.location : course.location;
-        if (location != null) card.addView(label(location, 12, mutedColor()));
+        TextView meetingTime = label(ScheduleUtils.formatMeetingTime(
+                semester, slot, course.location, date), 11, mutedColor());
+        meetingTime.setSingleLine(true);
+        meetingTime.setEllipsize(TextUtils.TruncateAt.END);
+        details.addView(meetingTime);
+        String teacher = slot.teacher != null ? slot.teacher : course.teacher;
+        String place = location == null ? "" : location.trim();
+        if (teacher != null && !teacher.trim().isEmpty()) {
+            place += (place.isEmpty() ? "" : " · ") + teacher.trim();
+        }
+        if (!place.isEmpty()) {
+            TextView locationLine = label(place, 11, mutedColor());
+            locationLine.setSingleLine(true);
+            locationLine.setEllipsize(TextUtils.TruncateAt.END);
+            details.addView(locationLine);
+        }
+        card.addView(details, new LinearLayout.LayoutParams(0, -2, 1));
+
+        String start = "";
+        if (semester != null && slot.classSections != null && !slot.classSections.isEmpty()) {
+            int first = Collections.min(slot.classSections);
+            ScheduleModels.SectionTime time = ScheduleModels.sectionTimeFor(
+                    semester, location, date, first);
+            if (time != null) start = time.start;
+        }
+        TextView startTime = label(start, 11, primaryColor());
+        startTime.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        startTime.setGravity(Gravity.CENTER | Gravity.END);
+        card.addView(startTime, new LinearLayout.LayoutParams(dp(50), dp(40)));
         card.setOnClickListener(v -> showCourseMeetingDetailDialog(course, slot));
         return card;
     }
@@ -4357,17 +4691,28 @@ public class MainActivity extends Activity {
             ScheduleStorage.saveSelectedSemester(store, selectedSemesterId);
             showTab(TAB_MANAGE);
         });
-        Button edit = action("编辑", false);
-        edit.setOnClickListener(v -> showSemesterDialog(semester));
-        Button delete = action("删除", false);
-        delete.setOnClickListener(v -> deleteSemester(semester));
-        actions.addView(select, new LinearLayout.LayoutParams(0, dp(42), 1));
-        addHorizontalGap(actions, 8);
-        actions.addView(edit, new LinearLayout.LayoutParams(0, dp(42), 1));
-        addHorizontalGap(actions, 8);
-        actions.addView(delete, new LinearLayout.LayoutParams(0, dp(42), 1));
+        actions.addView(select, new LinearLayout.LayoutParams(-1, dp(42)));
         card.addView(actions);
         return card;
+    }
+
+    private LinearLayout semesterManageRow(ScheduleModels.Semester semester) {
+        String summary = semester.startDate + " 至 " + semester.endDate + " · "
+                + semester.weekCount + " 周";
+        LinearLayout row = navigationRow(semester.name, summary, R.drawable.ic_nav_schedule);
+        if (selectedSemesterId.equals(semester.id)) {
+            TextView status = label("当前", 10, primaryColor());
+            status.setGravity(Gravity.CENTER);
+            status.setBackground(bg(primaryColorWithAlpha(22), 6));
+            row.addView(status, row.getChildCount() - 1,
+                    new LinearLayout.LayoutParams(dp(46), dp(28)));
+        }
+        row.setOnClickListener(v -> {
+            selectedSemesterId = semester.id;
+            ScheduleStorage.saveSelectedSemester(store, selectedSemesterId);
+            showTab(TAB_MANAGE);
+        });
+        return row;
     }
 
     private LinearLayout courseManageCard(ScheduleModels.Course course) {
@@ -4385,6 +4730,23 @@ public class MainActivity extends Activity {
         actions.addView(detail, new LinearLayout.LayoutParams(-1, dp(42)));
         card.addView(actions);
         return card;
+    }
+
+    private LinearLayout courseManageRow(ScheduleModels.Course course) {
+        StringBuilder summary = new StringBuilder(ScheduleUtils.formatCourseTime(course));
+        if (course.location != null && !course.location.trim().isEmpty()) {
+            summary.append("\n").append(course.location.trim());
+        }
+        if (course.teacher != null && !course.teacher.trim().isEmpty()) {
+            summary.append(" · ").append(course.teacher.trim());
+        }
+        LinearLayout row = navigationRow(course.name, summary.toString(), R.drawable.ic_nav_schedule);
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, -2);
+        params.topMargin = dp(2);
+        params.bottomMargin = dp(2);
+        row.setLayoutParams(params);
+        row.setOnClickListener(v -> showCourseDetailDialog(course));
+        return row;
     }
 
     private View dayHeader(String top, String bottom) {
@@ -4434,10 +4796,18 @@ public class MainActivity extends Activity {
 
     private View courseBlock(ScheduleModels.Course course, int week, int day, int section) {
         ScheduleModels.TimeSlot slot = matchingSlot(course, week, day, section);
-        return courseBlock(course, slot, week, day);
+        return courseBlock(course, slot, week, day, mergedSectionsForCourse(course, week, day, section));
     }
 
     private View courseBlock(ScheduleModels.Course course, ScheduleModels.TimeSlot slot, int week, int day) {
+        List<Integer> sections = slot == null
+                ? Collections.emptyList()
+                : new ArrayList<>(slot.classSections);
+        return courseBlock(course, slot, week, day, sections);
+    }
+
+    private View courseBlock(ScheduleModels.Course course, ScheduleModels.TimeSlot slot,
+                             int week, int day, List<Integer> sections) {
         LinearLayout block = new LinearLayout(this);
         block.setOrientation(LinearLayout.VERTICAL);
         int fill = parseColorSafe(course.color, primaryColorWithAlpha(240));
@@ -4451,8 +4821,17 @@ public class MainActivity extends Activity {
         if (slot != null && semester != null) {
             LocalDate date = weekStartForSelection(semester, week).plusDays(day - 1L);
             String range = ScheduleUtils.meetingTimeRange(semester, slot, course.location, date);
-            meetingTime = ScheduleUtils.formatSections(slot.classSections)
-                    + (range.isEmpty() ? "" : "\n" + range);
+            if (sections == null || sections.isEmpty()) sections = slot.classSections;
+            meetingTime = ScheduleUtils.formatSections(sections);
+            if (!range.isEmpty() && sections.size() != slot.classSections.size()) {
+                int first = Collections.min(sections);
+                int last = Collections.max(sections);
+                ScheduleModels.TimeSlot merged = new ScheduleModels.TimeSlot(
+                        slot.weekRange, slot.repeatRule, slot.dayOfWeek,
+                        Arrays.asList(first, last), slot.teacher, slot.location);
+                range = ScheduleUtils.meetingTimeRange(semester, merged, course.location, date);
+            }
+            meetingTime += range.isEmpty() ? "" : "\n" + range;
         }
         TextView time = label(meetingTime, 8, contrastText(fill));
         time.setMaxLines(2);
@@ -4485,9 +4864,12 @@ public class MainActivity extends Activity {
         for (ScheduleModels.Course course : coursesForSemester(semester.id)) {
             for (ScheduleModels.TimeSlot slot : course.timeSlots) {
                 if (slot.classSections == null || slot.classSections.isEmpty()) continue;
-                View sample = courseBlock(course, slot, 1, slot.dayOfWeek);
+                int sampleWeek = firstWeekForSlot(slot);
+                List<Integer> merged = mergedSectionsForCourse(course, sampleWeek,
+                        slot.dayOfWeek, Collections.min(slot.classSections));
+                View sample = courseBlock(course, slot, sampleWeek, slot.dayOfWeek, merged);
                 sample.measure(widthSpec, heightSpec);
-                int span = Math.max(1, slot.classSections.size());
+                int span = Math.max(1, merged.size());
                 int perSection = (sample.getMeasuredHeight() + span - 1) / span;
                 required = Math.max(required, perSection);
             }
@@ -4685,31 +5067,51 @@ public class MainActivity extends Activity {
 
     private ScheduleModels.Course courseStartingAt(List<ScheduleModels.Course> weekCourses, int week, int day, int section) {
         for (ScheduleModels.Course course : weekCourses) {
-            for (ScheduleModels.TimeSlot slot : course.timeSlots) {
-                if (slot.dayOfWeek == day
-                        && ScheduleUtils.isWeekInRange(week, slot.weekRange)
-                        && ScheduleUtils.matchesRepeatRule(week, slot.repeatRule)
-                        && !slot.classSections.isEmpty()
-                        && Collections.min(slot.classSections) == section) {
-                    return course;
-                }
-            }
+            ScheduleModels.TimeSlot current = matchingSlot(course, week, day, section);
+            if (current == null) continue;
+            ScheduleModels.TimeSlot previous = matchingSlot(course, week, day, section - 1);
+            if (previous == null || !sameMeetingSlot(current, previous)) return course;
         }
         return null;
     }
 
     private int spanForCourse(ScheduleModels.Course course, int week, int day, int section) {
-        int span = 1;
+        return mergedSectionsForCourse(course, week, day, section).size();
+    }
+
+    /**
+     * Returns every occupied section in the contiguous run beginning at section.
+     * The portal may represent one meeting as several adjacent slots, so the
+     * run must be calculated across slots instead of using only one slot's size.
+     */
+    private List<Integer> mergedSectionsForCourse(ScheduleModels.Course course, int week,
+                                                  int day, int section) {
+        ScheduleModels.TimeSlot base = matchingSlot(course, week, day, section);
+        if (base == null) return new ArrayList<>();
+        Set<Integer> occupied = new HashSet<>();
         for (ScheduleModels.TimeSlot slot : course.timeSlots) {
             if (slot.dayOfWeek == day
                     && ScheduleUtils.isWeekInRange(week, slot.weekRange)
                     && ScheduleUtils.matchesRepeatRule(week, slot.repeatRule)
-                    && !slot.classSections.isEmpty()
-                    && Collections.min(slot.classSections) == section) {
-                span = Math.max(span, slot.classSections.size());
+                    && slot.classSections != null
+                    && sameMeetingSlot(base, slot)) {
+                for (Integer value : slot.classSections) {
+                    if (value != null && value >= 1) occupied.add(value);
+                }
             }
         }
-        return span;
+        List<Integer> merged = new ArrayList<>();
+        if (section < 1 || !occupied.contains(section)) return merged;
+        for (int value = section; occupied.contains(value); value++) merged.add(value);
+        return merged;
+    }
+
+    private boolean sameMeetingSlot(ScheduleModels.TimeSlot first, ScheduleModels.TimeSlot second) {
+        return first != null && second != null
+                && first.dayOfWeek == second.dayOfWeek
+                && first.repeatRule == second.repeatRule
+                && TextUtils.equals(first.teacher, second.teacher)
+                && TextUtils.equals(first.location, second.location);
     }
 
     private int firstDay(ScheduleModels.Course course) {
@@ -4724,9 +5126,14 @@ public class MainActivity extends Activity {
                     && ScheduleUtils.isWeekInRange(week, slot.weekRange)
                     && ScheduleUtils.matchesRepeatRule(week, slot.repeatRule)
                     && !slot.classSections.isEmpty()
-                    && Collections.min(slot.classSections) == section) return slot;
+                    && slot.classSections.contains(section)) return slot;
         }
         return null;
+    }
+
+    private int firstWeekForSlot(ScheduleModels.TimeSlot slot) {
+        List<Integer> weeks = ScheduleUtils.parseWeeks(slot.weekRange);
+        return weeks.isEmpty() ? 1 : weeks.get(0);
     }
 
     private String dayPrimarySectionLabel(ScheduleModels.Course course, int week, int day) {
@@ -4884,9 +5291,7 @@ public class MainActivity extends Activity {
     private List<UpdateDiff.Item> gradeDiffItems(List<GradeRecord> values) {
         List<UpdateDiff.Item> items = new ArrayList<>();
         for (GradeRecord grade : values) {
-            String signature = grade.course + "|" + grade.credits + "|" + grade.point + "|"
-                    + grade.score + "|" + grade.detail;
-            items.add(new UpdateDiff.Item(grade.course, grade.course, signature));
+            items.add(new UpdateDiff.Item(grade.diffKey(), grade.course, grade.diffSignature()));
         }
         return items;
     }
@@ -4961,7 +5366,7 @@ public class MainActivity extends Activity {
         Button more = stepButton("+");
         Spinner unit = new Spinner(this);
         String[] units = {UNIT_MINUTES, UNIT_HOURS, UNIT_DAYS};
-        ArrayAdapter<String> adapter = new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item, units);
+        ArrayAdapter<String> adapter = themedSpinnerAdapter(units);
         unit.setAdapter(adapter);
         unit.setSelection(Arrays.asList(units).indexOf(intervalUnit(target)));
         intervalRow.addView(less, new LinearLayout.LayoutParams(dp(38), dp(38)));
