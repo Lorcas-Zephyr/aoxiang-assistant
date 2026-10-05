@@ -71,6 +71,21 @@ final class VisibleAuthenticationWebViewTests: XCTestCase {
         assertCollectionRetryableState(model)
     }
 
+    func testSettlementFailureIsRecordedAsCollectionRetryableFailure() {
+        let model = makeReadyModel()
+
+        model.recordCollectionFailure(.settlement)
+
+        guard case .retryableFailure(let failure) = model.state else {
+            return XCTFail("expected settlement to enter collection retryable state, got \(model.state)")
+        }
+        XCTAssertEqual(failure.operation, .collection)
+        XCTAssertEqual(failure.reason, .serverUnavailable)
+        XCTAssertTrue(model.canRetryCollection)
+        XCTAssertTrue(model.retryCollection())
+        XCTAssertEqual(model.state, .readyToCollect)
+    }
+
     func testCancelledNavigationWithoutElectricityHandoffFailsCollection() async throws {
         let model = makeReadyModel()
         let task = Task { @MainActor in

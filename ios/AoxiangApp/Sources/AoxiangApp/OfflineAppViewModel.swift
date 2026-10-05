@@ -33,6 +33,7 @@ public final class OfflineAppViewModel: ObservableObject {
         case grades = "成绩"
         case schedule = "课表"
         case management = "管理"
+        case settings = "设置"
         public var id: String { rawValue }
     }
 
@@ -272,6 +273,42 @@ public final class OfflineAppViewModel: ObservableObject {
     public func setSelectedSemester(_ id: String) {
         do {
             try controller.edit { $0.selectedSemesterId = id }
+            state = controller.state
+            errorMessage = nil
+            writeWidgetSnapshot()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    @discardableResult
+    public func upsertSemester(_ semester: OfflineSemester) -> Bool {
+        do {
+            try controller.upsertSemester(semester)
+            state = controller.state
+            errorMessage = nil
+            writeWidgetSnapshot()
+            return true
+        } catch {
+            errorMessage = error.localizedDescription
+            return false
+        }
+    }
+
+    public func deleteSemester(id: String) {
+        do {
+            try controller.deleteSemester(id: id)
+            state = controller.state
+            errorMessage = nil
+            writeWidgetSnapshot()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    public func setDarkMode(_ enabled: Bool) {
+        do {
+            try controller.edit { $0.display.darkMode = enabled }
             state = controller.state
             errorMessage = nil
             writeWidgetSnapshot()

@@ -809,3 +809,58 @@ goal can close. Structify remains out of scope.
   workflow artifact expectation.
 - [ ] Commit only the electricity/runtime/version subset, produce a fresh `sideload` IPA,
   and verify it on iPad before resuming unfinished Widget visual changes.
+
+## 2026-10-05 electricity continuation repair
+
+- [x] Add regression tests for settlement propagation and every bounded electricity
+  completion path before changing implementation.
+- [x] Add runtime coverage for Android-compatible `electricInfo` nesting/field variants
+  and verify invalid or missing balances settle instead of leaving the UI pending.
+- [x] Implement the smallest WebView/state-machine correction, preserving token and
+  session-data boundaries and leaving Widget visual work untouched.
+- [x] Run Swift/Python/Node checks and `git diff --check`; only then prepare the
+  electricity-only commit and fresh sideload IPA.
+
+### Active session 2026-10-05
+
+- Test seams confirmed by the user: page-script authentication/electricity output and
+  `collectElectricity` success/retryable completion.
+- CodeGraph CLI is available; direct MCP tools are absent from this chat. Use the CLI
+  equivalents against the existing index, syncing its four pending changes first.
+- Current branch: `iOS`, HEAD `3a690dd`; preserve the pre-existing Widget work.
+- Verification: targeted red/green runtime regression, all Python tests, Swift Core/App,
+  golden validation, `git diff --check`, then assess macOS archive availability.
+- Tool error: `codegraph explore` does not accept `-l`; use `--max-files` instead.
+## 2026-10-05 iOS 五页与电费查询修复阶段
+
+### Goal
+
+在保留现有 Widget、电费采集和数据契约改动的前提下，将 iOS 主界面补齐为首页、课表、成绩、管理、设置五个页面，并让已登录会话能够在电费页面完成可观察的成功或可重试结束。
+
+### Seams
+
+- 页面采集脚本的登录态识别与电费结果解析。
+- `collectElectricity` 的成功、结算或可重试结束状态。
+- `OfflineAppViewModel.Tab` 和 SwiftUI 根导航的五项公开页面入口。
+
+### Phases
+
+- [x] CodeGraph 索引状态、关键符号和现有改动盘点
+- [x] 电费采集红绿回归与已登录用户信息读取修复
+- [x] 五页导航、设置页和首页数据概览
+- [x] 课表周/月视图、学期与课程详情
+- [x] 成绩摘要/刷新、管理页学期与课程管理入口
+- [x] Swift/Python 回归、静态检查和变更审计
+
+### 2026-10-05 completion note
+
+- 成绩页增加 GPA、加权成绩、课程门数和采集刷新入口。
+- 管理页增加学期新增、编辑、删除，并保留课程编辑和认证采集链路。
+- Core 91、App 59、Python 43 项测试通过；CodeGraph 已同步；`git diff --check` 通过。
+- Windows 环境无法执行 iphoneos archive、WebKit 真机运行或 iPad 观察，设备验收仍需 macOS。
+
+### Constraints
+
+- 不改 Android 已知月历按钮 bug，但 iOS 月历/周视图切换必须始终保留本周/全部课程控制。
+- 不覆盖 Widget 相关未完成改动，不混入视觉重构。
+- Windows 不声称完成真实 iOS WebKit/Xcode 或设备验证。

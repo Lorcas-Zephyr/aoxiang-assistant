@@ -714,3 +714,46 @@
   and `git diff --check`; all passed on Windows.
 - [ ] A fresh macOS `iphoneos` archive and user-side sideload/iPad observation are still
   required before claiming the electricity reader is usable on-device.
+
+## 2026-10-05 electricity continuation repair started
+
+- Re-entered the electricity-only repair phase after the user reported that the
+  reader still stalls; Widget visual changes remain unmodified.
+- Plan restored from the prior session and the next action is a red/green test slice
+  for settlement propagation, bounded polling completion, and `electricInfo` parsing.
+
+### Current session inventory
+
+- Restored planning files and ran session-catchup (no unsynced output).
+- User confirmed both public regression seams. Read all three requested skills.
+- Enumerated the project with CodeGraph CLI; index exists, four files need sync.
+- Memory registry search had no task-relevant hits.
+
+## 2026-10-05 settlement and nested electricity regression completed
+
+- [x] Added the WebView regression for `PortalCollectionFailure.settlement`: it now
+  records a collection-scoped retryable failure, preserves the authenticated session,
+  and reopens the `readyToCollect` gate through the existing retry entry point.
+- [x] Added runtime coverage for a loading fee page whose POST response contains
+  `map.showData.electricInfo["当前剩余电量"]`, matching the Android portal shape.
+- [x] Python (124), AoxiangCore (59), AoxiangApp (59) and `git diff --check` pass on
+  Windows. The iOS-only WebKit test body is compiled but skipped on Windows because
+  `os(iOS) && canImport(WebKit)` is false.
+- [ ] A macOS `iphoneos` archive and real iPad observation are still required to
+  validate the shipped WebView behavior on device.
+
+## 2026-10-05 iOS five-page completion
+
+- [x] Root navigation now exposes 首页、成绩、课表、管理、设置 five tabs.
+- [x] Home shows GPA, weighted score, completed course count, electricity balance,
+  today's courses, and a sync entry point.
+- [x] Schedule keeps week/all scope controls visible in both week and month modes,
+  supports week offset navigation and course detail inspection.
+- [x] Grades shows GPA, weighted score, course count, import/edit actions and a
+  refresh entry into the existing authenticated collection flow.
+- [x] Management supports semester add/edit/delete alongside existing course and
+  backup operations; electricity settlement and retryable failures remain visible.
+- [x] Core 91 tests, App 59 tests, Python 43 tests, CodeGraph sync, and
+  `git diff --check` passed on Windows.
+- [ ] macOS iphoneos archive and real iPad WebKit/electricity observation remain
+  required for device-level acceptance.

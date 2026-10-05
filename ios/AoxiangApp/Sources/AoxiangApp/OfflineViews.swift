@@ -18,6 +18,7 @@ public struct AoxiangRootView: View {
             GradesScreen(model: model).tabItem { Label("成绩", systemImage: "chart.bar") }.tag(OfflineAppViewModel.Tab.grades)
             ScheduleScreen(model: model).tabItem { Label("课表", systemImage: "calendar") }.tag(OfflineAppViewModel.Tab.schedule)
             ManagementScreen(model: model).tabItem { Label("管理", systemImage: "slider.horizontal.3") }.tag(OfflineAppViewModel.Tab.management)
+            SettingsScreen(model: model).tabItem { Label("设置", systemImage: "gearshape") }.tag(OfflineAppViewModel.Tab.settings)
         }
         .alert("操作未完成", isPresented: Binding(
             get: { model.errorMessage != nil },
@@ -63,9 +64,24 @@ public struct HomeScreen: View {
                         Text(model.state.gpa.map { String(format: "%.2f", $0) } ?? "--")
                     }
                     HStack {
+                        Text("加权成绩")
+                        Spacer()
+                        Text(OfflineGradeService.weightedScore(model.state.grades).map { String(format: "%.1f", $0) } ?? "--")
+                    }
+                    HStack {
+                        Text("已上课程")
+                        Spacer()
+                        Text("\(model.state.grades.count) 门")
+                    }
+                    HStack {
                         Text("剩余电费")
                         Spacer()
                         Text(model.state.electricityBalance.map { String(format: "%.2f", $0) } ?? "--")
+                    }
+                }
+                Section {
+                    Button { model.selectedTab = .management } label: {
+                        Label("同步成绩和电费", systemImage: "arrow.triangle.2.circlepath")
                     }
                 }
                 Section("今日课程") {
@@ -95,6 +111,11 @@ public struct GradesScreen: View {
     public var body: some View {
         NavigationView {
             List {
+                Section("成绩概览") {
+                    summaryRow("GPA", model.state.gpa.map { String(format: "%.2f", $0) } ?? "--")
+                    summaryRow("加权成绩", OfflineGradeService.weightedScore(model.state.grades).map { String(format: "%.1f", $0) } ?? "--")
+                    summaryRow("课程门数", "\(model.state.grades.count) 门")
+                }
                 if model.state.grades.isEmpty {
                     Text("暂无本地成绩").foregroundColor(.secondary)
                 } else {
@@ -125,6 +146,9 @@ public struct GradesScreen: View {
             .navigationTitle("成绩")
             .toolbar {
                 ToolbarItemGroup(placement: .navigationBarTrailing) {
+                    Button { model.selectedTab = .management } label: {
+                        Label("刷新成绩", systemImage: "arrow.clockwise")
+                    }
                     Button { showingGradeEditor = true } label: {
                         Label("新增成绩", systemImage: "plus")
                     }
@@ -152,31 +176,125 @@ public struct GradesScreen: View {
         }
         .navigationViewStyle(.stack)
     }
+
+    private func summaryRow(_ title: String, _ value: String) -> some View {
+        HStack { Text(title); Spacer(); Text(value).foregroundColor(.secondary) }
+    }
 }
 
 public struct ScheduleScreen: View {
     @ObservedObject var model: OfflineAppViewModel
+    @State private var viewMode = 0
+    @State private var scopeMode = 0
+    @State private var weekOffset = 0
+    @State private var selectedCourse: OfflineCourse?
     public init(model: OfflineAppViewModel) { self.model = model }
 
     public var body: some View {
         NavigationView {
             List {
-                let courses = model.state.courses.filter { $0.semesterId == model.state.selectedSemesterId }
+                Picker("视图", selection: $viewMode) {
+                    Text("周视图").tag(0)
+                    Text("月历视图").tag(1)
+                }.pickerStyle(.segmented)
+                Picker("范围", selection: $scopeMode) {
+                    Text("本周课程").tag(0)
+                    Text("全部课程").tag(1)
+                }.pickerStyle(.segmented)
+                if viewMode == 0 {
+                    HStack {
+                        Button { weekOffset -= 1 } label: { Image(systemName: "chevron.left") }
+                        Spacer()
+                        Text(weekOffset == 0 ? "本周" : "第 \(weekOffset > 0 ? "+\(weekOffset)" : "\(weekOffset)") 周")
+                        Spacer()
+                        Button { weekOffset += 1 } label: { Image(systemName: "chevron.right") }
+                    }
+                }
+                let courses = displayedCourses
                 if courses.isEmpty {
                     Text("暂无本地课表").foregroundColor(.secondary)
                 } else {
                     ForEach(courses) { course in
-                        VStack(alignment: .leading, spacing: 4) {
+                        Button { selectedCourse = course } label: {
+                          VStack(alignment: .leading, spacing: 4) {
                             Text(course.name).font(.headline)
                             ForEach(Array(course.timeSlots.enumerated()), id: \.offset) { _, slot in
                                 Text("周\(slot.dayOfWeek) · 第\(slot.classSections.map(String.init).joined(separator: ","))节 · \(slot.repeatRule.rawValue.isEmpty ? "每周" : slot.repeatRule.rawValue)")
                                     .font(.caption).foregroundColor(.secondary)
                             }
-                        }
+                          }
+                        }.buttonStyle(.plain)
                     }
                 }
             }
             .navigationTitle("课表")
+            .sheet(item: $selectedCourse) { CourseDetailSheet(course: $0) }
+        }
+        .navigationViewStyle(.stack)
+    }
+
+    private var displayedCourses: [OfflineCourse] {
+        let all = OfflineScheduleService.courses(in: model.state, semesterID: model.state.selectedSemesterId)
+        guard scopeMode == 0 else { return all }
+        let calendar = OfflineDatePolicy.businessCalendar
+        guard let semester = model.state.semesters.first(where: { $0.id == model.state.selectedSemesterId }),
+              let current = OfflineScheduleService.academicWeek(for: Date(), semester: semester, calendar: calendar) else { return all }
+        let week = max(1, current + weekOffset)
+        return all.filter { course in course.timeSlots.contains { OfflineScheduleService.isWeekActive(week, weekRange: $0.weekRange, repeatRule: $0.repeatRule) } }
+    }
+}
+
+private struct CourseDetailSheet: View {
+    let course: OfflineCourse
+    var body: some View {
+        NavigationView {
+            List {
+                LabeledContent("课程", value: course.name)
+                if let teacher = course.teacher { LabeledContent("教师", value: teacher) }
+                if let location = course.location { LabeledContent("地点", value: location) }
+                if let credits = course.credits { LabeledContent("学分", value: String(format: "%.1f", credits)) }
+                ForEach(Array(course.timeSlots.enumerated()), id: \.offset) { _, slot in
+                    Text("周\(slot.dayOfWeek) · 第\(slot.classSections.map(String.init).joined(separator: ","))节 · \(slot.weekRange)")
+                }
+            }.navigationTitle("课程详情")
+        }.navigationViewStyle(.stack)
+    }
+}
+
+public struct SettingsScreen: View {
+    @ObservedObject var model: OfflineAppViewModel
+    @AppStorage("aoxiang_auto_update") private var automaticUpdates = true
+    @AppStorage("aoxiang_notifications") private var notifications = true
+    @AppStorage("aoxiang_electricity_reminder") private var electricityReminder = true
+    @State private var showingAbout = false
+
+    public init(model: OfflineAppViewModel) { self.model = model }
+
+    public var body: some View {
+        NavigationView {
+            Form {
+                Section("账户与同步") {
+                    LabeledContent("登录状态", value: model.authenticationStore.state == .authenticated || model.authenticationStore.state == .readyToCollect ? "已登录" : "未登录")
+                    Button { model.selectedTab = .management } label: { Label("手动同步", systemImage: "arrow.triangle.2.circlepath") }
+                    Toggle("自动更新", isOn: $automaticUpdates)
+                }
+                Section("偏好") {
+                    Toggle("通知", isOn: $notifications)
+                    Toggle("电费提醒", isOn: $electricityReminder)
+                    Toggle("深色模式", isOn: Binding(
+                        get: { model.state.display.darkMode },
+                        set: { model.setDarkMode($0) }
+                    ))
+                }
+                Section("其他") {
+                    Button { showingAbout = true } label: { Label("关于翱翔助手", systemImage: "info.circle") }
+                    Text("版本 1.0").foregroundColor(.secondary)
+                }
+            }
+            .navigationTitle("设置")
+            .sheet(isPresented: $showingAbout) {
+                NavigationView { Text("翱翔助手\n校园数据同步工具").multilineTextAlignment(.center).padding().navigationTitle("关于") }
+            }
         }
         .navigationViewStyle(.stack)
     }
@@ -188,6 +306,8 @@ public struct ManagementScreen: View {
     @State private var showingExporter = false
     @State private var showingAddCourse = false
     @State private var editingCourse: OfflineCourse?
+    @State private var showingAddSemester = false
+    @State private var editingSemester: OfflineSemester?
     @State private var exportDocument = BackupFileDocument(data: Data())
     @State private var showingAuthentication = false
     @State private var collectionTask: Task<Void, Never>?
@@ -277,6 +397,9 @@ public struct ManagementScreen: View {
                     }
                 }
                 Section("学期") {
+                    Button { showingAddSemester = true } label: {
+                        Label("新增学期", systemImage: "plus")
+                    }
                     if model.state.semesters.isEmpty {
                         Text("暂无学期").foregroundColor(.secondary)
                     } else {
@@ -288,6 +411,16 @@ public struct ManagementScreen: View {
                                     Text(semester.name)
                                     Spacer()
                                     if semester.id == model.state.selectedSemesterId { Image(systemName: "checkmark") }
+                                }
+                            }
+                            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                                Button { editingSemester = semester } label: {
+                                    Label("编辑", systemImage: "pencil")
+                                }
+                                Button(role: .destructive) {
+                                    model.deleteSemester(id: semester.id)
+                                } label: {
+                                    Label("删除", systemImage: "trash")
                                 }
                             }
                         }
@@ -322,6 +455,8 @@ public struct ManagementScreen: View {
             .fileExporter(isPresented: $showingExporter, document: exportDocument, contentType: .json, defaultFilename: "aoxiang-backup") { _ in }
             .sheet(isPresented: $showingAddCourse) { AddCourseSheet(model: model) }
             .sheet(item: $editingCourse) { course in EditCourseSheet(model: model, course: course) }
+            .sheet(isPresented: $showingAddSemester) { SemesterEditorSheet(model: model, semester: nil) }
+            .sheet(item: $editingSemester) { semester in SemesterEditorSheet(model: model, semester: semester) }
             .sheet(isPresented: $showingAuthentication) {
                 AuthenticationScreen(
                     model: authenticationModel,
@@ -623,6 +758,68 @@ private struct EditCourseSheet: View {
             }
         }
         .navigationViewStyle(.stack)
+    }
+}
+
+private struct SemesterEditorSheet: View {
+    @ObservedObject var model: OfflineAppViewModel
+    @Environment(\.dismiss) private var dismiss
+    private let existingSemester: OfflineSemester?
+    @State private var name: String
+    @State private var startDate: String
+    @State private var endDate: String
+    @State private var weekCount: String
+    @State private var validationMessage: String?
+
+    init(model: OfflineAppViewModel, semester: OfflineSemester?) {
+        self.model = model
+        existingSemester = semester
+        _name = State(initialValue: semester?.name ?? "")
+        _startDate = State(initialValue: semester?.startDate ?? "2026-09-01")
+        _endDate = State(initialValue: semester?.endDate ?? "2027-01-31")
+        _weekCount = State(initialValue: semester.map { String($0.weekCount) } ?? "17")
+    }
+
+    var body: some View {
+        NavigationView {
+            Form {
+                TextField("学期名称", text: $name)
+                TextField("开始日期（YYYY-MM-DD）", text: $startDate)
+                TextField("结束日期（YYYY-MM-DD）", text: $endDate)
+                TextField("周数", text: $weekCount).keyboardType(.numberPad)
+                if let validationMessage { Text(validationMessage).foregroundColor(.red) }
+            }
+            .navigationTitle(existingSemester == nil ? "新增学期" : "编辑学期")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("取消") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) { Button("保存", action: save) }
+            }
+        }
+        .navigationViewStyle(.stack)
+    }
+
+    private func save() {
+        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedName.isEmpty,
+              startDate.range(of: #"^\d{4}-\d{2}-\d{2}$"#, options: .regularExpression) != nil,
+              endDate.range(of: #"^\d{4}-\d{2}-\d{2}$"#, options: .regularExpression) != nil,
+              let weeks = Int(weekCount), weeks > 0 else {
+            validationMessage = "请填写有效的学期名称、日期和周数。"
+            return
+        }
+        let semester = OfflineSemester(
+            id: existingSemester?.id ?? UUID().uuidString,
+            name: trimmedName,
+            startDate: startDate,
+            endDate: endDate,
+            weekCount: weeks,
+            sectionCount: existingSemester?.sectionCount ?? 13,
+            sectionTimes: existingSemester?.sectionTimes ?? []
+        )
+        if model.upsertSemester(semester) {
+            if existingSemester == nil { model.setSelectedSemester(semester.id) }
+            dismiss()
+        }
     }
 }
 

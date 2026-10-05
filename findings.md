@@ -665,3 +665,26 @@
   15 golden scenarios/32 referenced files, and `git diff --check`.
 - This remains source-level evidence only until GitHub Actions produces a fresh
   `sideload` IPA from the committed source and the user observes a real iPadOS run.
+
+## 2026-10-05 electricity continuation repair
+
+- The prior repair already recognizes `.settlement` in the failure model, but the
+  public `recordCollectionFailure(_:)` switch does not yet route it through the
+  terminal electricity-warning path.
+- The next red test must prove a settlement result clears the in-flight electricity
+  continuation without removing already collected grades/schedule data.
+- The page bridge needs explicit coverage for Android's nested `electricInfo` shapes
+  and Chinese balance labels; all parsing remains page-local and no token/cookie or
+  full response may cross into Swift.
+
+## 2026-10-05 current workspace audit
+
+- CodeGraph enumerates 163 indexed code/config files (57 Java, 48 Swift, 37 XML,
+  13 Python, 4 YAML, 2 JavaScript, 2 properties), 3209 nodes and 9321 edges.
+- Android lives under `app/`; iOS is split into portable `AoxiangCore`, app/WebKit
+  adapter `AoxiangApp`, Xcode host and Widget targets. Scripts provide Python/Node
+  regressions, fixture validation and IPA packaging; Actions provide macOS archives.
+- HEAD already contains the previous handoff repair. Seven dirty files are the existing
+  planning notes and Widget work. No electricity implementation is dirty initially.
+- No CONTEXT.md or repository-local AGENTS.md/ADR was found in the available file
+  inventory. User-provided AGENTS.md guidance applies.

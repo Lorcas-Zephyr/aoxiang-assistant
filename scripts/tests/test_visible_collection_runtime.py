@@ -192,6 +192,37 @@ globalThis.fetch = async () => ({
 """)
         self.assertEqual(result, 18.52)
 
+    def test_loading_fee_page_reads_unit_decorated_electric_info_from_post_response(self):
+        result = self.run_electricity_capture_script("""
+const document = {
+  querySelector: () => null, querySelectorAll: () => [],
+  body: { innerText: '查询信息' }
+};
+const window = {
+  document, addEventListener: () => {},
+  fetch: async () => ({ clone: () => ({ text: async () => JSON.stringify({
+    code: 200, map: { showData: { electricInfo: { '当前剩余电量': '18.52 度' } } }
+  }) }) })
+};
+window.top = window;
+globalThis.document = document;
+globalThis.window = window;
+globalThis.location = {
+  hostname: 'yktapp.nwpu.edu.cn', origin: 'https://yktapp.nwpu.edu.cn'
+};
+globalThis.performance = { getEntriesByType: () => [] };
+""", action=f"""
+(async () => {{
+  await window.fetch('/jfdt/api/electric/query', {{ method: 'POST' }});
+  await new Promise(resolve => setImmediate(resolve));
+  const probe = async () => {{
+    {self.electricity_script()}
+  }};
+  process.stdout.write(JSON.stringify(await probe()));
+}})();
+""")
+        self.assertEqual(result, 18.52)
+
     def test_electricity_portal_uses_token_from_same_origin_iframe_storage(self):
         # The card portal can render the account card in a same-origin frame.
         # The bootstrap must read that frame's short-lived token and navigate

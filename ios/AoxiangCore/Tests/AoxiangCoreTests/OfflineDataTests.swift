@@ -302,6 +302,103 @@ final class OfflineDataTests: XCTestCase {
         XCTAssertFalse(text.contains("authentication"))
     }
 
+    func testWidgetSnapshotIncludesActiveWeekCoursesAndDisplayTimes() throws {
+        let state = OfflineAppState(
+            courses: [
+                OfflineCourse(
+                    id: "monday-course",
+                    name: "高等数学",
+                    semesterId: "term-1",
+                    timeSlots: [OfflineTimeSlot(dayOfWeek: 1, classSections: [1, 2], location: "西馆 A101")],
+                    teacher: "张老师"
+                ),
+                OfflineCourse(
+                    id: "tuesday-course",
+                    name: "大学英语",
+                    semesterId: "term-1",
+                    timeSlots: [OfflineTimeSlot(dayOfWeek: 2, classSections: [3, 4])]
+                ),
+            ],
+            semesters: [OfflineSemester(
+                id: "term-1",
+                name: "2026 春季",
+                startDate: "2026-01-05",
+                endDate: "2026-06-30",
+                sectionTimes: [
+                    OfflineSectionTime(start: "08:00", end: "08:45"),
+                    OfflineSectionTime(start: "08:55", end: "09:40"),
+                    OfflineSectionTime(start: "10:00", end: "10:45"),
+                    OfflineSectionTime(start: "10:55", end: "11:40"),
+                ]
+            )],
+            selectedSemesterId: "term-1"
+        )
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let date = ISO8601DateFormatter().date(from: "2026-01-05T00:00:00Z")!
+
+        let snapshot = try WidgetSnapshotBuilder().makeSnapshot(from: state, now: date, calendar: calendar)
+
+        XCTAssertEqual(snapshot.activeWeek, 1)
+        XCTAssertEqual(snapshot.weekCourses.map(\.dayOfWeek), [1, 2])
+        XCTAssertEqual(snapshot.weekCourses[0].timeRange, "08:00-09:40")
+        XCTAssertEqual(snapshot.weekCourses[0].location, "西馆 A101")
+        XCTAssertEqual(snapshot.weekCourses[1].timeRange, "10:00-11:40")
+    }
+
+    func testWidgetSnapshotCreatesStableDistinctEntryForEveryActiveTimeSlot() throws {
+        let course = OfflineCourse(
+            id: "distributed-systems",
+            name: "分布式系统",
+            semesterId: "term-1",
+            timeSlots: [
+                OfflineTimeSlot(dayOfWeek: 2, classSections: [3, 4], location: "东馆 B201"),
+                OfflineTimeSlot(dayOfWeek: 1, classSections: [5, 6], location: "东馆 B202"),
+                OfflineTimeSlot(dayOfWeek: 1, classSections: [1, 2], location: "东馆 B101"),
+            ]
+        )
+        let semester = OfflineSemester(
+            id: "term-1",
+            name: "2026 春季",
+            startDate: "2026-01-05",
+            endDate: "2026-06-30",
+            sectionTimes: [
+                OfflineSectionTime(start: "08:00", end: "08:45"),
+                OfflineSectionTime(start: "08:55", end: "09:40"),
+                OfflineSectionTime(start: "10:00", end: "10:45"),
+                OfflineSectionTime(start: "10:55", end: "11:40"),
+                OfflineSectionTime(start: "14:00", end: "14:45"),
+                OfflineSectionTime(start: "14:55", end: "15:40"),
+            ]
+        )
+        let state = OfflineAppState(
+            courses: [course],
+            semesters: [semester],
+            selectedSemesterId: "term-1"
+        )
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let date = ISO8601DateFormatter().date(from: "2026-01-05T00:00:00Z")!
+
+        let snapshot = try WidgetSnapshotBuilder().makeSnapshot(from: state, now: date, calendar: calendar)
+
+        XCTAssertEqual(snapshot.todayCourses.map(\.sections), [[1, 2], [5, 6]])
+        XCTAssertEqual(snapshot.todayCourses.map(\.location), ["东馆 B101", "东馆 B202"])
+        XCTAssertEqual(snapshot.weekCourses.map(\.dayOfWeek), [1, 1, 2])
+        XCTAssertEqual(snapshot.weekCourses.map(\.sections), [[1, 2], [5, 6], [3, 4]])
+        XCTAssertEqual(Set(snapshot.weekCourses.map(\.id)).count, 3)
+        XCTAssertEqual(snapshot.todayCourses.map(\.id), Array(snapshot.weekCourses.prefix(2).map(\.id)))
+
+        var reordered = state
+        reordered.courses[0].timeSlots.reverse()
+        let reorderedSnapshot = try WidgetSnapshotBuilder().makeSnapshot(
+            from: reordered,
+            now: date,
+            calendar: calendar
+        )
+        XCTAssertEqual(snapshot.weekCourses.map(\.id), reorderedSnapshot.weekCourses.map(\.id))
+    }
+
     func testSnapshotExcludesOutOfRangeAndInactiveRepeatCourses() throws {
         let state = OfflineAppState(
             courses: [
@@ -342,6 +439,8 @@ final class OfflineDataTests: XCTestCase {
         let snapshot = try JSONDecoder().decode(WidgetSnapshot.self, from: legacy)
 
         XCTAssertNil(snapshot.electricityBalance)
+        XCTAssertTrue(snapshot.weekCourses.isEmpty)
+        XCTAssertNil(snapshot.activeWeek)
         XCTAssertNoThrow(try snapshot.validated())
     }
 

@@ -436,6 +436,13 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
                 operation: .collection,
                 reason: reason
             )))
+        case .settlement:
+            // Settlement is a temporary portal condition, so preserve the
+            // authenticated session and expose the collection retry action.
+            transition(.retryableFailure(RetryableAuthenticationFailure(
+                operation: .collection,
+                reason: .serverUnavailable
+            )))
         case .invalidResponse, .cancelled:
             lastError = failure.localizedDescription
         }

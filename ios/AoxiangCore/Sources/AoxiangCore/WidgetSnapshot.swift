@@ -7,6 +7,10 @@ public struct WidgetCourseSnapshot: Codable, Equatable, Identifiable {
     public let location: String?
     public let dayOfWeek: Int?
     public let sections: [Int]
+    /// Stable display range derived from the selected semester's section table.
+    /// It is optional so snapshots written before the week-view widgets remain
+    /// readable without migration data.
+    public let timeRange: String?
 
     public init(
         id: String,
@@ -14,7 +18,8 @@ public struct WidgetCourseSnapshot: Codable, Equatable, Identifiable {
         teacher: String? = nil,
         location: String? = nil,
         dayOfWeek: Int? = nil,
-        sections: [Int] = []
+        sections: [Int] = [],
+        timeRange: String? = nil
     ) {
         self.id = id
         self.name = name
@@ -22,6 +27,7 @@ public struct WidgetCourseSnapshot: Codable, Equatable, Identifiable {
         self.location = location
         self.dayOfWeek = dayOfWeek
         self.sections = sections
+        self.timeRange = timeRange
     }
 }
 
@@ -45,6 +51,10 @@ public struct WidgetSnapshot: Codable, Equatable {
     public let generatedAtEpochMilliseconds: Int64
     public let selectedSemesterName: String?
     public let todayCourses: [WidgetCourseSnapshot]
+    /// Courses for the full active academic week. This is separate from
+    /// `todayCourses` so small daily widgets do not need to reconstruct a week.
+    public let activeWeek: Int?
+    public let weekCourses: [WidgetCourseSnapshot]
     public let gradeSummary: WidgetGradeSummary
     /// Optional so snapshots written by the previous schema remain readable.
     /// The value is still sanitized and never carries credentials or session
@@ -56,14 +66,35 @@ public struct WidgetSnapshot: Codable, Equatable {
         selectedSemesterName: String?,
         todayCourses: [WidgetCourseSnapshot],
         gradeSummary: WidgetGradeSummary,
-        electricityBalance: Double? = nil
+        electricityBalance: Double? = nil,
+        activeWeek: Int? = nil,
+        weekCourses: [WidgetCourseSnapshot] = []
     ) {
         self.schemaVersion = Self.currentSchemaVersion
         self.generatedAtEpochMilliseconds = generatedAtEpochMilliseconds
         self.selectedSemesterName = selectedSemesterName
         self.todayCourses = todayCourses
+        self.activeWeek = activeWeek
+        self.weekCourses = weekCourses
         self.gradeSummary = gradeSummary
         self.electricityBalance = electricityBalance
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case schemaVersion, generatedAtEpochMilliseconds, selectedSemesterName,
+             todayCourses, activeWeek, weekCourses, gradeSummary, electricityBalance
+    }
+
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        schemaVersion = try values.decode(Int.self, forKey: .schemaVersion)
+        generatedAtEpochMilliseconds = try values.decode(Int64.self, forKey: .generatedAtEpochMilliseconds)
+        selectedSemesterName = try values.decodeIfPresent(String.self, forKey: .selectedSemesterName)
+        todayCourses = try values.decodeIfPresent([WidgetCourseSnapshot].self, forKey: .todayCourses) ?? []
+        activeWeek = try values.decodeIfPresent(Int.self, forKey: .activeWeek)
+        weekCourses = try values.decodeIfPresent([WidgetCourseSnapshot].self, forKey: .weekCourses) ?? []
+        gradeSummary = try values.decode(WidgetGradeSummary.self, forKey: .gradeSummary)
+        electricityBalance = try values.decodeIfPresent(Double.self, forKey: .electricityBalance)
     }
 
     public func validated() throws -> WidgetSnapshot {
@@ -74,15 +105,27 @@ public struct WidgetSnapshot: Codable, Equatable {
               (gradeSummary.gpa.map { $0.isFinite && (0.0...5.0).contains($0) } ?? true),
               (electricityBalance.map { $0.isFinite && (0.0..<100000.0).contains($0) } ?? true),
               todayCourses.allSatisfy({ course in
-                  guard !course.id.isEmpty, !course.name.isEmpty,
-                        course.sections.allSatisfy({ $0 > 0 }) else {
-                      return false
-                  }
-                  return course.dayOfWeek.map { (1...7).contains($0) } ?? true
+                  Self.validCourse(course)
+              }),
+              weekCourses.allSatisfy({ course in
+                  Self.validCourse(course)
               }) else {
             throw OfflineDataError.invalidField("widget snapshot")
         }
         return self
+    }
+
+    private static func validCourse(_ course: WidgetCourseSnapshot) -> Bool {
+        guard !course.id.isEmpty, !course.name.isEmpty,
+              course.sections.allSatisfy({ $0 > 0 }) else {
+            return false
+        }
+        if let timeRange = course.timeRange, !timeRange.isEmpty {
+            guard timeRange.range(of: #"^\d{2}:\d{2}-\d{2}:\d{2}$"#, options: .regularExpression) != nil else {
+                return false
+            }
+        }
+        return course.dayOfWeek.map { (1...7).contains($0) } ?? true
     }
 }
 
@@ -165,6 +208,12 @@ public final class FileWidgetSnapshotStore: ReversibleWidgetSnapshotStore {
 public struct WidgetSnapshotBuilder {
     public init() {}
 
+    private struct ActiveCourseSlot {
+        let course: OfflineCourse
+        let slot: OfflineTimeSlot
+        let identity: String
+    }
+
     public func makeSnapshot(
         from state: OfflineAppState,
         now: Date = Date(),
@@ -178,34 +227,54 @@ public struct WidgetSnapshotBuilder {
         let activeWeek = semester.flatMap {
             OfflineScheduleService.academicWeek(for: now, semester: $0, calendar: calendar)
         }
-        let courses = valid.courses.filter { course in
-            guard course.semesterId == valid.selectedSemesterId, let activeWeek else { return false }
-            return course.timeSlots.contains {
-                $0.dayOfWeek == day
-                    && OfflineScheduleService.isWeekActive(
+        let activeSlots = valid.courses.flatMap { course -> [ActiveCourseSlot] in
+            guard course.semesterId == valid.selectedSemesterId, let activeWeek else { return [] }
+            return course.timeSlots
+                .filter { slot in
+                    OfflineScheduleService.isWeekActive(
                         activeWeek,
-                        weekRange: $0.weekRange,
-                        repeatRule: $0.repeatRule
+                        weekRange: slot.weekRange,
+                        repeatRule: slot.repeatRule
                     )
-            }
-        }.map { course in
-            let slot = course.timeSlots.first {
-                $0.dayOfWeek == day
-                    && OfflineScheduleService.isWeekActive(
-                        activeWeek ?? 0,
-                        weekRange: $0.weekRange,
-                        repeatRule: $0.repeatRule
-                    )
+                }
+                .map { slot in
+                    ActiveCourseSlot(course: course, slot: slot, identity: Self.slotIdentity(slot))
+                }
+        }.sorted {
+            ($0.slot.dayOfWeek, $0.slot.classSections.min() ?? Int.max, $0.course.name, $0.course.id, $0.identity) <
+            ($1.slot.dayOfWeek, $1.slot.classSections.min() ?? Int.max, $1.course.name, $1.course.id, $1.identity)
+        }
+        var occurrenceByIdentity: [String: Int] = [:]
+        let activeWeekCourses = activeSlots.compactMap { activeSlot -> WidgetCourseSnapshot? in
+            let course = activeSlot.course
+            let slot = activeSlot.slot
+            let firstSection = slot.classSections.min() ?? 0
+            let lastSection = slot.classSections.max() ?? 0
+            let first = OfflineScheduleService.sectionTime(firstSection, semester: semester ?? valid.semesters.first ?? OfflineSemester(id: "", startDate: "1970-01-01", endDate: "1970-01-01"), location: course.location ?? slot.location)
+            let last = OfflineScheduleService.sectionTime(lastSection, semester: semester ?? valid.semesters.first ?? OfflineSemester(id: "", startDate: "1970-01-01", endDate: "1970-01-01"), location: course.location ?? slot.location)
+            let timeRange: String? = if let first, let last { "\(first.start)-\(last.end)" } else { nil }
+            let occurrenceKey = "\(Self.encodedIDComponent(course.id)).\(activeSlot.identity)"
+            let occurrence = (occurrenceByIdentity[occurrenceKey] ?? 0) + 1
+            occurrenceByIdentity[occurrenceKey] = occurrence
+            let id: String
+            if course.timeSlots.count == 1 {
+                // Preserve the pre-week-widget ID for the common one-slot case.
+                id = course.id
+            } else {
+                let baseID = "course.\(Self.encodedIDComponent(course.id)).slot.\(activeSlot.identity)"
+                id = baseID + (occurrence > 1 ? ".duplicate.\(occurrence)" : "")
             }
             return WidgetCourseSnapshot(
-                id: course.id,
+                id: id,
                 name: course.name,
-                teacher: course.teacher ?? slot?.teacher,
-                location: course.location ?? slot?.location,
-                dayOfWeek: slot?.dayOfWeek,
-                sections: slot?.classSections ?? []
+                teacher: course.teacher ?? slot.teacher,
+                location: course.location ?? slot.location,
+                dayOfWeek: slot.dayOfWeek,
+                sections: slot.classSections,
+                timeRange: timeRange
             )
         }
+        let courses = activeWeekCourses.filter { $0.dayOfWeek == day }
         let scored = valid.grades.compactMap(\.score)
         let average = scored.isEmpty ? nil : scored.reduce(0, +) / Double(scored.count)
         let gpaValues = valid.grades.compactMap(\.point)
@@ -215,7 +284,29 @@ public struct WidgetSnapshotBuilder {
             selectedSemesterName: semester?.name,
             todayCourses: courses,
             gradeSummary: WidgetGradeSummary(count: valid.grades.count, averageScore: average, gpa: valid.gpa ?? computedGPA),
-            electricityBalance: valid.electricityBalance
+            electricityBalance: valid.electricityBalance,
+            activeWeek: activeWeek,
+            weekCourses: activeWeekCourses
         )
+    }
+
+    private static func slotIdentity(_ slot: OfflineTimeSlot) -> String {
+        let sections = slot.classSections.sorted().map(String.init).joined(separator: ",")
+        return [
+            slot.dayOfWeek.description,
+            sections,
+            slot.weekRange,
+            slot.repeatRule.rawValue,
+            slot.teacher ?? "",
+            slot.location ?? "",
+        ].map(encodedIDComponent).joined(separator: ".")
+    }
+
+    private static func encodedIDComponent(_ value: String) -> String {
+        Data(value.utf8)
+            .base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "")
     }
 }
