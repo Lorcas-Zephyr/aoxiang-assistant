@@ -24,7 +24,8 @@ struct AoxiangWidgetProvider: TimelineProvider {
     }
 
     func placeholder(in context: Context) -> AoxiangWidgetEntry {
-        AoxiangWidgetEntry(date: Date(), snapshot: nil)
+        let date = Date()
+        return AoxiangWidgetEntry(date: date, snapshot: .empty(now: date))
     }
 
     func getSnapshot(in context: Context, completion: @escaping (AoxiangWidgetEntry) -> Void) {
@@ -38,7 +39,10 @@ struct AoxiangWidgetProvider: TimelineProvider {
     }
 
     private func readEntry(at date: Date = Date()) -> AoxiangWidgetEntry {
-        AoxiangWidgetEntry(date: date, snapshot: try? reader.read())
+        AoxiangWidgetEntry(
+            date: date,
+            snapshot: (try? reader.read()) ?? .empty(now: date)
+        )
     }
 }
 

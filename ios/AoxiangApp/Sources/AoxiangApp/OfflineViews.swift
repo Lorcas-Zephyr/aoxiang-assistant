@@ -494,6 +494,10 @@ public struct ManagementScreen: View {
             .onDisappear {
                 collectionTask?.cancel()
             }
+            .onChange(of: authenticationModel.state) { newState in
+                guard newState == .authenticated else { return }
+                requestCollection()
+            }
         }
         .navigationViewStyle(.stack)
     }

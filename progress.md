@@ -757,3 +757,16 @@
   `git diff --check` passed on Windows.
 - [ ] macOS iphoneos archive and real iPad WebKit/electricity observation remain
   required for device-level acceptance.
+
+## 2026-10-05 electricity automation and widget empty-state repair
+
+- [x] Added a red/green regression for authenticated login automatically starting
+  foreground collection from `ManagementScreen`.
+- [x] Made the visible electricity capture contract explicit for Android's
+  `map.showData.electricInfo["当前剩余电量"]` response shape.
+- [x] Added `WidgetSnapshot.empty(now:)`; WidgetKit placeholders and unavailable
+  readers now render a stable outline even before course/electricity data exists.
+- [x] Verified Python (125), AoxiangCore (92), AoxiangApp (60), iOS config (25),
+  workflow pin checks, and `git diff --check` on Windows.
+- [ ] GitHub macOS archive and real iPad observation remain required for WebKit,
+  full-width layout, App Group, and Widget runtime acceptance.

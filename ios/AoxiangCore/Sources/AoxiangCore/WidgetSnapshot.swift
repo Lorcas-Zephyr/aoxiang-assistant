@@ -80,6 +80,18 @@ public struct WidgetSnapshot: Codable, Equatable {
         self.electricityBalance = electricityBalance
     }
 
+    public static func empty(now: Date = Date()) -> WidgetSnapshot {
+        WidgetSnapshot(
+            generatedAtEpochMilliseconds: max(0, Int64(now.timeIntervalSince1970 * 1000)),
+            selectedSemesterName: nil,
+            todayCourses: [],
+            gradeSummary: WidgetGradeSummary(count: 0, averageScore: nil, gpa: nil),
+            electricityBalance: nil,
+            activeWeek: nil,
+            weekCourses: []
+        )
+    }
+
     private enum CodingKeys: String, CodingKey {
         case schemaVersion, generatedAtEpochMilliseconds, selectedSemesterName,
              todayCourses, activeWeek, weekCourses, gradeSummary, electricityBalance

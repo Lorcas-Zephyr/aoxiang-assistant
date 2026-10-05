@@ -576,6 +576,14 @@ final class OfflineDataTests: XCTestCase {
         }
     }
 
+    func testEmptyWidgetSnapshotProvidesRenderableOutlineWithoutCourseData() throws {
+        let snapshot = WidgetSnapshot.empty(now: Date(timeIntervalSince1970: 1_000))
+        XCTAssertEqual(snapshot.todayCourses, [])
+        XCTAssertEqual(snapshot.weekCourses, [])
+        XCTAssertEqual(snapshot.gradeSummary.count, 0)
+        XCTAssertNoThrow(try snapshot.validated())
+    }
+
     func testSharedContainerFactoryNeverFallsBackOnNonIOSHost() throws {
         #if !os(iOS)
         let store = AoxiangSharedContainer.widgetSnapshotStore()

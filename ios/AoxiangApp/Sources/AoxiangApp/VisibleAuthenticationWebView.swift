@@ -1276,7 +1276,9 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
             window.__aoxiangElectricityCaptureInstalled = true;
             const labels = /(?:当前剩余电量|剩余电量|电费余额|剩余电费|剩余金额|电量余额)/;
             const keys = /(?:balance|electric(?:ity)?|remaining|remain|surplus|amount|余额|剩余|电费|电量|金额)/i;
-            const containers = /(?:response|data|map|showdata|result|payload|electric|eleric|fee|charge|info|setup|state)/i;
+            // Android reads map.showData.electricInfo; keep both keys explicit
+            // so nested portal responses remain covered as the API evolves.
+            const containers = /(?:response|data|map|showData|electricInfo|showdata|result|payload|electric|eleric|fee|charge|info|setup|state)/i;
             const publish = value => {
               const number = Number(value);
               if (!Number.isFinite(number) || number < 0 || number >= 100000) return;

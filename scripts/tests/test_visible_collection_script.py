@@ -198,6 +198,16 @@ class VisibleCollectionScriptTest(unittest.TestCase):
             "visible-electricity-network-capture",
         )
 
+    def test_electricity_capture_accepts_android_nested_electric_info_shape(self):
+        source = SOURCE_FILE.read_text(encoding="utf-8")
+        capture_script = source.split(
+            "private static let electricityNetworkCaptureScript = #\"\"\"", 1
+        )[1].split("\"\"\"#", 1)[0]
+        self.assertIn("showData", capture_script)
+        self.assertIn("electricInfo", capture_script)
+        self.assertIn("当前剩余电量", capture_script)
+        self.assertIn("Object.entries(value)", capture_script)
+
 
 if __name__ == "__main__":
     unittest.main()

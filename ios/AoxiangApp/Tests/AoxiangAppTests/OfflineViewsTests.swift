@@ -74,6 +74,13 @@ final class OfflineViewsTests: XCTestCase {
         XCTAssertTrue(source.contains("showingAuthentication = true"))
     }
 
+    func testAuthenticationSuccessStartsCollectionAutomatically() throws {
+        let source = try offlineViewsSource()
+        XCTAssertTrue(source.contains(".onChange(of: authenticationModel.state)"))
+        XCTAssertTrue(source.contains("case .authenticated:"))
+        XCTAssertTrue(source.contains("requestCollection()"))
+    }
+
     private func offlineViewsSource() throws -> String {
         let appRoot = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
