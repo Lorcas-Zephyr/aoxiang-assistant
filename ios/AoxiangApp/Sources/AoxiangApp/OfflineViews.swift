@@ -249,15 +249,23 @@ private struct CourseDetailSheet: View {
     var body: some View {
         NavigationView {
             List {
-                LabeledContent("课程", value: course.name)
-                if let teacher = course.teacher { LabeledContent("教师", value: teacher) }
-                if let location = course.location { LabeledContent("地点", value: location) }
-                if let credits = course.credits { LabeledContent("学分", value: String(format: "%.1f", credits)) }
+                detailRow("课程", course.name)
+                if let teacher = course.teacher { detailRow("教师", teacher) }
+                if let location = course.location { detailRow("地点", location) }
+                if let credits = course.credits { detailRow("学分", String(format: "%.1f", credits)) }
                 ForEach(Array(course.timeSlots.enumerated()), id: \.offset) { _, slot in
                     Text("周\(slot.dayOfWeek) · 第\(slot.classSections.map(String.init).joined(separator: ","))节 · \(slot.weekRange)")
                 }
             }.navigationTitle("课程详情")
         }.navigationViewStyle(.stack)
+    }
+
+    private func detailRow(_ title: String, _ value: String) -> some View {
+        HStack {
+            Text(title)
+            Spacer()
+            Text(value).foregroundColor(.secondary)
+        }
     }
 }
 
@@ -274,7 +282,7 @@ public struct SettingsScreen: View {
         NavigationView {
             Form {
                 Section("账户与同步") {
-                    LabeledContent("登录状态", value: model.authenticationStore.state == .authenticated || model.authenticationStore.state == .readyToCollect ? "已登录" : "未登录")
+                    detailRow("登录状态", model.authenticationStore.state == .authenticated || model.authenticationStore.state == .readyToCollect ? "已登录" : "未登录")
                     Button { model.selectedTab = .management } label: { Label("手动同步", systemImage: "arrow.triangle.2.circlepath") }
                     Toggle("自动更新", isOn: $automaticUpdates)
                 }
@@ -297,6 +305,14 @@ public struct SettingsScreen: View {
             }
         }
         .navigationViewStyle(.stack)
+    }
+
+    private func detailRow(_ title: String, _ value: String) -> some View {
+        HStack {
+            Text(title)
+            Spacer()
+            Text(value).foregroundColor(.secondary)
+        }
     }
 }
 
