@@ -141,7 +141,7 @@ private func courseMetadata(_ course: WidgetCourseSnapshot) -> String {
     let section = course.sections.isEmpty
         ? ""
         : "第\(course.sections.map(String.init).joined(separator: "、"))节"
-    let values = [section, course.location, course.teacher].compactMap { value in
+    let values: [String] = [section, course.location, course.teacher].compactMap { (value: String?) in
         guard let value, !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
         return value
     }
