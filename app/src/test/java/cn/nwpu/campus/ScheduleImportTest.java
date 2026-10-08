@@ -146,6 +146,18 @@ public class ScheduleImportTest {
         assertEquals("李彩香", course.timeSlots.get(1).teacher);
     }
 
+    @Test public void ignoresLiteralNullLocationFromLegacyCollectors() {
+        ScheduleImport.RawCourse raw = rawCourse("测试课程", "TEST.01",
+                "1周 星期一 1-2节", "362");
+        raw.location = "null";
+
+        ScheduleModels.Course course = ScheduleImport.convertToCourses(
+                Arrays.asList(raw), "semester-id", "362").get(0);
+
+        assertEquals(null, course.location);
+        assertEquals(null, course.timeSlots.get(0).location);
+    }
+
     @Test public void parsesDifferentRepeatRulesInOneWeekExpression() {
         List<ScheduleModels.TimeSlot> slots = ScheduleImport.parseScheduleText(
                 "4~6(双),7~9(单)周 星期六 1-4节");

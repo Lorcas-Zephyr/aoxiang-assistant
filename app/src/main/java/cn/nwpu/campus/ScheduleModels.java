@@ -12,6 +12,23 @@ import java.util.Locale;
 public final class ScheduleModels {
     private ScheduleModels() {}
 
+    static String cleanOptionalText(String value) {
+        if (value == null) return null;
+        String cleaned = value.trim();
+        if (cleaned.isEmpty() || "null".equalsIgnoreCase(cleaned)
+                || "undefined".equalsIgnoreCase(cleaned)) return null;
+        return cleaned;
+    }
+
+    static String cleanLocationText(String value) {
+        if (value == null) return null;
+        String cleaned = value
+                .replaceAll("(?i)(^|\\s+)(?:null|undefined)(?=\\s+|$)", " ")
+                .replaceAll("\\s+", " ")
+                .trim();
+        return cleanOptionalText(cleaned);
+    }
+
     public static final String DEFAULT_THEME_COLOR = "#2F80ED";
     public static final List<String> PRESET_COLORS = Arrays.asList(
             "#E53935",
@@ -176,8 +193,8 @@ public final class ScheduleModels {
                     RepeatRule.fromStoredValue(o.optString("repeatRule", "")),
                     o.optInt("dayOfWeek", 1),
                     sections,
-                    o.isNull("teacher") ? null : o.optString("teacher", null),
-                    o.isNull("location") ? null : o.optString("location", null)
+                    o.isNull("teacher") ? null : cleanOptionalText(o.optString("teacher", null)),
+                    o.isNull("location") ? null : cleanLocationText(o.optString("location", null))
             );
         }
     }
@@ -308,10 +325,10 @@ public final class ScheduleModels {
                     o.optString("semesterId", ""),
                     slots
             );
-            course.code = o.isNull("code") ? null : o.optString("code", null);
-            course.location = o.isNull("location") ? null : o.optString("location", null);
+            course.code = o.isNull("code") ? null : cleanOptionalText(o.optString("code", null));
+            course.location = o.isNull("location") ? null : cleanLocationText(o.optString("location", null));
             course.credits = o.isNull("credits") ? null : o.optDouble("credits");
-            course.teacher = o.isNull("teacher") ? null : o.optString("teacher", null);
+            course.teacher = o.isNull("teacher") ? null : cleanOptionalText(o.optString("teacher", null));
             for (TimeSlot slot : course.timeSlots) {
                 if (slot.location == null) slot.location = course.location;
                 if (slot.teacher == null) slot.teacher = course.teacher;

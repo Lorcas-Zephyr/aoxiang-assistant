@@ -484,7 +484,8 @@ public final class ScheduleImport {
 
     private static String formatLocation(String raw) {
         if (raw == null) return null;
-        return raw.replaceAll("\\s+", " ").trim();
+        String cleaned = ScheduleModels.cleanLocationText(raw);
+        return cleaned == null ? "" : cleaned;
     }
 
     private static String nullToEmpty(String value) {

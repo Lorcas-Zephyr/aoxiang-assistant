@@ -110,6 +110,7 @@ public class MainActivity extends Activity {
     private static final String GITCODE_LATEST_RELEASE_API =
             "https://gitcode.com/api/v5/repos/lorcas/aoxiang-assistant/releases/latest";
     private static final String USER_GROUP_NUMBER = "450804497";
+    private static final String DONATION_PROMPT_SHOWN = "donation_prompt_shown_v1";
     private static final int REQUEST_EXPORT_JSON = 11;
     private static final int REQUEST_IMPORT_JSON = 12;
     private static final int REQUEST_EXACT_ALARM = 21;
@@ -301,6 +302,7 @@ public class MainActivity extends Activity {
             root.postDelayed(() -> moveTaskToBack(true), 300);
         } else {
             root.postDelayed(this::showUserGroupPrompt, 500L);
+            root.postDelayed(this::showDonationPrompt, 1100L);
             root.postDelayed(this::checkForUpdates, 900L);
         }
     }
@@ -368,6 +370,7 @@ public class MainActivity extends Activity {
             cancelAutomation();
             showTab(startupTab());
             root.postDelayed(this::showUserGroupPrompt, 350L);
+            root.postDelayed(this::showDonationPrompt, 950L);
             root.postDelayed(this::checkForUpdates, 700L);
             root.postDelayed(this::openRequiredInteractiveLogin, 250L);
         }
@@ -576,6 +579,10 @@ public class MainActivity extends Activity {
 
         automationHost = new FrameLayout(this);
         automationHost.setBackgroundColor(backgroundColor());
+        // Consume touches that are not handled by the update UI. Without this, an empty area
+        // in the full-screen overlay can dispatch the same gesture to course cards underneath.
+        automationHost.setClickable(true);
+        automationHost.setFocusable(true);
         automationHost.setVisibility(View.GONE);
 
         root.addView(mainShell, 0, new FrameLayout.LayoutParams(-1, -1));
@@ -1344,6 +1351,26 @@ public class MainActivity extends Activity {
                 Uri.parse("https://gitcode.com/lorcas/aoxiang-assistant"))));
         project.addView(openRepository, new LinearLayout.LayoutParams(-1, dp(42)));
         parent.addView(project);
+
+        parent.addView(section("支持开发"));
+        LinearLayout support = card(panelColor());
+        TextView supportTitle = label("如果翱翔助手对你有帮助", 15, textColor());
+        supportTitle.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        support.addView(supportTitle);
+        TextView supportBody = label(
+                "翱翔助手持续免费、无广告。赞赏完全自愿，将用于持续开发、维护，不影响任何功能。感谢你的使用与反馈。主包真的没钱用GPT开发了🥺🥺",
+                12, mutedColor());
+        supportBody.setLineSpacing(dp(2), 1.08f);
+        support.addView(supportBody);
+        addGap(support, 12);
+        ImageView donationCode = new ImageView(this);
+        donationCode.setImageResource(R.drawable.support_wechat);
+        donationCode.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        donationCode.setAdjustViewBounds(true);
+        donationCode.setContentDescription("微信赞赏码");
+        donationCode.setBackground(bg(Color.WHITE, 12));
+        support.addView(donationCode, new LinearLayout.LayoutParams(-1, dp(360)));
+        parent.addView(support);
 
         parent.addView(section("说明"));
         LinearLayout notice = card(panelColor());
@@ -2549,10 +2576,14 @@ public class MainActivity extends Activity {
 
         FrameLayout overlay = new FrameLayout(this);
         overlay.setBackgroundColor(backgroundColor());
+        overlay.setClickable(true);
+        overlay.setFocusable(true);
 
         LinearLayout shell = new LinearLayout(this);
         shell.setOrientation(LinearLayout.VERTICAL);
         shell.setBackgroundColor(backgroundColor());
+        shell.setClickable(true);
+        shell.setFocusable(true);
 
         LinearLayout bar = new LinearLayout(this);
         bar.setGravity(Gravity.CENTER_VERTICAL);
@@ -2648,6 +2679,8 @@ public class MainActivity extends Activity {
             hostParams = new FrameLayout.LayoutParams(-1, -1);
             automationHost.setLayoutParams(hostParams);
             automationHost.setBackgroundColor(backgroundColor());
+            automationHost.setClickable(true);
+            automationHost.setFocusable(true);
             automationHost.addView(overlay, new FrameLayout.LayoutParams(-1, -1));
             automationHost.bringToFront();
         }
@@ -4145,6 +4178,19 @@ public class MainActivity extends Activity {
                 "知道了", () -> {}, dp(350));
     }
 
+    private void showDonationPrompt() {
+        if (silentBoot || isFinishing() || store.getBoolean(DONATION_PROMPT_SHOWN, false)) return;
+        if (loginPromptVisible || automationWeb != null || informationDialog != null && informationDialog.isShowing()) {
+            root.postDelayed(this::showDonationPrompt, 500L);
+            return;
+        }
+        store.edit().putBoolean(DONATION_PROMPT_SHOWN, true).apply();
+        showDecisionDialog("支持开发", "请翱翔助手喝杯咖啡",
+                "完全自愿，不影响任何功能",
+                "如果翱翔助手给你的学习生活带来了便利，欢迎通过赞赏码支持后续维护。赞赏将用于持续开发、维护；不赞赏也可以继续完整使用全部功能。感谢你的使用与反馈。主包真的没钱用GPT开发了🥺🥺",
+                "暂不", () -> {}, "知道了", () -> {}, dp(590), R.drawable.support_wechat);
+    }
+
     private void checkForUpdates() {
         checkForUpdates(false);
     }
@@ -4236,6 +4282,14 @@ public class MainActivity extends Activity {
     private void showDecisionDialog(String eyebrowText, String heading, String subtitle, String bodyText,
                                     String secondaryText, Runnable secondaryAction,
                                     String primaryText, Runnable primaryAction, int preferredHeight) {
+        showDecisionDialog(eyebrowText, heading, subtitle, bodyText, secondaryText, secondaryAction,
+                primaryText, primaryAction, preferredHeight, 0);
+    }
+
+    private void showDecisionDialog(String eyebrowText, String heading, String subtitle, String bodyText,
+                                    String secondaryText, Runnable secondaryAction,
+                                    String primaryText, Runnable primaryAction, int preferredHeight,
+                                    int imageResource) {
         Dialog dialog = new Dialog(this);
         informationDialog = dialog;
         dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
@@ -4257,11 +4311,25 @@ public class MainActivity extends Activity {
         shell.addView(subtitleView);
 
         ScrollView scroll = new ScrollView(this);
+        LinearLayout details = new LinearLayout(this);
+        details.setOrientation(LinearLayout.VERTICAL);
         TextView body = label(bodyText, 13, textColor());
         body.setGravity(Gravity.TOP | Gravity.START);
         body.setLineSpacing(dp(2), 1.08f);
         body.setTextIsSelectable(true);
-        scroll.addView(body, new ScrollView.LayoutParams(-1, -2));
+        details.addView(body, new LinearLayout.LayoutParams(-1, -2));
+        if (imageResource != 0) {
+            addGap(details, 14);
+            ImageView image = new ImageView(this);
+            image.setImageResource(imageResource);
+            image.setScaleType(ImageView.ScaleType.FIT_CENTER);
+            image.setAdjustViewBounds(true);
+            image.setMaxHeight(dp(400));
+            image.setContentDescription("微信赞赏码");
+            image.setBackground(bg(Color.WHITE, 12));
+            details.addView(image, new LinearLayout.LayoutParams(-1, -2));
+        }
+        scroll.addView(details, new ScrollView.LayoutParams(-1, -2));
         shell.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
 
         LinearLayout actions = new LinearLayout(this);

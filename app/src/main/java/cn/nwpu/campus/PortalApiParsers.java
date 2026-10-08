@@ -263,7 +263,8 @@ final class PortalApiParsers {
     private static String joinUnique(String... values) {
         Set<String> parts = new LinkedHashSet<>();
         for (String value : values) {
-            if (value != null && !value.trim().isEmpty()) parts.add(value.trim());
+            String cleaned = ScheduleModels.cleanLocationText(value);
+            if (cleaned != null) parts.add(cleaned);
         }
         return String.join(" ", parts);
     }

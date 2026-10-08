@@ -83,6 +83,25 @@ public class PortalApiParsersTest {
                 payload.getJSONArray("semesters").getJSONObject(0).getString("endDate"));
     }
 
+    @Test public void omitsNullCampusValuesFromScheduleLocations() throws Exception {
+        JSONObject activity = new JSONObject()
+                .put("courseName", "测试课程")
+                .put("weekday", 1)
+                .put("startUnit", 1)
+                .put("endUnit", 2)
+                .put("weekIndexes", new JSONArray().put(1))
+                .put("campus", JSONObject.NULL)
+                .put("building", "教西")
+                .put("room", JSONObject.NULL);
+        JSONObject printData = new JSONObject().put("studentTableVm",
+                new JSONObject().put("activities", new JSONArray().put(activity)));
+
+        JSONObject course = PortalApiParsers.schedulePayload(null, printData)
+                .getJSONArray("courses").getJSONObject(0);
+
+        assertEquals("教西", course.getString("location"));
+    }
+
     @Test public void readsElectricityBalanceFromApiResponse() throws Exception {
         JSONObject response = new JSONObject().put("map", new JSONObject().put("showData",
                 new JSONObject().put("当前剩余电量", "18.52")));
