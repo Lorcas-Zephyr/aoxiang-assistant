@@ -16,7 +16,7 @@ final class AuthenticationPolicy {
 
     static boolean requiresInteractiveCollectionLogin(String target, String phase) {
         boolean collection = "grades".equals(target) || "schedule".equals(target)
-                || "electricity".equals(target);
+                || "electricity".equals(target) || "bus".equals(target);
         if (!collection) return false;
         return "credentials_required".equals(phase) || "credentials_error".equals(phase)
                 || "interactive_login".equals(phase) || "sms_required".equals(phase)

@@ -19,6 +19,7 @@
 
 - `app/src/main/assets/api_collect.js`
 - `app/src/main/java/cn/nwpu/campus/PortalApiParsers.java`
+- `app/src/main/java/cn/nwpu/campus/BusApiParsers.java`
 - `app/src/main/java/cn/nwpu/campus/BackgroundSyncService.java`
 
 ## 认证入口
@@ -29,6 +30,7 @@
 | 教务首页 | `https://jwxt.nwpu.edu.cn/student/home` | 验证是否已离开统一认证并进入教务系统 |
 | 一卡通平台 | `https://yktapp.nwpu.edu.cn/berserker-auth/cas/login/supwisdom?targetUrl=https%3A%2F%2Fyktapp.nwpu.edu.cn%2Fplat` | 建立一卡通平台会话 |
 | 一卡通首页 | `https://yktapp.nwpu.edu.cn/plat/shouyeUser` | 获取平台令牌并进入电费页面 |
+| 校车 H5 | `https://hq-bus.nwpu.edu.cn/h5/` | 通勤车预约查询与提醒 |
 
 统一认证页面位于 `uis.nwpu.edu.cn`。应用只保存加密后的账号密码和 WebView 会话，不记录短信验证码。
 
@@ -213,6 +215,38 @@ https://yktapp.nwpu.edu.cn/jfdt/charge/feeitem/toAppitem
 
 随后从 `map.showData` 中依次识别 `当前剩余电量`、`剩余电量`、`电费余额` 或 `剩余电费`。只接受大于等于 `0` 且小于 `100000` 的数值。`00:00-01:00` 结算期间不发起电费更新。
 
+## 校车预约
+
+校车（后勤通勤车）走独立站点 `https://hq-bus.nwpu.edu.cn/h5/`，接口清单见 [HQ_BUS_API.md](HQ_BUS_API.md)。应用在 H5 页面内串行调用 4 个接口：
+
+| 用途 | 接口 |
+| --- | --- |
+| 我的预约 | `POST /api/GetMyAppointment`（先按「待核验」，再补一次不带状态） |
+| 路线与可提前天数 | `POST /api/GetRouteByType`（`type=通勤车`） |
+| 今明两天班次 | `POST /api/GetReserveInfoList`（每条线路每天一次） |
+| 首页菜单 | `POST /api/GetIcon`（保留在清单中，采集时未调用） |
+
+身份参数 `no`/`GH`/`YYRGH` 取自页面 `localStorage.NO`；首次进入时由原生层把已保存的账号注入 `__BUS_NO__` 占位符兜底。
+
+字段映射：
+
+| 接口字段 | 本地字段 | 说明 |
+| --- | --- | --- |
+| `yyrs` | `booked` | 已预约人数 |
+| `kyyrs` | `capacity` | 该班次总名额；余位 = `kyyrs - yyrs` |
+| `sfkyy` | `open` | 服务端给出的「现在能否预约」，优先于本地推算 |
+| `fcsj` / `rq` | `departTime` / `date` | 班次时刻与乘车日期 |
+| `yyjzxx` / `bcms` | `deadline` / `note` | 截止说明与班次描述 |
+
+两次采集交叉验证后确定：`yyrs == kyyrs` 的班次 `sfkyy` 均为 `false`，因此把 `kyyrs` 当作总名额。
+
+提醒规则（`BusReminderPolicy`）：
+
+- **发车提醒**：出发前 30 分钟内提醒一次，按「预约号 + 日期 + 时刻」去重；应用回到前台时补判一次。
+- **状态提醒**：预约状态从「待核验」变为审核结果时提醒，按「预约号 + 状态」去重；首次见到的记录不提醒，避免刚打开就被历史预约刷屏。
+- **余位提示**：可约且余位 ≤ 5 时在首页卡片高亮，不发通知。
+- 校车后台采集默认关闭（`auto_bus_enabled` 默认 `false`），需要在「设置 → 自动更新 → 校车」里开启；校车班次集中在白天，未接入闹钟触发的后台服务，只在应用进程存活时按间隔更新。
+
 ## 应用内部采集协议
 
 `api_collect.js` 每次执行返回一个 JSON 字符串，公共字段为 `phase`。原生层根据阶段继续等待、导航、解析或回退。
@@ -225,6 +259,7 @@ https://yktapp.nwpu.edu.cn/jfdt/charge/feeitem/toAppitem
 | `grade_api_raw` | 成绩和 GPA 请求完成 | `gradeResponses`、`gpaResponse` |
 | `schedule_api_raw` | 学期和课表请求完成 | `semester`、`printData` |
 | `electricity_api_raw` | 已从页面状态取得电费数据 | `response` |
+| `bus_api_raw` | 校车预约、路线与班次请求完成 | `no`、`routes`、`reservations`、`tripGroups` |
 | `target_error` | 目标接口请求失败 | `target`、`message` |
 
 采集脚本通过以下占位符由原生层注入运行参数：
