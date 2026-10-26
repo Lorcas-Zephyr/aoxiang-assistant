@@ -5,6 +5,57 @@ import AoxiangCore
 import WebKit
 #endif
 
+public struct AuthenticationSuccessRule: Equatable {
+    public let hostSuffix: String
+    public let pathPrefixes: [String]
+    public let bodyMarkers: [String]
+    public let requiredBodyMarkers: [String]
+
+    public init(
+        hostSuffix: String,
+        pathPrefixes: [String] = [],
+        bodyMarkers: [String] = [],
+        requiredBodyMarkers: [String] = []
+    ) {
+        self.hostSuffix = hostSuffix
+        self.pathPrefixes = pathPrefixes
+        self.bodyMarkers = bodyMarkers
+        self.requiredBodyMarkers = requiredBodyMarkers
+    }
+
+    public func allowsHost(_ host: String) -> Bool {
+        let suffix = hostSuffix.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "."))
+        let normalizedHost = host.lowercased()
+        return normalizedHost == suffix || normalizedHost.hasSuffix(".\(suffix)")
+    }
+
+    public func matches(url: URL, body: String) -> Bool {
+        guard allowsHost(url.host ?? "") else { return false }
+        let path = url.path.lowercased()
+        let pathsMatch = pathPrefixes.isEmpty || pathPrefixes.contains {
+            path.hasPrefix($0.lowercased())
+        }
+        guard pathsMatch else { return false }
+
+        let normalizedBody = body.lowercased()
+        guard bodyMarkers.isEmpty || bodyMarkers.contains(where: normalizedBody.contains) else {
+            return false
+        }
+        return requiredBodyMarkers.allSatisfy { normalizedBody.contains($0.lowercased()) }
+    }
+
+    public static let jwxtStudentHome = AuthenticationSuccessRule(
+        hostSuffix: "jwxt.nwpu.edu.cn",
+        pathPrefixes: ["/student/home"]
+    )
+
+    public static let ecampusPortalHome = AuthenticationSuccessRule(
+        hostSuffix: "ecampus.nwpu.edu.cn",
+        pathPrefixes: ["/main.html"],
+        requiredBodyMarkers: ["个人中心", "我的待办"]
+    )
+}
+
 public enum VisibleCollectionTarget: Equatable {
     case education
     case portrait
@@ -327,27 +378,6 @@ public struct VisibleCollectionNavigationPolicy {
 #if os(iOS) && canImport(SwiftUI) && canImport(WebKit)
 import SwiftUI
 
-public struct AuthenticationSuccessRule: Equatable {
-    public let hostSuffix: String
-    public let pathPrefixes: [String]
-    public let bodyMarkers: [String]
-
-    public init(
-        hostSuffix: String,
-        pathPrefixes: [String] = [],
-        bodyMarkers: [String] = []
-    ) {
-        self.hostSuffix = hostSuffix
-        self.pathPrefixes = pathPrefixes
-        self.bodyMarkers = bodyMarkers
-    }
-
-    public static let jwxtStudentHome = AuthenticationSuccessRule(
-        hostSuffix: "jwxt.nwpu.edu.cn",
-        pathPrefixes: ["/student/home"]
-    )
-}
-
 /// A same-origin authentication and collection surface. Credentials stay in
 /// the portal; collection results never include page session data.
 @MainActor
@@ -358,7 +388,7 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
     public let webView: WKWebView
     private var machine = AuthenticationStateMachine()
     private let loginURL: URL
-    private let successRule: AuthenticationSuccessRule
+    private let successRules: [AuthenticationSuccessRule]
     private let sessionStore: AuthenticationSessionStore
     private var lastInspectedURLKey: String?
     private var stateDetectionInFlight = false
@@ -399,12 +429,13 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
     public init(
         loginURL: URL,
         successRule: AuthenticationSuccessRule = .jwxtStudentHome,
+        additionalSuccessRules: [AuthenticationSuccessRule] = [],
         sessionStore: AuthenticationSessionStore = AuthenticationSessionStore(),
         websiteDataStore: WKWebsiteDataStore = .default()
     ) {
         let initialState = sessionStore.state
         self.loginURL = loginURL
-        self.successRule = successRule
+        self.successRules = [successRule] + additionalSuccessRules
         self.sessionStore = sessionStore
         self.state = initialState
         self.machine = AuthenticationStateMachine(initialState: initialState)
@@ -2855,8 +2886,7 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
     }
 
     private func isAllowedHost(_ host: String) -> Bool {
-        let suffix = successRule.hostSuffix.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "."))
-        return host == suffix || host.hasSuffix(".\(suffix)")
+        successRules.contains { $0.allowsHost(host) }
     }
 
     private func isEducationCollectionPage(_ path: String) -> Bool {
@@ -2867,14 +2897,7 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
     }
 
     private func successRuleMatches(url: URL, body: String) -> Bool {
-        guard isAllowedHost(url.host?.lowercased() ?? "") else { return false }
-        let path = url.path.lowercased()
-        let pathsMatch = successRule.pathPrefixes.isEmpty || successRule.pathPrefixes.contains {
-            path.hasPrefix($0.lowercased())
-        }
-        guard pathsMatch else { return false }
-        if successRule.bodyMarkers.isEmpty { return true }
-        return successRule.bodyMarkers.contains { body.contains($0.lowercased()) }
+        successRules.contains { $0.matches(url: url, body: body) }
     }
 
     private func transition(_ event: AuthenticationEvent) {

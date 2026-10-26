@@ -440,6 +440,7 @@ public struct ManagementScreen: View {
         _authenticationModel = StateObject(wrappedValue: VisibleAuthenticationViewModel(
             loginURL: VisibleCollectionNavigationPolicy.educationPortalEntryURL,
             successRule: .jwxtStudentHome,
+            additionalSuccessRules: [.ecampusPortalHome],
             sessionStore: model.authenticationStore
         ))
     }

@@ -9,6 +9,24 @@ final class VisibleCollectionNavigationPolicyTests: XCTestCase {
         )
     }
 
+    func testEducationPortalAuthenticationRecognizesLoggedInHomeButRejectsLoginShell() throws {
+        let rule = AuthenticationSuccessRule.ecampusPortalHome
+        let portalHome = try XCTUnwrap(URL(string: "https://ecampus.nwpu.edu.cn/main.html#/Index"))
+
+        XCTAssertTrue(rule.matches(
+            url: portalHome,
+            body: "郑又祥 个人中心 我的待办 我的消息"
+        ))
+        XCTAssertFalse(rule.matches(
+            url: portalHome,
+            body: "统一身份认证 用户名 密码 登录"
+        ))
+        XCTAssertFalse(rule.matches(
+            url: URL(string: "https://example.com/main.html#/Index")!,
+            body: "郑又祥 个人中心 我的待办"
+        ))
+    }
+
     func testOnlyJWXTStudentPopupIsRoutedIntoTheCurrentWebView() throws {
         let policy = VisibleCollectionNavigationPolicy()
 
