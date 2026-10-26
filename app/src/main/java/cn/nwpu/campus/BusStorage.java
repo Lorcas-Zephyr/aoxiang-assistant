@@ -152,6 +152,7 @@ public final class BusStorage {
                 .remove(KEY_STATUSES)
                 .remove(KEY_REMINDED)
                 .remove(KEY_LAST_SYNC)
+                .remove(KEY_NO)
                 .apply();
     }
 

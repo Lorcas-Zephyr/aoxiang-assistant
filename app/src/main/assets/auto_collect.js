@@ -7,7 +7,8 @@
   const canFillSms = __CAN_FILL_SMS__;
   const unifiedAuthExited = __AUTH_EXITED__;
   const headless = __HEADLESS__;
-  const collectionMode = mode === "grades" || mode === "schedule" || mode === "electricity";
+  const collectionMode = mode === "grades" || mode === "schedule" ||
+    mode === "electricity" || mode === "bus";
 
   const text = (value) => String(value == null ? "" : value).replace(/\s+/g, " ").trim();
   const visible = (element) => {

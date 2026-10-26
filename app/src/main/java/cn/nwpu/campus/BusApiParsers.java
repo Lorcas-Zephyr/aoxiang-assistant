@@ -4,9 +4,7 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.util.ArrayList;
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
 
 /**
  * hq-bus.nwpu.edu.cn H5 接口的纯解析层。
@@ -105,7 +103,7 @@ final class BusApiParsers {
             reservation.driverPhone = text(item, "yktyfddh", "YKTYFDDH", "driverPhone");
             reservation.fee = text(item, "fy", "FY", "fee");
             reservation.noticeUrl = text(item, "yyxz", "YYXZ", "noticeUrl");
-            reservation.summary = summarize(item, reservation);
+            reservation.summary = summarize(reservation);
             if (!reservation.key().trim().isEmpty()) out.add(reservation);
         }
         return out;
@@ -159,29 +157,10 @@ final class BusApiParsers {
         }
     }
 
-    /**
-     * 预约条目字段名未经确认，用「全部标量字段」拼一个兜底摘要，
-     * 保证界面上永远不会出现一条只有标题的空记录。
-     */
-    private static String summarize(JSONObject item, BusModels.Reservation reservation) {
-        Map<String, String> pairs = new LinkedHashMap<>();
-        JSONArray names = item.names();
-        if (names != null) {
-            for (int i = 0; i < names.length() && pairs.size() < 12; i++) {
-                String key = names.optString(i);
-                if (item.isNull(key)) continue;
-                Object raw = item.opt(key);
-                if (raw instanceof JSONObject || raw instanceof JSONArray) continue;
-                String value = String.valueOf(raw).trim();
-                if (value.isEmpty() || "null".equals(value)) continue;
-                if (value.equals(reservation.orderNo) || value.equals(reservation.noticeUrl)) continue;
-                pairs.put(key, value);
-            }
-        }
+    /** 只展示已经确认过含义的字段，避免把接口中的内部或敏感字段直接暴露到界面。 */
+    private static String summarize(BusModels.Reservation reservation) {
         List<String> parts = new ArrayList<>();
-        for (Map.Entry<String, String> entry : pairs.entrySet()) {
-            parts.add(entry.getKey() + " " + entry.getValue());
-        }
+        if (!reservation.fee.isEmpty()) parts.add("费用 " + reservation.fee + " 元");
         return String.join(" · ", parts);
     }
 }

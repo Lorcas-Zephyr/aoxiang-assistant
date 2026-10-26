@@ -45,6 +45,7 @@ import android.webkit.WebChromeClient;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+import android.webkit.WebStorage;
 import android.widget.Button;
 import android.widget.ArrayAdapter;
 import android.widget.EditText;
@@ -83,6 +84,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
+import java.time.LocalDateTime;
 
 import javax.crypto.Cipher;
 import javax.crypto.KeyGenerator;
@@ -100,7 +102,6 @@ public class MainActivity extends Activity {
     private static final String GRADE_CHANNEL = "grade_updates";
     private static final String SCHEDULE_CHANNEL = "schedule_updates";
     private static final String ELECTRICITY_CHANNEL = "electricity_alerts";
-    private static final String BUS_CHANNEL = "bus_alerts";
     /** 校车 H5 入口；身份参数 no 由页面 localStorage.NO 或原生注入提供。 */
     private static final String BUS_SSO = "https://hq-bus.nwpu.edu.cn/h5/";
     private static final String AUTHENTICATION_CHANNEL = "authentication";
@@ -310,7 +311,9 @@ public class MainActivity extends Activity {
         buildShell();
         createNotificationChannel();
         showTab(startTabFromIntent(getIntent()));
-        if (autoGradeEnabled || autoScheduleEnabled || electricityAlertEnabled) {
+        if (autoGradeEnabled || autoScheduleEnabled || autoElectricityEnabled || autoBusEnabled
+                || electricityAlertEnabled || busDepartureReminderEnabled
+                || busStatusReminderEnabled) {
             requestNotificationPermission();
         }
         scheduleAllAutomaticUpdates(1500);
@@ -368,6 +371,8 @@ public class MainActivity extends Activity {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
         if (requestCode == 7) {
             refreshAutomaticUpdatePanelIfVisible();
+            checkBusDepartureReminders();
+            syncBackgroundService();
             if (store.getInt(BACKGROUND_PERMISSION_FLOW_STEP, 0) > 0) {
                 root.postDelayed(this::continueBackgroundPermissionFlow, 250L);
             }
@@ -736,7 +741,11 @@ public class MainActivity extends Activity {
         summary.addView(secondMetrics);
         l.addView(summary);
 
-        l.addView(sectionHeader("校车预约"));
+        LinearLayout busHeader = sectionHeader("校车出行");
+        Button busUpdate = syncButton("校车", "更新校车数据");
+        busUpdate.setOnClickListener(v -> openPortal("bus", false));
+        busHeader.addView(busUpdate, new LinearLayout.LayoutParams(dp(82), dp(36)));
+        l.addView(busHeader);
         l.addView(busCard());
 
         ScheduleModels.Semester todaySemester = selectedSemester();
@@ -1279,6 +1288,8 @@ public class MainActivity extends Activity {
             busDepartureReminderEnabled = checked;
             store.edit().putBoolean("bus_departure_reminder_enabled", checked).apply();
             if (checked) requestNotificationPermission();
+            checkBusDepartureReminders();
+            syncBackgroundService();
         });
         card.addView(departureSwitch, new LinearLayout.LayoutParams(-1, dp(48)));
         parent.addView(card);
@@ -1302,7 +1313,7 @@ public class MainActivity extends Activity {
 
         LinearLayout hint = card(panelColor());
         hint.setPadding(dp(14), dp(12), dp(14), dp(12));
-        TextView note = label("校车班次集中在白天，提醒在打开应用时补判；"
+        TextView note = label("发车提醒会在预约班次前 30 分钟由系统唤醒；"
                 + "自动更新间隔可在「自动更新 → 校车」中调整。", 11, mutedColor());
         note.setLineSpacing(dp(3), 1f);
         hint.addView(note);
@@ -1634,13 +1645,14 @@ public class MainActivity extends Activity {
                                     int day, int detailLevel) {
         ScheduleModels.Course course = meeting.course;
         ScheduleModels.TimeSlot slot = meeting.slot;
-        int fill = parseColorSafe(course.color, primaryColorWithAlpha(240));
+        int fill = scheduleCourseFill(course.color);
         LinearLayout block = new LinearLayout(this);
         block.setOrientation(LinearLayout.VERTICAL);
         block.setBackground(border(fill, lineColor(), 5));
         block.setPadding(dp(3), dp(3), dp(3), dp(3));
 
-        TextView title = label(course.name, 8, contrastText(fill));
+        int textColor = scheduleCourseTextColor();
+        TextView title = label(course.name, 8, textColor);
         title.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
         // Long course names must wrap instead of being silently clipped in the
         // narrow all-courses columns. The surrounding block still keeps its
@@ -1659,14 +1671,14 @@ public class MainActivity extends Activity {
                     time = end >= 0 ? time.substring(0, end) : time;
                 }
             }
-            if (!time.isEmpty()) block.addView(label(time, 8, contrastText(fill)));
+            if (!time.isEmpty()) block.addView(scheduleCourseLabel(time, 8));
             if (location != null && !location.trim().isEmpty()) {
-                block.addView(label(location, 8, contrastText(fill)));
+                block.addView(scheduleCourseLabel(location, 8));
             }
             if (detailLevel < 2) return attachCourseClick(block, course, slot);
             String teacher = slot.teacher != null ? slot.teacher : course.teacher;
             if (teacher != null && !teacher.trim().isEmpty()) {
-                block.addView(label(teacher, 8, contrastText(fill)));
+                block.addView(scheduleCourseLabel(teacher, 8));
             }
         }
         return attachCourseClick(block, course, slot);
@@ -1857,7 +1869,7 @@ public class MainActivity extends Activity {
                     for (ScheduleModels.Course course : sortedCourses(daily)) {
                         View dot = new View(this);
                         dot.setContentDescription(course.name);
-                        dot.setBackground(bg(parseColorSafe(course.color, primaryColor()), 5));
+                        dot.setBackground(bg(scheduleCourseFill(course.color), 5));
                         LinearLayout.LayoutParams dotParams = new LinearLayout.LayoutParams(dp(9), dp(9));
                         dotParams.setMarginEnd(dp(4));
                         dots.addView(dot, dotParams);
@@ -2758,6 +2770,18 @@ public class MainActivity extends Activity {
             public void onProgressChanged(WebView view, int newProgress) {
                 progress.setProgress(newProgress);
             }
+
+            @Override
+            public boolean onJsAlert(WebView view, String url, String message,
+                    android.webkit.JsResult result) {
+                if ("bus".equals(automationTarget)
+                        && message != null
+                        && message.matches(".*(用户不存在|工号不存在|未找到用户|未找到该用户|账号不存在).*$")) {
+                    result.cancel();
+                    return true;
+                }
+                return super.onJsAlert(view, url, message, result);
+            }
         });
 
         if (!showBrowser) {
@@ -2805,6 +2829,8 @@ public class MainActivity extends Activity {
         final boolean[] credentialsSubmitted = {false};
         final boolean[] smsSubmitted = {false};
         final String target = automationTarget;
+        final long busApiReadyAt = "bus".equals(target)
+                ? System.currentTimeMillis() + 5000L : 0L;
 
         automationTask = new Runnable() {
             @Override
@@ -2828,6 +2854,10 @@ public class MainActivity extends Activity {
                     return;
                 }
                 if (web.getProgress() < 60) {
+                    automationHandler.postDelayed(this, 1000);
+                    return;
+                }
+                if ("bus".equals(target) && System.currentTimeMillis() < busApiReadyAt) {
                     automationHandler.postDelayed(this, 1000);
                     return;
                 }
@@ -3014,6 +3044,23 @@ public class MainActivity extends Activity {
                             }
                         } else if ("bus_api_raw".equals(phase) && "bus".equals(target)) {
                             if (handleCollectedBus(payload)) return;
+                            boolean wasAutomatic = automaticRun;
+                            String error = payload.optString("reservationError", "").trim();
+                            String message = error.isEmpty()
+                                    ? "校车数据读取失败，已保留上次数据"
+                                    : "校车系统：" + error;
+                            status.setText(message);
+                            cancelAutomation();
+                            if (initialSyncInProgress) {
+                                finishInitialSyncStep("bus", false);
+                                return;
+                            }
+                            if (!wasAutomatic) {
+                                showTab(currentTab);
+                                Toast.makeText(MainActivity.this, message, Toast.LENGTH_LONG).show();
+                            }
+                            recordAutomaticAttempt("bus", wasAutomatic);
+                            return;
                         } else if ("data".equals(phase) && "grades".equals(target)) {
                             JSONArray rows = payload.optJSONArray("rows");
                             if (rows != null && collectedGradeRows[0] == null) {
@@ -3263,38 +3310,11 @@ public class MainActivity extends Activity {
      * 返回 true 表示本次采集有效（调用方应结束自动化流程）。
      */
     private boolean handleCollectedBus(JSONObject payload) {
-        JSONObject routesResponse = payload.optJSONObject("routes");
-        List<BusModels.Route> routes = BusApiParsers.routes(routesResponse);
-        List<BusModels.Reservation> reservations =
-                BusApiParsers.reservations(payload.optJSONObject("reservations"));
-        List<BusModels.Trip> trips = new ArrayList<>();
-        JSONArray groups = payload.optJSONArray("tripGroups");
-        if (groups != null) {
-            for (int i = 0; i < groups.length(); i++) {
-                JSONObject group = groups.optJSONObject(i);
-                if (group == null) continue;
-                BusModels.Route route = new BusModels.Route();
-                route.objId = group.optString("routeId");
-                route.name = group.optString("routeName");
-                JSONObject wrapped = new JSONObject();
-                try {
-                    wrapped.put("isSuccess", true);
-                    wrapped.put("data", group.optJSONArray("items"));
-                } catch (Exception ignored) {
-                    continue;
-                }
-                trips.addAll(BusApiParsers.trips(wrapped, group.optString("date"), route));
-            }
-        }
-        if (routes.isEmpty() && reservations.isEmpty()) return false;
-
-        BusModels.Snapshot next = new BusModels.Snapshot();
-        next.updatedAt = System.currentTimeMillis();
-        next.reserveDays = BusApiParsers.reserveDays(routesResponse);
-        next.routes = routes;
-        next.trips = trips;
-        next.reservations = reservations;
-        BusStorage.pruneTrips(next, LocalDate.now());
+        BusSyncData.Result result = BusSyncData.merge(
+                payload, busSnapshot, System.currentTimeMillis(), LocalDate.now());
+        if (!result.hasUpdate()) return false;
+        BusModels.Snapshot next = result.snapshot;
+        String reservationError = payload.optString("reservationError", "").trim();
 
         boolean wasAutomatic = automaticRun;
         markCredentialsVerified();
@@ -3302,7 +3322,7 @@ public class MainActivity extends Activity {
         if (!no.isEmpty()) store.edit().putString(BusStorage.KEY_NO, no).apply();
         notifyBusChanges(next);
         BusStorage.save(store, next);
-        BusStorage.saveStatuses(store, next.reservations);
+        if (result.reservationsComplete) BusStorage.saveStatuses(store, next.reservations);
         busSnapshot = next;
         store.edit().putLong(BusStorage.KEY_LAST_SYNC, next.updatedAt).apply();
 
@@ -3313,7 +3333,9 @@ public class MainActivity extends Activity {
             return true;
         }
         if (!wasAutomatic) {
-            Toast.makeText(this, busSummaryText(), Toast.LENGTH_LONG).show();
+            String message = reservationError.isEmpty()
+                    ? busSummaryText() : "校车系统：" + reservationError;
+            Toast.makeText(this, message, Toast.LENGTH_LONG).show();
         }
         recordAutomaticAttempt("bus", wasAutomatic);
         return true;
@@ -3321,68 +3343,14 @@ public class MainActivity extends Activity {
 
     /** 状态变化与发车提醒；每个键只提醒一次。 */
     private void notifyBusChanges(BusModels.Snapshot next) {
-        if (next == null) return;
-        long now = System.currentTimeMillis();
-        for (BusModels.Reservation reservation : next.reservations) {
-            if (busStatusReminderEnabled) {
-                String before = BusStorage.previousStatus(store, reservation);
-                if (BusReminderPolicy.shouldRemindStatus(before, reservation.status)) {
-                    String key = BusReminderPolicy.statusKey(reservation);
-                    if (!BusStorage.isReminded(store, key)) {
-                        BusStorage.markReminded(store, key);
-                        showBusNotification(key, "校车预约状态更新",
-                                BusReminderPolicy.statusText(reservation));
-                    }
-                }
-            }
-            if (busDepartureReminderEnabled && !reservation.rejected()
-                    && BusReminderPolicy.shouldRemindDeparture(reservation.departureAt(), now)) {
-                String key = BusReminderPolicy.departureKey(reservation);
-                if (!BusStorage.isReminded(store, key)) {
-                    BusStorage.markReminded(store, key);
-                    showBusNotification(key, "校车发车提醒",
-                            BusReminderPolicy.departureText(reservation, now));
-                }
-            }
-        }
+        BusNotifications.notifyChanges(this, store, next, System.currentTimeMillis());
     }
 
-    /**
-     * 应用回到前台时补一次发车提醒。
-     *
-     * 校车班次集中在白天，用后台轮询去换 30 分钟内的准点提醒不划算，
-     * 因此这里只在打开应用时补判，并复用同一套去重键。
-     */
+    /** 应用回到前台时补判一次，后台闹钟也会在发车前 30 分钟准时唤醒。 */
     private void checkBusDepartureReminders() {
-        if (!busDepartureReminderEnabled || busSnapshot == null) return;
-        long now = System.currentTimeMillis();
-        for (BusModels.Reservation reservation : busSnapshot.reservations) {
-            if (reservation.rejected()) continue;
-            if (!BusReminderPolicy.shouldRemindDeparture(reservation.departureAt(), now)) continue;
-            String key = BusReminderPolicy.departureKey(reservation);
-            if (BusStorage.isReminded(store, key)) continue;
-            BusStorage.markReminded(store, key);
-            showBusNotification(key, "校车发车提醒",
-                    BusReminderPolicy.departureText(reservation, now));
-        }
-    }
-
-    private void showBusNotification(String key, String title, String text) {
-        if (!hasNotificationPermission()) return;
-        Intent intent = new Intent(this, MainActivity.class);
-        PendingIntent pending = PendingIntent.getActivity(this, 3, intent,
-                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
-        android.app.Notification.Builder builder = Build.VERSION.SDK_INT >= 26
-                ? new android.app.Notification.Builder(this, BUS_CHANNEL)
-                : new android.app.Notification.Builder(this);
-        builder.setSmallIcon(R.drawable.ic_launcher)
-                .setContentTitle(title)
-                .setContentText(text)
-                .setStyle(new android.app.Notification.BigTextStyle().bigText(text))
-                .setAutoCancel(true)
-                .setContentIntent(pending);
-        int id = 2000 + Math.abs(key.hashCode() % 1000);
-        getSystemService(NotificationManager.class).notify(id, builder.build());
+        BusNotifications.notifyDueDepartures(
+                this, store, busSnapshot, System.currentTimeMillis());
+        BackgroundSyncScheduler.schedule(this);
     }
 
     /** 首页/提示条上的一句话校车摘要。 */
@@ -3412,30 +3380,30 @@ public class MainActivity extends Activity {
 
     // -------------------------------------------------------------- 校车 UI --
 
-    /** 首页「校车」卡片：我的预约、最近可约班次与更新入口。 */
+    /** 首页「校车」卡片：我的预约与最近可约班次。 */
     private LinearLayout busCard() {
         LinearLayout card = card(panelColor());
         card.setPadding(dp(14), dp(14), dp(14), dp(14));
 
-        LinearLayout head = new LinearLayout(this);
-        head.setGravity(Gravity.CENTER_VERTICAL);
-        TextView title = label("校车预约", 14, textColor());
-        title.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
-        head.addView(title, new LinearLayout.LayoutParams(0, -2, 1));
-        Button update = syncButton("校车", "更新校车预约");
-        update.setOnClickListener(v -> openPortal("bus", false));
-        head.addView(update, new LinearLayout.LayoutParams(dp(72), dp(36)));
-        card.addView(head);
-
-        addGap(card, 8);
-        TextView status = label(busSummaryText(), 13, textColor());
-        status.setLineSpacing(dp(3), 1f);
-        card.addView(status);
-
         BusModels.Reservation reservation = busSnapshot == null ? null : busSnapshot.nextReservation();
-        if (reservation != null && !reservation.summary.isEmpty()) {
+        TextView caption = label(reservation == null ? "班次预览" : "最近预约", 11, primaryColor());
+        caption.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        card.addView(caption);
+
+        if (reservation == null) {
+            addGap(card, 7);
+            addBusPreview(card);
+        } else {
+            addGap(card, 5);
+            TextView status = label(busSummaryText(), 15, textColor());
+            status.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+            status.setLineSpacing(dp(3), 1f);
+            card.addView(status);
+        }
+
+        if (reservation != null && !reservation.displaySummary().isEmpty()) {
             addGap(card, 6);
-            TextView detail = label(reservation.summary, 11, mutedColor());
+            TextView detail = label(reservation.displaySummary(), 11, mutedColor());
             detail.setLineSpacing(dp(2), 1f);
             card.addView(detail);
         }
@@ -3458,6 +3426,72 @@ public class MainActivity extends Activity {
         actions.addView(mine, new LinearLayout.LayoutParams(0, dp(40), 1));
         card.addView(actions);
         return card;
+    }
+
+    /** 首页班次预览：两条线路各占一列，中间固定分割线。 */
+    private void addBusPreview(LinearLayout card) {
+        List<BusModels.Trip> changAnToYouYi = new ArrayList<>();
+        List<BusModels.Trip> youYiToChangAn = new ArrayList<>();
+        if (busSnapshot != null) {
+            for (BusModels.Trip trip : busSnapshot.trips) {
+                if (busIsChangAnToYouYi(trip)) changAnToYouYi.add(trip);
+                else youYiToChangAn.add(trip);
+            }
+        }
+        Comparator<BusModels.Trip> byDeparture = (left, right) -> {
+            LocalDateTime leftAt = left.departureAt();
+            LocalDateTime rightAt = right.departureAt();
+            if (leftAt == null && rightAt == null) return left.departTime.compareTo(right.departTime);
+            if (leftAt == null) return 1;
+            if (rightAt == null) return -1;
+            return leftAt.compareTo(rightAt);
+        };
+        Collections.sort(changAnToYouYi, byDeparture);
+        Collections.sort(youYiToChangAn, byDeparture);
+
+        LinearLayout columns = new LinearLayout(this);
+        columns.setGravity(Gravity.TOP);
+        columns.addView(busPreviewColumn("长安 → 友谊", changAnToYouYi),
+                new LinearLayout.LayoutParams(0, -2, 1));
+        View divider = new View(this);
+        divider.setBackgroundColor(lineColor());
+        columns.addView(divider, new LinearLayout.LayoutParams(dp(1), dp(78)));
+        columns.addView(busPreviewColumn("友谊 → 长安", youYiToChangAn),
+                new LinearLayout.LayoutParams(0, -2, 1));
+        card.addView(columns, new LinearLayout.LayoutParams(-1, -2));
+    }
+
+    private LinearLayout busPreviewColumn(String title, List<BusModels.Trip> trips) {
+        LinearLayout column = new LinearLayout(this);
+        column.setOrientation(LinearLayout.VERTICAL);
+        column.setPadding(dp(8), 0, dp(8), 0);
+        TextView heading = label(title, 12, textColor());
+        heading.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        heading.setGravity(Gravity.CENTER_HORIZONTAL);
+        column.addView(heading, new LinearLayout.LayoutParams(-1, dp(24)));
+        if (trips.isEmpty()) {
+            TextView empty = label("暂无班次", 11, mutedColor());
+            empty.setGravity(Gravity.CENTER_HORIZONTAL);
+            column.addView(empty, new LinearLayout.LayoutParams(-1, dp(34)));
+            return column;
+        }
+        int shown = Math.min(3, trips.size());
+        for (int i = 0; i < shown; i++) {
+            BusModels.Trip trip = trips.get(i);
+            String date = BusModels.displayDate(trip.date);
+            String seats = "余 " + Math.max(0, trip.remaining);
+            String text = (date.isEmpty() ? "" : date + " ") + trip.departTime
+                    + " · " + seats;
+            TextView time = label(text, 12, textColor());
+            time.setGravity(Gravity.CENTER_HORIZONTAL);
+            column.addView(time, new LinearLayout.LayoutParams(-1, dp(20)));
+        }
+        if (trips.size() > shown) {
+            TextView more = label("还有 " + (trips.size() - shown) + " 班", 10, mutedColor());
+            more.setGravity(Gravity.CENTER_HORIZONTAL);
+            column.addView(more, new LinearLayout.LayoutParams(-1, dp(18)));
+        }
+        return column;
     }
 
     /** 班次详情：按方向分成「长安 → 友谊」「友谊 → 长安」两个标签页，各自再按日期分组。 */
@@ -3483,8 +3517,9 @@ public class MainActivity extends Activity {
         final Button tabCA = busDirectionTab("长安 → 友谊");
         final Button tabYY = busDirectionTab("友谊 → 长安");
         LinearLayout tabRow = new LinearLayout(this);
+        tabRow.setPadding(dp(3), dp(3), dp(3), dp(3));
+        tabRow.setBackground(border(colorWithAlpha(primaryColor(), 10), lineColor(), 8));
         tabRow.addView(tabCA, new LinearLayout.LayoutParams(0, dp(42), 1));
-        addHorizontalGap(tabRow, 8);
         tabRow.addView(tabYY, new LinearLayout.LayoutParams(0, dp(42), 1));
         box.addView(tabRow);
 
@@ -3534,7 +3569,7 @@ public class MainActivity extends Activity {
         return null;
     }
 
-    /** 方向标签按钮：选中态用主题色描边 + 加粗，未选中用描边空底。 */
+    /** 方向标签按钮：与课表视图切换使用同一组选中态。 */
     private Button busDirectionTab(String text) {
         Button button = new Button(this);
         button.setText(text);
@@ -3552,8 +3587,8 @@ public class MainActivity extends Activity {
         button.setTypeface(Typeface.DEFAULT, selected ? Typeface.BOLD : Typeface.NORMAL);
         button.setTextColor(selected ? primaryColor() : mutedColor());
         button.setBackground(border(selected ? panelColor() : Color.TRANSPARENT,
-                selected ? primaryColorWithAlpha(70) : lineColor(), 7));
-        applyRoundedOutline(button, 7, 0);
+                selected ? lineColor() : Color.TRANSPARENT, 6));
+        applyRoundedOutline(button, 6, selected ? 2 : 0);
     }
 
     /** 把某个方向的班次按日期分组填充进内容区。 */
@@ -3574,9 +3609,12 @@ public class MainActivity extends Activity {
             LinearLayout.LayoutParams dayParams = new LinearLayout.LayoutParams(-1, dp(30));
             dayParams.topMargin = dp(6);
             content.addView(day, dayParams);
+            boolean firstTrip = true;
             for (BusModels.Trip trip : trips) {
                 if (!trip.date.equals(date)) continue;
+                if (!firstTrip) content.addView(settingDivider());
                 content.addView(busTripRow(trip));
+                firstTrip = false;
             }
         }
     }
@@ -3613,7 +3651,9 @@ public class MainActivity extends Activity {
         if (busSnapshot == null || busSnapshot.reservations.isEmpty()) {
             box.addView(emptyHint("当前没有校车预约"));
         } else {
+            boolean firstReservation = true;
             for (BusModels.Reservation reservation : busSnapshot.reservations) {
+                if (!firstReservation) box.addView(settingDivider());
                 LinearLayout item = new LinearLayout(this);
                 item.setOrientation(LinearLayout.VERTICAL);
                 item.setPadding(0, dp(8), 0, dp(8));
@@ -3622,21 +3662,28 @@ public class MainActivity extends Activity {
                 TextView name = label(reservation.title(), 14, textColor());
                 name.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
                 line.addView(name, new LinearLayout.LayoutParams(0, -2, 1));
-                line.addView(label(reservation.status.isEmpty() ? "待核验" : reservation.status,
-                        12, reservation.rejected() ? mutedColor() : primaryColor()));
+                TextView status = label(reservation.status.isEmpty() ? "待核验" : reservation.status,
+                        11, reservation.rejected() ? mutedColor() : primaryColor());
+                status.setGravity(Gravity.CENTER);
+                status.setPadding(dp(9), dp(3), dp(9), dp(3));
+                int statusColor = reservation.rejected() ? mutedColor() : primaryColor();
+                status.setBackground(border(colorWithAlpha(statusColor, 18),
+                        colorWithAlpha(statusColor, 64), 10));
+                line.addView(status);
                 item.addView(line);
                 String when = reservation.whenText();
                 if (!when.isEmpty()) {
                     addGap(item, 3);
                     item.addView(label(when, 12, mutedColor()));
                 }
-                if (!reservation.summary.isEmpty()) {
+                if (!reservation.displaySummary().isEmpty()) {
                     addGap(item, 3);
-                    TextView summary = label(reservation.summary, 11, mutedColor());
+                    TextView summary = label(reservation.displaySummary(), 11, mutedColor());
                     summary.setLineSpacing(dp(2), 1f);
                     item.addView(summary);
                 }
                 box.addView(item);
+                firstReservation = false;
             }
         }
         showCoursePanel("校车", "我的预约", box, dp(460));
@@ -3661,6 +3708,7 @@ public class MainActivity extends Activity {
         initialSyncTargets.add("grades");
         initialSyncTargets.add("schedule");
         initialSyncTargets.add("electricity");
+        initialSyncTargets.add("bus");
         Toast.makeText(this, "登录验证成功，正在后台同步全部信息", Toast.LENGTH_SHORT).show();
         openNextInitialSyncTarget();
     }
@@ -3729,8 +3777,8 @@ public class MainActivity extends Activity {
         String message;
         if (initialSyncFailures.isEmpty()) {
             message = initialElectricityDeferred
-                    ? "登录成功，成绩和课表已同步；电费系统正在结算，将在 1:00 后自动更新"
-                    : "登录成功，成绩、课表和电费已同步";
+                    ? "登录成功，成绩、课表和校车已同步；电费系统正在结算，将在 1:00 后自动更新"
+                    : "登录成功，成绩、课表、电费和校车已同步";
         } else {
             message = "登录成功，以下信息同步失败：" + String.join("、", initialSyncFailures);
             if (initialElectricityDeferred) message += "；电费将在 1:00 后自动更新";
@@ -3801,7 +3849,8 @@ public class MainActivity extends Activity {
     }
 
     private void syncBackgroundService() {
-        if (!hasCredentials() || (!autoGradeEnabled && !autoScheduleEnabled && !autoElectricityEnabled)) {
+        if (!autoGradeEnabled && !autoScheduleEnabled && !autoElectricityEnabled
+                && !autoBusEnabled && !busDepartureReminderEnabled) {
             stopBackgroundService();
             return;
         }
@@ -4057,21 +4106,20 @@ public class MainActivity extends Activity {
                 .remove(BusStorage.KEY_NO)
                 .apply();
         NotificationManager notifications = getSystemService(NotificationManager.class);
-        if (notifications != null) {
-            notifications.cancel(AUTO_UPDATE_NOTIFICATION_ID);
-            notifications.cancel(1001);
-            notifications.cancel(1002);
-            notifications.cancel(1003);
-            notifications.cancel(1006);
-        }
+        if (notifications != null) notifications.cancelAll();
         CookieManager cookies = CookieManager.getInstance();
         cookies.removeAllCookies(null);
         cookies.flush();
+        // CookieManager does not clear WebView localStorage. The bus site keeps
+        // its identity in localStorage.NO, so remove that origin on logout to
+        // prevent the next account from querying with the previous user's NO.
+        WebStorage.getInstance().deleteOrigin("https://hq-bus.nwpu.edu.cn");
         ScheduleWidgetUpdater.updateAll(this);
         settingsPanel = "account";
         tabScrollPositions[TAB_SETTINGS] = 0;
         showTab(TAB_SETTINGS);
-        Toast.makeText(this, "已退出登录并清除成绩、课表和电费", Toast.LENGTH_SHORT).show();
+        Toast.makeText(this, "已退出登录并清除成绩、课表、电费和校车数据",
+                Toast.LENGTH_SHORT).show();
     }
 
     private void switchAccount() {
@@ -4148,9 +4196,7 @@ public class MainActivity extends Activity {
             NotificationChannel authentication = new NotificationChannel(AUTHENTICATION_CHANNEL, "登录验证", NotificationManager.IMPORTANCE_HIGH);
             authentication.setDescription("登录密码或验证码需要重新验证时通知");
             getSystemService(NotificationManager.class).createNotificationChannel(authentication);
-            NotificationChannel bus = new NotificationChannel(BUS_CHANNEL, "校车提醒", NotificationManager.IMPORTANCE_HIGH);
-            bus.setDescription("校车预约状态变化与发车前提醒");
-            getSystemService(NotificationManager.class).createNotificationChannel(bus);
+            BusNotifications.ensureChannel(this);
         }
     }
 
@@ -4492,6 +4538,22 @@ public class MainActivity extends Activity {
                 Color.red(color), Color.green(color), Color.blue(color));
     }
 
+    /** Use a soft course tint while keeping course-block text consistently white. */
+    private int scheduleCourseFill(String value) {
+        int base = parseColorSafe(value, primaryColor());
+        return colorWithAlpha(base, 128);
+    }
+
+    private int scheduleCourseTextColor() {
+        return Color.rgb(255, 255, 255);
+    }
+
+    private TextView scheduleCourseLabel(String value, float size) {
+        TextView view = label(value, size, scheduleCourseTextColor());
+        view.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        return view;
+    }
+
     private ScrollView page() {
         ScrollView s = new ScrollView(this);
         s.setFillViewport(true);
@@ -4636,7 +4698,7 @@ public class MainActivity extends Activity {
 
     private String automaticUpdateSummary() {
         int enabled = (autoGradeEnabled ? 1 : 0) + (autoScheduleEnabled ? 1 : 0)
-                + (autoElectricityEnabled ? 1 : 0);
+                + (autoElectricityEnabled ? 1 : 0) + (autoBusEnabled ? 1 : 0);
         if (enabled == 0) return "全部关闭";
         String summary = "已开启 " + enabled + " 项";
         return hasCoreBackgroundPermissions() ? summary : summary + " · 权限待完善";
@@ -4949,8 +5011,10 @@ public class MainActivity extends Activity {
     private Button syncButton(String text, String description) {
         Button button = action(text, false);
         boolean electricity = "电费".equals(text);
-        int accent = electricity ? electricityAccentColor() : primaryColor();
-        int iconResource = electricity ? R.drawable.ic_electricity : R.drawable.ic_grades;
+        boolean bus = "校车".equals(text);
+        int accent = electricity ? electricityAccentColor() : bus ? busAccentColor() : primaryColor();
+        int iconResource = electricity ? R.drawable.ic_electricity
+                : bus ? R.drawable.ic_bus : R.drawable.ic_grades;
         android.graphics.drawable.Drawable icon = getDrawable(iconResource);
         if (icon != null) {
             icon = icon.mutate();
@@ -5017,6 +5081,7 @@ public class MainActivity extends Activity {
             case "manual_updates": return R.drawable.ic_nav_schedule;
             case "notifications": return R.drawable.ic_notifications;
             case "electricity": return R.drawable.ic_electricity;
+            case "bus": return R.drawable.ic_bus;
             case "appearance": return R.drawable.ic_palette;
             case "data": return R.drawable.ic_data;
             default: return R.drawable.ic_info;
@@ -5213,7 +5278,7 @@ public class MainActivity extends Activity {
         cardParams.bottomMargin = dp(7);
         card.setLayoutParams(cardParams);
 
-        int fill = parseColorSafe(course.color, primaryColor());
+        int fill = scheduleCourseFill(course.color);
         View accent = new View(this);
         accent.setBackground(bg(fill, 3));
         card.addView(accent, new LinearLayout.LayoutParams(dp(4), dp(46)));
@@ -5395,10 +5460,11 @@ public class MainActivity extends Activity {
                              int week, int day, List<Integer> sections) {
         LinearLayout block = new LinearLayout(this);
         block.setOrientation(LinearLayout.VERTICAL);
-        int fill = parseColorSafe(course.color, primaryColorWithAlpha(240));
+        int fill = scheduleCourseFill(course.color);
         block.setBackground(border(fill, lineColor(), 5));
         block.setPadding(dp(3), dp(3), dp(3), dp(3));
-        TextView title = label(course.name, 10, contrastText(fill));
+        int textColor = scheduleCourseTextColor();
+        TextView title = label(course.name, 10, textColor);
         title.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
         block.addView(title);
         String meetingTime = dayPrimarySectionLabel(course, week, day);
@@ -5418,12 +5484,12 @@ public class MainActivity extends Activity {
             }
             meetingTime += range.isEmpty() ? "" : "\n" + range;
         }
-        TextView time = label(meetingTime, 8, contrastText(fill));
+        TextView time = scheduleCourseLabel(meetingTime, 8);
         time.setMaxLines(2);
         block.addView(time);
         String slotLocation = slot != null && slot.location != null ? slot.location : course.location;
         if (slotLocation != null) {
-            TextView location = label(slotLocation, 8, contrastText(fill));
+            TextView location = scheduleCourseLabel(slotLocation, 8);
             block.addView(location);
         }
         block.setOnClickListener(v -> showCourseMeetingDetailDialog(course, slot));
@@ -6184,12 +6250,16 @@ public class MainActivity extends Activity {
         @Override
         public void onPageStarted(WebView view, String url, Bitmap favicon) {
             unifiedAuthTracker.record(url);
+            injectBusIdentity(view, url);
+            installBusErrorDialogGuard(view, url);
             super.onPageStarted(view, url, favicon);
         }
 
         @Override
         public void onPageFinished(WebView view, String url) {
             unifiedAuthTracker.record(url);
+            injectBusIdentity(view, url);
+            installBusErrorDialogGuard(view, url);
             super.onPageFinished(view, url);
         }
 
@@ -6206,11 +6276,49 @@ public class MainActivity extends Activity {
                 String host = Uri.parse(url).getHost();
                 if (host != null && (host.equals("nwpu.edu.cn") || host.endsWith(".nwpu.edu.cn"))) return false;
             } catch (Exception ignored) {}
-            if (!automaticRun) {
+            if (!automaticRun && !"bus".equals(automationTarget)) {
                 Toast.makeText(MainActivity.this, "已拦截非西工大页面", Toast.LENGTH_SHORT).show();
             }
             return true;
         }
+    }
+
+    /** Seed localStorage.NO before the bus page runs its own initialization. */
+    private void injectBusIdentity(WebView view, String url) {
+        if (view == null || !"bus".equals(automationTarget)) return;
+        try {
+            String host = Uri.parse(url).getHost();
+            if (host == null || !(host.equals("hq-bus.nwpu.edu.cn") || host.endsWith(".hq-bus.nwpu.edu.cn"))) return;
+            String account = busIdentity();
+            if (account.isEmpty()) return;
+            String value = JSONObject.quote(account);
+            view.evaluateJavascript("(function(){try{localStorage.setItem('NO'," + value
+                    + ");window.__aoxiangBusNo=" + value + "}catch(e){}})();", null);
+        } catch (Exception ignored) {}
+    }
+
+    /** Close the H5 app's Vant error dialog; API collection continues independently. */
+    private void installBusErrorDialogGuard(WebView view, String url) {
+        if (view == null || !"bus".equals(automationTarget)) return;
+        try {
+            String host = Uri.parse(url).getHost();
+            if (host == null || !(host.equals("hq-bus.nwpu.edu.cn")
+                    || host.endsWith(".hq-bus.nwpu.edu.cn"))) return;
+            view.evaluateJavascript("(function(){"
+                    + "if(window.__aoxiangBusDialogGuard)return;"
+                    + "window.__aoxiangBusDialogGuard=1;"
+                    + "var close=function(){"
+                    + "document.querySelectorAll('.van-dialog,[role=dialog]').forEach(function(d){"
+                    + "var t=(d.innerText||d.textContent||'').replace(/\\s/g,'');"
+                    + "if(/用户不存在|工号不存在|未找到用户|未找到该用户|账号不存在/.test(t)){"
+                    + "var b=d.querySelector('.van-dialog__confirm,.van-button');"
+                    + "if(b)b.click();else d.remove();"
+                    + "document.querySelectorAll('.van-overlay').forEach(function(o){o.remove()});"
+                    + "}})};"
+                    + "close();"
+                    + "new MutationObserver(close).observe(document.documentElement||document,{childList:true,subtree:true});"
+                    + "})();", null);
+        } catch (Exception ignored) {}
     }
 
 }

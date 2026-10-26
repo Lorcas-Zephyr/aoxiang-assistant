@@ -152,7 +152,7 @@ public final class BusModels {
 
         public String title() {
             if (!routeName.isEmpty()) return routeName;
-            return orderNo.isEmpty() ? "校车预约" : "预约 " + orderNo;
+            return "校车预约";
         }
 
         public String whenText() {
@@ -162,9 +162,15 @@ public final class BusModels {
             return String.join(" ", parts);
         }
 
+        /** 面向用户的非标识信息；预约号和联系电话不在界面展示。 */
+        public String displaySummary() {
+            return fee.isEmpty() ? "" : "费用 " + fee + " 元";
+        }
+
         /** 用于去重与提醒：预约号优先，其次 线路+日期+时刻。 */
         public String key() {
             if (!orderNo.isEmpty()) return orderNo;
+            if (routeName.isEmpty() && date.isEmpty() && departTime.isEmpty()) return "";
             return routeName + "|" + date + "|" + departTime;
         }
     }
@@ -194,8 +200,7 @@ public final class BusModels {
                     best = reservation;
                 }
             }
-            if (best != null) return best;
-            return reservations.isEmpty() ? null : reservations.get(0);
+            return best;
         }
 
         /** 下一个可预约班次，用于「最近一班」提示。 */

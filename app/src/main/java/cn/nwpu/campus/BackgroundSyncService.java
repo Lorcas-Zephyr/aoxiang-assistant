@@ -27,6 +27,8 @@ import android.util.Base64;
 import android.view.View;
 import android.view.ViewGroup;
 import android.webkit.CookieManager;
+import android.webkit.JsResult;
+import android.webkit.WebChromeClient;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
@@ -54,6 +56,7 @@ public class BackgroundSyncService extends Service {
             "https://jwxt.nwpu.edu.cn/student/for-std/student-portrait";
     private static final String ELECTRICITY_HOME = "https://yktapp.nwpu.edu.cn/plat/shouyeUser";
     private static final String ELECTRICITY_SSO = "https://yktapp.nwpu.edu.cn/berserker-auth/cas/login/supwisdom?targetUrl=https%3A%2F%2Fyktapp.nwpu.edu.cn%2Fplat";
+    private static final String BUS_SSO = "https://hq-bus.nwpu.edu.cn/h5/";
     private static final String CREDENTIAL_KEY = "campus_login_credentials";
     private static final String CREDENTIAL_FAILURE_COUNT = "credential_failure_count";
     private static final String INTERACTIVE_AUTH_REQUIRED = "interactive_auth_required";
@@ -102,7 +105,8 @@ public class BackgroundSyncService extends Service {
             finishService();
             return START_NOT_STICKY;
         }
-        BackgroundSyncScheduler.NextUpdate next = BackgroundSyncScheduler.nextUpdate(store, System.currentTimeMillis());
+        BackgroundSyncScheduler.NextUpdate next = BackgroundSyncScheduler.nextUpdate(
+                this, store, System.currentTimeMillis());
         if (next == null) {
             BackgroundSyncScheduler.cancel(this);
             finishService();
@@ -124,6 +128,13 @@ public class BackgroundSyncService extends Service {
         // Preserve a retry wake if the process is killed during network collection.
         BackgroundSyncScheduler.schedule(this, RETRY_DELAY_MS);
         startForeground(SERVICE_NOTIFICATION_ID, serviceNotification("正在更新" + label(target)));
+        if (BackgroundSyncScheduler.TARGET_BUS_REMINDER.equals(target)) {
+            BusNotifications.notifyDueDepartures(
+                    this, store, BusStorage.load(store), System.currentTimeMillis());
+            BackgroundSyncScheduler.schedule(this);
+            finishService();
+            return START_NOT_STICKY;
+        }
         beginCollection();
         return START_STICKY;
     }
@@ -171,11 +182,13 @@ public class BackgroundSyncService extends Service {
         web.setWebViewClient(new WebViewClient() {
             @Override public void onPageStarted(WebView view, String url, Bitmap favicon) {
                 unifiedAuthTracker.record(url);
+                injectBusIdentity(view, url, credentials[0]);
                 super.onPageStarted(view, url, favicon);
             }
 
             @Override public void onPageFinished(WebView view, String url) {
                 unifiedAuthTracker.record(url);
+                injectBusIdentity(view, url, credentials[0]);
                 layoutHeadlessWebView();
                 super.onPageFinished(view, url);
             }
@@ -195,11 +208,39 @@ public class BackgroundSyncService extends Service {
                 }
             }
         });
+        web.setWebChromeClient(new WebChromeClient() {
+            @Override public boolean onJsAlert(WebView view, String url, String message,
+                    JsResult result) {
+                if (message != null
+                        && message.matches(".*(用户不存在|工号不存在|未找到用户|未找到该用户|账号不存在).*$")) {
+                    result.cancel();
+                    return true;
+                }
+                return super.onJsAlert(view, url, message, result);
+            }
+        });
         attachHeadlessWebView();
         web.onResume();
         web.resumeTimers();
         startCollector(credentials);
-        web.loadUrl("electricity".equals(target) ? ELECTRICITY_SSO : EDUCATION_SSO);
+        web.loadUrl("bus".equals(target) ? BUS_SSO
+                : "electricity".equals(target) ? ELECTRICITY_SSO : EDUCATION_SSO);
+    }
+
+    /**
+     * The bus H5 page reads localStorage.NO during its own startup, before the
+     * collector script gets a chance to run. Seed the current account at the
+     * earliest WebView callbacks so that the page's first request uses it too.
+     */
+    private void injectBusIdentity(WebView view, String url, String account) {
+        if (view == null || !"bus".equals(target) || account == null || account.trim().isEmpty()) return;
+        try {
+            String host = Uri.parse(url).getHost();
+            if (host == null || !(host.equals("hq-bus.nwpu.edu.cn") || host.endsWith(".hq-bus.nwpu.edu.cn"))) return;
+            String value = JSONObject.quote(account.trim());
+            view.evaluateJavascript("(function(){try{localStorage.setItem('NO'," + value
+                    + ");window.__aoxiangBusNo=" + value + "}catch(e){}})();", null);
+        } catch (Exception ignored) {}
     }
 
     private void startCollector(String[] credentials) {
@@ -210,6 +251,8 @@ public class BackgroundSyncService extends Service {
         final long[] credentialsSubmittedAt = {0L};
         final boolean[] credentialsSubmitted = {false};
         final JSONArray[] collectedGradeRows = {null};
+        final long busApiReadyAt = "bus".equals(target)
+                ? System.currentTimeMillis() + 5000L : 0L;
         collectTask = new Runnable() {
             @Override public void run() {
                 if (!running || web == null) return;
@@ -224,6 +267,10 @@ public class BackgroundSyncService extends Service {
                     return;
                 }
                 if (web.getProgress() < 60) {
+                    handler.postDelayed(this, 1000L);
+                    return;
+                }
+                if ("bus".equals(target) && System.currentTimeMillis() < busApiReadyAt) {
                     handler.postDelayed(this, 1000L);
                     return;
                 }
@@ -299,6 +346,9 @@ public class BackgroundSyncService extends Service {
                                 saveElectricity(balance);
                                 return;
                             }
+                        } else if ("bus_api_raw".equals(phase) && "bus".equals(target)) {
+                            saveBus(payload);
+                            return;
                         } else if ("data".equals(phase) && "grades".equals(target)) {
                             if (gradeReadyAt[0] == 0L) gradeReadyAt[0] = System.currentTimeMillis() + 5000L;
                             if (System.currentTimeMillis() >= gradeReadyAt[0]
@@ -330,6 +380,7 @@ public class BackgroundSyncService extends Service {
                 };
                 if (!apiScript.isEmpty()) {
                     String apiSource = apiScript.replace("__MODE__", target)
+                            .replace("__BUS_NO__", JSONObject.quote(credentials[0]))
                             .replace("__ALLOW_NAV__", Boolean.toString(
                                     System.currentTimeMillis() >= navigationCooldownUntil[0]));
                     web.evaluateJavascript(apiSource, apiResult -> {
@@ -497,6 +548,28 @@ public class BackgroundSyncService extends Service {
             markCredentialsVerified();
         }
         finishAttempt(valid);
+    }
+
+    private void saveBus(JSONObject payload) {
+        BusSyncData.Result result = BusSyncData.merge(payload, BusStorage.load(store),
+                System.currentTimeMillis(), java.time.LocalDate.now());
+        if (!result.hasUpdate()) {
+            finishAttempt(false);
+            return;
+        }
+        BusNotifications.notifyChanges(this, store, result.snapshot, System.currentTimeMillis());
+        BusStorage.save(store, result.snapshot);
+        if (result.reservationsComplete) {
+            BusStorage.saveStatuses(store, result.snapshot.reservations);
+        }
+        String no = payload.optString("no", "").trim();
+        SharedPreferences.Editor editor = store.edit()
+                .putLong(BusStorage.KEY_LAST_SYNC, result.snapshot.updatedAt);
+        if (!no.isEmpty()) editor.putString(BusStorage.KEY_NO, no);
+        editor.apply();
+        DataUpdateSignal.publish(this, DataUpdateSignal.TARGET_BUS);
+        markCredentialsVerified();
+        finishAttempt(true);
     }
 
     private void finishAttempt(boolean success) {
@@ -740,6 +813,7 @@ public class BackgroundSyncService extends Service {
         manager.createNotificationChannel(channel(SCHEDULE_CHANNEL, "课表更新", "检测到课表变化时通知"));
         manager.createNotificationChannel(channel(ELECTRICITY_CHANNEL, "电费提醒", "剩余电费低于设定余量时通知"));
         manager.createNotificationChannel(channel(AUTHENTICATION_CHANNEL, "登录验证", "登录密码或验证码需要重新验证时通知"));
+        BusNotifications.ensureChannel(this);
     }
 
     private NotificationChannel channel(String id, String name, String description) {
@@ -819,6 +893,7 @@ public class BackgroundSyncService extends Service {
     private String label(String value) {
         if ("schedule".equals(value)) return "课表";
         if ("electricity".equals(value)) return "电费";
+        if ("bus".equals(value) || BackgroundSyncScheduler.TARGET_BUS_REMINDER.equals(value)) return "校车";
         return "成绩";
     }
 }

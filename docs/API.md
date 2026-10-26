@@ -242,10 +242,11 @@ https://yktapp.nwpu.edu.cn/jfdt/charge/feeitem/toAppitem
 
 提醒规则（`BusReminderPolicy`）：
 
-- **发车提醒**：出发前 30 分钟内提醒一次，按「预约号 + 日期 + 时刻」去重；应用回到前台时补判一次。
+- **发车提醒**：系统通过精确闹钟在出发前 30 分钟唤醒并提醒一次，按「预约号 + 日期 + 时刻」去重；应用回到前台时也会补判一次。
 - **状态提醒**：预约状态从「待核验」变为审核结果时提醒，按「预约号 + 状态」去重；首次见到的记录不提醒，避免刚打开就被历史预约刷屏。
 - **余位提示**：可约且余位 ≤ 5 时在首页卡片高亮，不发通知。
-- 校车后台采集默认关闭（`auto_bus_enabled` 默认 `false`），需要在「设置 → 自动更新 → 校车」里开启；校车班次集中在白天，未接入闹钟触发的后台服务，只在应用进程存活时按间隔更新。
+- 校车后台采集默认关闭（`auto_bus_enabled` 默认 `false`），需要在「设置 → 自动更新 → 校车」里开启。开启后与成绩、课表、电费共用闹钟唤醒的后台采集服务，不依赖应用界面存活。
+- 路线、预约、班次分别携带完整性标记；单项请求失败时保留该项上次缓存，成功返回空列表时才清空旧数据。
 
 ## 应用内部采集协议
 
@@ -259,15 +260,16 @@ https://yktapp.nwpu.edu.cn/jfdt/charge/feeitem/toAppitem
 | `grade_api_raw` | 成绩和 GPA 请求完成 | `gradeResponses`、`gpaResponse` |
 | `schedule_api_raw` | 学期和课表请求完成 | `semester`、`printData` |
 | `electricity_api_raw` | 已从页面状态取得电费数据 | `response` |
-| `bus_api_raw` | 校车预约、路线与班次请求完成 | `no`、`routes`、`reservations`、`tripGroups` |
+| `bus_api_raw` | 校车预约、路线与班次请求完成 | `no`、`routes`、`reservations`、`tripGroups`、三个 `*Complete` 完整性标记 |
 | `target_error` | 目标接口请求失败 | `target`、`message` |
 
 采集脚本通过以下占位符由原生层注入运行参数：
 
 | 占位符 | 说明 |
 | --- | --- |
-| `__MODE__` | `grades`、`schedule` 或 `electricity` |
+| `__MODE__` | `grades`、`schedule`、`electricity` 或 `bus` |
 | `__ALLOW_NAV__` | 当前是否允许执行页面跳转，防止重复导航 |
+| `__BUS_NO__` | 已保存的账号，仅在校车页面尚未写入 `localStorage.NO` 时兜底 |
 
 同一页面内的异步状态保存在 `window.__aoxiangAssistantApiState_<mode>`。完成或失败后重复轮询会返回相同结果，不会重复请求。
 
