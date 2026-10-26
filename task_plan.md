@@ -994,3 +994,32 @@ verification limits and visible collection behavior.
 - [x] Push the correction and verify a new macOS IPA/Widget workflow (`a58d091`, Actions
   `40342150127`; artifact `AoxiangAssistant-ipa-variants-25`).
 - [ ] Leave live authenticated iPad validation to the user.
+
+## 2026-10-27 iPad portal authentication diagnosis
+
+### Goal
+
+Determine why the iPad WebView visibly shows the signed-in eCampus portal while the
+app remains at `需要登录`. Do not alter the electricity route or acceptance behavior
+until the device reports which stage failed.
+
+### Phases
+
+- [x] Compare the supplied iPad screenshot with the current WebKit detection path.
+- [x] Add a red/green test for separating main-document and same-origin-frame markers.
+- [x] Add sanitized on-screen diagnostics for host/path, DOM marker location, frame
+  access, JavaScript completion, app state, and shared session-store state.
+- [x] Keep authentication acceptance limited to the existing main-document rule.
+- [x] Raise host and Widget version to `1.0.2 (7)` in Xcode, IPA workflow, build
+  script defaults, and configuration tests.
+- [ ] Verify the iOS WebKit build in GitHub Actions and install the diagnostic IPA.
+- [ ] Use the displayed probe result to identify the failing boundary before changing
+  authentication or electricity behavior.
+
+### Constraints
+
+- Never record page text, names, cookies, tokens, query values, fragments, or credentials.
+- Keep the electricity protocol and visible authentication behavior unchanged until a
+  diagnostic result identifies the failing boundary.
+- Treat Windows tests and IPA archive as code/build evidence only; live iPad behavior
+  remains unverified until the device result is observed.

@@ -864,3 +864,23 @@
 - Fresh artifact `AoxiangAssistant-ipa-variants-25` is available (7,579,695 bytes) and
   includes this correction. Live electricity/GPA behavior remains for iPad acceptance;
   keep the collection page visible until that is confirmed.
+
+## 2026-10-27 iPad authentication-state diagnosis
+
+- The supplied iPad screenshot visibly contains `个人中心` and `我的待办`, while the
+  app footer remains `需要登录`. The image does not show the WebView URL.
+- The current authentication probe reads only the top document's
+  `document.body.innerText`. eCampus success requires host `ecampus.nwpu.edu.cn`, a
+  `/main.html` path, and both markers in that same top document.
+- The existing pure rule test passed, but did not exercise WebKit's actual frame,
+  navigation callback, JavaScript bridge, or state-store path. Therefore it was not
+  enough to identify the live failure.
+- The diagnostic probe now returns only fixed marker booleans from the main document
+  and same-origin frames plus the inaccessible-frame count. It never returns page text
+  or storage/session data. The displayed summary also reports sanitized host/path,
+  route-rule result, JS callback result, app state, and shared session-store state.
+- Authentication acceptance still uses only the existing top-document match. A frame
+  match is diagnostic evidence and does not automatically mark the user authenticated.
+- Root cause remains unknown pending a diagnostic run on the iPad. Do not change the
+  electricity route/bootstrap, marker policy, or authentication state transitions before
+  that evidence is available.

@@ -30,18 +30,38 @@ public struct AuthenticationSuccessRule: Equatable {
     }
 
     public func matches(url: URL, body: String) -> Bool {
-        guard allowsHost(url.host ?? "") else { return false }
-        let path = url.path.lowercased()
-        let pathsMatch = pathPrefixes.isEmpty || pathPrefixes.contains {
-            path.hasPrefix($0.lowercased())
-        }
-        guard pathsMatch else { return false }
-
         let normalizedBody = body.lowercased()
-        guard bodyMarkers.isEmpty || bodyMarkers.contains(where: normalizedBody.contains) else {
+        let matchingMarkers = Set((bodyMarkers + requiredBodyMarkers)
+            .map { $0.lowercased() }
+            .filter { normalizedBody.contains($0) })
+        return matches(url: url, bodyMarkerMatches: matchingMarkers)
+    }
+
+    func matches(url: URL, bodyMarkerMatches: Set<String>) -> Bool {
+        guard matchesURL(url) else { return false }
+        guard bodyMarkers.isEmpty || bodyMarkers.contains(where: {
+            bodyMarkerMatches.contains($0.lowercased())
+        }) else {
             return false
         }
-        return requiredBodyMarkers.allSatisfy { normalizedBody.contains($0.lowercased()) }
+        return requiredBodyMarkers.allSatisfy {
+            bodyMarkerMatches.contains($0.lowercased())
+        }
+    }
+
+    func matchesHost(_ host: String) -> Bool {
+        allowsHost(host)
+    }
+
+    func matchesPath(_ path: String) -> Bool {
+        let normalizedPath = path.lowercased()
+        return pathPrefixes.isEmpty || pathPrefixes.contains {
+            normalizedPath.hasPrefix($0.lowercased())
+        }
+    }
+
+    func matchesURL(_ url: URL) -> Bool {
+        matchesHost(url.host ?? "") && matchesPath(url.path)
     }
 
     public static let jwxtStudentHome = AuthenticationSuccessRule(
@@ -54,6 +74,47 @@ public struct AuthenticationSuccessRule: Equatable {
         pathPrefixes: ["/main.html"],
         requiredBodyMarkers: ["个人中心", "我的待办"]
     )
+}
+
+struct AuthenticationProbeResult: Codable, Equatable {
+    let mainFrameMarkers: Set<String>
+    let sameOriginFrameMarkers: [Set<String>]
+    let inaccessibleFrameCount: Int
+
+    static func decode(_ value: Any?) -> AuthenticationProbeResult? {
+        let data: Data
+        if let string = value as? String {
+            data = Data(string.utf8)
+        } else if let value = value as? Data {
+            data = value
+        } else if let value,
+                  JSONSerialization.isValidJSONObject(value),
+                  let encoded = try? JSONSerialization.data(withJSONObject: value, options: []) {
+            data = encoded
+        } else {
+            return nil
+        }
+        guard let result = try? JSONDecoder().decode(AuthenticationProbeResult.self, from: data) else {
+            return nil
+        }
+        return AuthenticationProbeResult(
+            mainFrameMarkers: Set(result.mainFrameMarkers.map { $0.lowercased() }),
+            sameOriginFrameMarkers: result.sameOriginFrameMarkers.map {
+                Set($0.map { $0.lowercased() })
+            },
+            inaccessibleFrameCount: max(0, result.inaccessibleFrameCount)
+        )
+    }
+
+    func matches(rule: AuthenticationSuccessRule, url: URL) -> Bool {
+        rule.matches(url: url, bodyMarkerMatches: mainFrameMarkers)
+    }
+
+    func sameOriginFrameMatches(rule: AuthenticationSuccessRule, url: URL) -> Bool {
+        sameOriginFrameMarkers.contains {
+            rule.matches(url: url, bodyMarkerMatches: $0)
+        }
+    }
 }
 
 public enum VisibleCollectionTarget: Equatable {
@@ -384,6 +445,7 @@ import SwiftUI
 public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, WKNavigationDelegate, WKUIDelegate {
     @Published public private(set) var state: AuthenticationState = .needsLogin
     @Published public private(set) var lastError: String?
+    @Published public private(set) var authenticationProbeSummary = "等待页面完成回调"
 
     public let webView: WKWebView
     private var machine = AuthenticationStateMachine()
@@ -461,6 +523,7 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
         state = machine.state
         sessionStore.set(state)
         lastError = nil
+        authenticationProbeSummary = "等待页面完成回调"
         lastInspectedURLKey = nil
         stateDetectionInFlight = false
         webView.load(URLRequest(url: loginURL))
@@ -2837,21 +2900,32 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
     """#
 
     private func detectAuthenticationState(in webView: WKWebView) {
-        guard let url = webView.url else { return }
-        guard !stateDetectionInFlight else { return }
+        guard let url = webView.url else {
+            authenticationProbeSummary = "页面回调完成，但 WebView 未提供 URL"
+            return
+        }
+        let urlLabel = diagnosticURLLabel(url)
+        guard !stateDetectionInFlight else {
+            authenticationProbeSummary = "URL=\(urlLabel); JS=已有探测未返回; 状态=\(authenticationStateLabel(state))"
+            return
+        }
         let urlText = url.absoluteString.lowercased()
         if (urlText.contains("sms") || urlText.contains("verify")), state != .needsSMS {
             transition(.smsRequired)
+            authenticationProbeSummary = "URL=\(urlLabel); 页面路径判定为短信验证; 状态=\(authenticationStateLabel(state)); 会话状态=\(authenticationStateLabel(sessionStore.state))"
             return
         }
         if urlText.contains("error") || urlText.contains("failed") {
             transition(.credentialsRejected)
+            authenticationProbeSummary = "URL=\(urlLabel); 页面路径判定为认证错误; 状态=\(authenticationStateLabel(state)); 会话状态=\(authenticationStateLabel(sessionStore.state))"
             return
         }
         guard let host = url.host?.lowercased(), isAllowedHost(host) else {
+            authenticationProbeSummary = "URL=\(urlLabel); 主机规则未命中; 未运行页面探测; 状态=\(authenticationStateLabel(state))"
             return
         }
         guard let inspectionKey = VisibleCollectionNavigationPolicy.sanitizedInspectionURLKey(for: url) else {
+            authenticationProbeSummary = "URL=\(urlLabel); 无法生成安全检查键; 未运行页面探测"
             return
         }
         if lastInspectedURLKey == inspectionKey {
@@ -2864,26 +2938,34 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
         }
         lastInspectedURLKey = inspectionKey
         stateDetectionInFlight = true
-        // The page remains visible. JavaScript is only a read-only marker check;
-        // it never receives credentials or emits a hardware/network command.
+        authenticationProbeSummary = "URL=\(urlLabel); 路径规则=\(successRules.contains { $0.matchesURL(url) } ? "命中" : "未命中"); JS=等待回调"
         webView.evaluateJavaScript(
-            "document.body ? document.body.innerText : ''",
+            authenticationProbeScript(),
             completionHandler: { [weak self] value, error in
                 Task { @MainActor in
                     guard let self else { return }
                     self.stateDetectionInFlight = false
                     if let error {
                         self.lastError = error.localizedDescription
+                        let webError = error as NSError
+                        self.authenticationProbeSummary = "URL=\(urlLabel); JS=失败 \(webError.domain)#\(webError.code); 状态=\(self.authenticationStateLabel(self.state))"
                         return
                     }
-                    let body = (value as? String ?? "").lowercased()
-                    if body.contains("短信") || body.contains("sms") {
+                    guard let result = AuthenticationProbeResult.decode(value) else {
+                        self.authenticationProbeSummary = "URL=\(urlLabel); JS=已返回但格式无法识别; 状态=\(self.authenticationStateLabel(self.state))"
+                        return
+                    }
+                    if result.mainFrameMarkers.contains("短信") || result.mainFrameMarkers.contains("sms") {
                         self.transition(.smsRequired)
-                    } else if body.contains("密码错误") || body.contains("invalid") {
+                    } else if result.mainFrameMarkers.contains("密码错误") || result.mainFrameMarkers.contains("invalid") {
                         self.transition(.credentialsRejected)
-                    } else if self.successRuleMatches(url: url, body: body) {
+                    } else if self.successRules.contains(where: { result.matches(rule: $0, url: url) }) {
                         self.completeAuthentication()
                     }
+                    self.authenticationProbeSummary = self.makeAuthenticationProbeSummary(
+                        url: url,
+                        result: result
+                    )
                 }
             }
         )
@@ -2915,7 +2997,82 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
                 }
                 self.detectAuthenticationState(in: webView)
             }
-            self?.authenticationHydrationTask = nil
+            guard let self else { return }
+            self.authenticationHydrationTask = nil
+            if self.state == .needsLogin {
+                self.authenticationProbeSummary = "6 秒探测轮询结束; " + self.authenticationProbeSummary
+            }
+        }
+    }
+
+    private func authenticationProbeScript() -> String {
+        let markerNames = Array(Set(
+            successRules.flatMap { $0.bodyMarkers + $0.requiredBodyMarkers }
+                + ["短信", "sms", "密码错误", "invalid"]
+        )).sorted()
+        let markerData = (try? JSONSerialization.data(withJSONObject: markerNames, options: [])) ?? Data("[]".utf8)
+        let markerJSON = String(decoding: markerData, as: UTF8.self)
+        return """
+        (() => {
+          const markers = \(markerJSON);
+          const inspect = (text) => {
+            const normalized = String(text || '').toLowerCase();
+            return markers.filter((marker) => normalized.includes(marker.toLowerCase()));
+          };
+          const textOf = (doc) => doc && doc.body ? doc.body.innerText : '';
+          const sameOriginFrameMarkers = [];
+          let inaccessibleFrameCount = 0;
+          for (let index = 0; index < window.frames.length; index += 1) {
+            try {
+              sameOriginFrameMarkers.push(inspect(textOf(window.frames[index].document)));
+            } catch (_) {
+              inaccessibleFrameCount += 1;
+            }
+          }
+          return JSON.stringify({
+            mainFrameMarkers: inspect(textOf(document)),
+            sameOriginFrameMarkers,
+            inaccessibleFrameCount
+          });
+        })()
+        """
+    }
+
+    private func makeAuthenticationProbeSummary(
+        url: URL,
+        result: AuthenticationProbeResult
+    ) -> String {
+        let routeMatches = successRules.contains { $0.matchesURL(url) }
+        let mainPersonalCenter = result.mainFrameMarkers.contains("个人中心")
+        let mainTodo = result.mainFrameMarkers.contains("我的待办")
+        let framePersonalCenter = result.sameOriginFrameMarkers.contains { $0.contains("个人中心") }
+        let frameTodo = result.sameOriginFrameMarkers.contains { $0.contains("我的待办") }
+        let frameRuleMatches = successRules.contains {
+            result.sameOriginFrameMatches(rule: $0, url: url)
+        }
+        return "URL \(diagnosticURLLabel(url)) | 路径规则\(routeMatches ? "命中" : "未命中") | 主文档 个人中心\(mainPersonalCenter ? "✓" : "×") 待办\(mainTodo ? "✓" : "×") | 同源框架\(result.sameOriginFrameMarkers.count) 个人中心\(framePersonalCenter ? "✓" : "×") 待办\(frameTodo ? "✓" : "×") 规则\(frameRuleMatches ? "命中" : "未命中") | 跨域框架\(result.inaccessibleFrameCount) | JS完成 | 状态\(authenticationStateLabel(state))/会话\(authenticationStateLabel(sessionStore.state))"
+    }
+
+    private func diagnosticURLLabel(_ url: URL) -> String {
+        let knownPathSegments = Set(successRules.flatMap { $0.pathPrefixes }.flatMap { prefix in
+            prefix.split(separator: "/").map { String($0).lowercased() }
+        })
+        let safePath = url.path.split(separator: "/", omittingEmptySubsequences: false).map { segment in
+            let value = String(segment)
+            guard !value.isEmpty else { return "" }
+            return knownPathSegments.contains(value.lowercased()) ? value : "[redacted]"
+        }.joined(separator: "/")
+        return "\(url.host?.lowercased() ?? "unknown")\(safePath)"
+    }
+
+    private func authenticationStateLabel(_ state: AuthenticationState) -> String {
+        switch state {
+        case .needsLogin: return "需要登录"
+        case .needsSMS: return "需要短信"
+        case .authenticated: return "认证成功"
+        case .readyToCollect: return "可继续采集"
+        case .retryableFailure: return "可重试失败"
+        case .needsUserAttention: return "需要处理"
         }
     }
 
@@ -2928,10 +3085,6 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
         return normalized == "/student/home"
             || normalized.hasPrefix("/student/for-std/grade/sheet")
             || normalized.hasPrefix("/student/for-std/course-table")
-    }
-
-    private func successRuleMatches(url: URL, body: String) -> Bool {
-        successRules.contains { $0.matches(url: url, body: body) }
     }
 
     private func transition(_ event: AuthenticationEvent) {
@@ -3005,6 +3158,13 @@ public struct AuthenticationScreen: View {
     public var body: some View {
         VStack(spacing: 0) {
             VisibleAuthenticationWebView(model: model)
+            Text(model.authenticationProbeSummary)
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .lineLimit(4)
+                .padding(.horizontal, 8)
+                .padding(.top, 6)
             if let collectionStatus {
                 Text(collectionStatus)
                     .font(.caption)

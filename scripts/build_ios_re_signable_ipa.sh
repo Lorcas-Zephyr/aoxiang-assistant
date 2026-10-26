@@ -10,8 +10,8 @@ output_dir="${IOS_RE_SIGNABLE_IPA_OUTPUT_DIR:-$repo_root/dist/ios}"
 app_bundle_identifier="${IOS_APP_BUNDLE_IDENTIFIER:-cn.nwpu.aoxiangassistant}"
 widget_bundle_identifier="${IOS_WIDGET_BUNDLE_IDENTIFIER:-cn.nwpu.aoxiangassistant.widget}"
 app_group_identifier="${IOS_APP_GROUP_IDENTIFIER:-group.cn.nwpu.aoxiang-assistant}"
-expected_marketing_version="${IOS_EXPECTED_MARKETING_VERSION:-1.0.1}"
-expected_build_version="${IOS_EXPECTED_BUILD_VERSION:-2}"
+expected_marketing_version="${IOS_EXPECTED_MARKETING_VERSION:-1.0.2}"
+expected_build_version="${IOS_EXPECTED_BUILD_VERSION:-7}"
 
 if [[ ! "$app_bundle_identifier" =~ ^[A-Za-z0-9.-]+$ ]]; then
   echo "invalid host bundle identifier: $app_bundle_identifier" >&2

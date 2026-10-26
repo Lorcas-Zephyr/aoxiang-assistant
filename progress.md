@@ -908,3 +908,19 @@
   bytes). Artifact 24 predates the correction.
 - Real iPad electricity/GPA behavior remains for the user's acceptance. The visible
   collection page remains unchanged.
+
+## 2026-10-27 authentication diagnostic build
+
+- Read the iPad screenshot and traced `didFinish` -> `detectAuthenticationState` ->
+  `evaluateJavaScript` -> `AuthenticationSuccessRule` -> `AuthenticationSessionStore`.
+- Ranked live possibilities: URL rule mismatch; markers rendered in an iframe; late or
+  failed JavaScript callback; state transition or shared session store not updating.
+- Added the frame-evidence regression first; it failed because the result type did not
+  exist, then passed after implementing the pure probe result decoder and matching logic.
+- Added a read-only WebKit probe that reports marker booleans only, and a short status
+  summary in the authentication sheet. Existing auth acceptance remains top-frame only.
+- Raised the package version to `1.0.2 (7)` across host app, Widget, workflow, script,
+  and version assertions. Windows verification passes: Python 130, AoxiangCore 98,
+  AoxiangApp 72, Swift parsing, CodeGraph sync, and `git diff --check`.
+- macOS iOS/WebKit archive and diagnostic IPA are pending. The root cause still requires
+  the sanitized probe result from the iPad.
