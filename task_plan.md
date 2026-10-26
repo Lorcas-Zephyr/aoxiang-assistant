@@ -928,13 +928,13 @@ goal can close. Structify remains out of scope.
 - [x] 在首页提供校车概览和管理页刷新入口，显示路线、余位和我的预约；保留只读边界。
 - [x] 根据预约状态安排本地提醒。iOS 不创建隐藏 WebView：校车网络刷新需要用户打开管理页手动启动，系统后台时仅依赖已保存数据安排发车提醒。
 - [x] 同步课表约 50% 色块透明度，完成 Python、Core、App、采集脚本、配置及 diff 验收。
-- [ ] 提升 iOS build，推送代码并确认新的 macOS IPA workflow 成功且包含 Widget 扩展。
+- [x] 提升 iOS build 到 6，推送代码并确认 macOS IPA workflow 成功且 sideload IPA 包含 Widget 扩展。
 
 ### Constraints
 
 - 校车 API 请求只能在 `hq-bus.nwpu.edu.cn/h5/` 同源真实 WebView 中执行，让页面动态 WAF 附加参数；账号身份只从当前认证会话安全传入，不持久化 Cookie/密码。
 - Android v2.4.0 未捕获真实预约提交/取消接口；iOS 只读查询，不提供虚假的下单或取消能力。
-- iOS BackgroundTasks 不创建隐藏 WebView；自动刷新只能 best-effort，不能承诺 Android 式持续后台采集。
+- 校车网络查询由用户在前台可见 WebView 发起；iOS 后台只使用已保存的预约安排本地通知，不承诺 Android 式后台网络刷新。
 - 认证、网络或部分 API 失败时保留上次有效数据；不触碰已修复的电费查询协议/JavaScript。
 - 用户会在新 IPA 上自行验收真实设备行为；本机 Windows 不声称完成 iPadOS/Xcode/WebKit 验证。
 
@@ -942,4 +942,6 @@ goal can close. Structify remains out of scope.
 
 - Windows: Python 129 tests, AoxiangCore 97 tests, AoxiangApp 66 tests, and `git diff --check` pass.
 - The login-resume regression was run red before the UI state fix, then passed; the runtime script tests cover successful and partial Android-shaped responses.
-- Xcode/iOS WebKit compilation and archive remain gated by the macOS Actions run after push; Windows cannot verify the final IPA.
+- Xcode/iOS WebKit compilation and archive passed in macOS Actions run `40312411052`; Windows still cannot replace real iPad installation and live account acceptance.
+- Commit `a32795d` is on `origin/iOS`. Actions run `40312411052` passed all steps and uploaded `AoxiangAssistant-ipa-variants-22` (7,566,974 bytes); the sideload Widget extension layout check passed.
+- Source parity and the downloadable IPA are complete. Real iPad installation, live campus account queries, notification delivery, and Widget gallery rendering are left for the user's device acceptance.

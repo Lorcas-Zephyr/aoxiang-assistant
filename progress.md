@@ -831,9 +831,12 @@
   `git diff --check`. The local SwiftPM tests emit a non-fatal Windows symlink warning.
 - Build is 1.0.1 (6). The workflow packages the host-only, sideload-with-Widget, and
   full-widget IPA variants and checks the Widget extension in the sideload artifact.
-- Pending: commit/push `iOS`, inspect the resulting macOS archive run and IPA artifact,
-  then mark the Goal complete. Real iPad installation and account-backed queries remain
-  for the user's own acceptance.
+- Commit `a32795d` is pushed to `origin/iOS`. Actions run `40312411052` passed Swift tests,
+  macOS archive, IPA layout checks, and artifact upload (`AoxiangAssistant-ipa-variants-22`,
+  7,566,974 bytes). The sideload IPA includes the verified Widget extension.
+- The implementation and downloadable build are complete. Real iPad installation,
+  live campus account queries, notifications, and Widget rendering remain for the user's
+  device acceptance.
 
 - User reports electricity still fails, schedule remains empty after an update
   message, GPA is missing, and iPad layout still is not full-screen.
@@ -854,3 +857,11 @@
   reprioritized response capture/parsing over login-shell detection. The continuation
   watchdog and bounded `/jfdt` balance path exist in source; exact runtime result
   propagation and page bridge coverage remain to inspect.
+
+## 2026-10-26 Android v2.4.0 release complete
+
+- Source commit `a32795d` is on `origin/iOS`; Windows and macOS test suites pass.
+- IPA workflow run `40312411052` succeeded, including iOS archive and the sideload Widget
+  extension check. Artifact `AoxiangAssistant-ipa-variants-22` is available for download.
+- Goal scope is complete. Real iPad installation and live account behavior are left for
+  the user's device acceptance.
