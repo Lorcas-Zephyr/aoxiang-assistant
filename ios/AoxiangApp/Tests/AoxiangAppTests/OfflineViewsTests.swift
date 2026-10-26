@@ -28,11 +28,19 @@ final class OfflineViewsTests: XCTestCase {
         let source = try offlineViewsSource()
 
         XCTAssertTrue(source.contains("if let electricityIssue = result.electricityIssue"))
-        XCTAssertTrue(source.contains("handleElectricityIssue(electricityIssue)"))
+        XCTAssertTrue(source.contains("handleElectricityIssue(electricityIssue, warnings: result.warnings)"))
         XCTAssertTrue(source.contains("showingAuthentication = false"))
         XCTAssertTrue(source.contains("if result.electricityIssue == nil"))
         XCTAssertTrue(source.contains("result.grades"))
         XCTAssertTrue(source.contains("result.schedule"))
+    }
+
+    func testHomeListsEachCourseMeetingSeparatelyInSectionOrder() throws {
+        let source = try offlineViewsSource()
+
+        XCTAssertTrue(source.contains("OfflineScheduleService.meetings("))
+        XCTAssertTrue(source.contains("meeting.timeSlot"))
+        XCTAssertTrue(source.contains("meetingDescription(meeting.course, slot: meeting.timeSlot)"))
     }
 
     func testAuthenticationAndRetryableElectricityIssuesUpdateAuthenticationState() throws {

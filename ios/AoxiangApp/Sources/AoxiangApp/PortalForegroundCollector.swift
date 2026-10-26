@@ -27,9 +27,8 @@ private struct ScheduleSemesterRecord {
     let object: [String: Any]
 }
 
-/// Performs the stable education requests serially, then maps the raw
-/// responses through the shared Foundation parser. Electricity remains a
-/// visible-page capability until the portal exposes a stable HTTP contract.
+/// Collects education and electricity independently, preserving a usable
+/// result from either target when the other portal is temporarily unavailable.
 public struct PortalForegroundCollector {
     private let transport: PortalCollectionTransport
     private let electricityProvider: () async throws -> Double
@@ -49,6 +48,45 @@ public struct PortalForegroundCollector {
     }
 
     public func collect(
+        state: AuthenticationState,
+        portraitHTML: String? = nil,
+        isCancelled: @escaping () -> Bool = { false },
+        today: String? = nil
+    ) async throws -> PortalCollectedData {
+        if state != .readyToCollect {
+            switch state {
+            case .needsLogin, .needsUserAttention: throw PortalCollectionFailure.authenticationRequired
+            case .needsSMS: throw PortalCollectionFailure.smsRequired
+            case .retryableFailure(let failure): throw PortalCollectionFailure.retryable(failure.reason)
+            case .authenticated: throw PortalCollectionFailure.invalidResponse("collection not prepared")
+            case .readyToCollect: break
+            }
+        }
+        guard !isCancelled() else { throw PortalCollectionFailure.cancelled }
+
+        do {
+            return try await collectEducation(
+                state: state,
+                portraitHTML: portraitHTML,
+                isCancelled: isCancelled,
+                today: today
+            )
+        } catch let failure as PortalCollectionFailure {
+            switch failure {
+            case .authenticationRequired, .smsRequired, .cancelled, .settlement:
+                throw failure
+            case .retryable, .invalidResponse:
+                break
+            }
+            guard !isCancelled() else { throw PortalCollectionFailure.cancelled }
+            return try await resultAfterEducationFailure()
+        } catch {
+            guard !isCancelled() else { throw PortalCollectionFailure.cancelled }
+            return try await resultAfterEducationFailure()
+        }
+    }
+
+    private func collectEducation(
         state: AuthenticationState,
         portraitHTML: String? = nil,
         isCancelled: @escaping () -> Bool = { false },
@@ -177,6 +215,7 @@ public struct PortalForegroundCollector {
         // sheet route. Keep that already-valid response instead of requiring
         // a second per-semester request whose shape may have changed.
         var gradeResponses: [[String: Any]] = []
+        var gradeResponsesComplete = true
         if let direct = directGradeResponse(from: sheetObject) {
             gradeResponses.append(direct)
         }
@@ -186,9 +225,14 @@ public struct PortalForegroundCollector {
                     guard !isCancelled() else { throw PortalCollectionFailure.cancelled }
                     do {
                         let response = try await send(try PortalEndpoints.gradeInfo(studentID: resolvedStudentID, semesterID: semesterID))
-                        if let object = try? jsonObject(response.0) { gradeResponses.append(object) }
+                        if let object = try? jsonObject(response.0) {
+                            gradeResponses.append(object)
+                        } else {
+                            gradeResponsesComplete = false
+                        }
                     } catch let failure as PortalCollectionFailure {
                         if case .invalidResponse = failure {
+                            gradeResponsesComplete = false
                             continue
                         }
                         throw failure
@@ -255,7 +299,8 @@ public struct PortalForegroundCollector {
                 return try await partialResult(
                     grades: parsedGrades.grades,
                     gpa: selectedGPA,
-                    warnings: [.scheduleUnavailable]
+                    warnings: [.scheduleUnavailable],
+                    gradesAvailable: gradeResponsesComplete
                 )
             }
         }
@@ -267,7 +312,8 @@ public struct PortalForegroundCollector {
             return try await partialResult(
                 grades: parsedGrades.grades,
                 gpa: selectedGPA,
-                warnings: [.scheduleUnavailable]
+                warnings: [.scheduleUnavailable],
+                gradesAvailable: gradeResponsesComplete
             )
         }
         // Semester boundaries are a campus-local wire contract, not the
@@ -280,7 +326,8 @@ public struct PortalForegroundCollector {
             return try await partialResult(
                 grades: parsedGrades.grades,
                 gpa: selectedGPA,
-                warnings: [.scheduleUnavailable]
+                warnings: [.scheduleUnavailable],
+                gradesAvailable: gradeResponsesComplete
             )
         }
 
@@ -297,7 +344,8 @@ public struct PortalForegroundCollector {
             return try await partialResult(
                 grades: parsedGrades.grades,
                 gpa: selectedGPA,
-                warnings: [.scheduleUnavailable]
+                warnings: [.scheduleUnavailable],
+                gradesAvailable: gradeResponsesComplete
             )
         }
 
@@ -323,7 +371,8 @@ public struct PortalForegroundCollector {
                     return try await partialResult(
                         grades: parsedGrades.grades,
                         gpa: selectedGPA,
-                        warnings: [.scheduleUnavailable]
+                        warnings: [.scheduleUnavailable],
+                        gradesAvailable: gradeResponsesComplete
                     )
                 }
             }
@@ -339,7 +388,8 @@ public struct PortalForegroundCollector {
                     return try await partialResult(
                         grades: parsedGrades.grades,
                         gpa: selectedGPA,
-                        warnings: [.scheduleUnavailable]
+                        warnings: [.scheduleUnavailable],
+                        gradesAvailable: gradeResponsesComplete
                     )
                 }
             }
@@ -362,13 +412,17 @@ public struct PortalForegroundCollector {
             return try await partialResult(
                 grades: parsedGrades.grades,
                 gpa: selectedGPA,
-                warnings: [.scheduleUnavailable]
+                warnings: [.scheduleUnavailable],
+                gradesAvailable: gradeResponsesComplete
             )
         }
 
         var electricity: Double?
         var electricityIssue: ElectricityCollectionIssue?
         var warnings: [PortalCollectionWarning] = []
+        if !gradeResponsesComplete {
+            warnings.append(.gradesUnavailable)
+        }
         let electricityReading = try await readElectricity()
         electricity = electricityReading.balance
         electricityIssue = electricityReading.issue
@@ -381,7 +435,8 @@ public struct PortalForegroundCollector {
             schedule: schedule,
             electricityBalance: electricity,
             electricityIssue: electricityIssue,
-            warnings: warnings
+            warnings: warnings,
+            gradesAvailable: gradeResponsesComplete
         )
     }
 
@@ -430,10 +485,14 @@ public struct PortalForegroundCollector {
     private func partialResult(
         grades: [OfflineGrade],
         gpa: Double?,
-        warnings: [PortalCollectionWarning]
+        warnings: [PortalCollectionWarning],
+        gradesAvailable: Bool = true
     ) async throws -> PortalCollectedData {
         let electricity = try await readElectricity()
         var combinedWarnings = warnings
+        if !gradesAvailable, !combinedWarnings.contains(.gradesUnavailable) {
+            combinedWarnings.insert(.gradesUnavailable, at: 0)
+        }
         if electricity.issue != nil, !combinedWarnings.contains(.electricityUnavailable) {
             combinedWarnings.append(.electricityUnavailable)
         }
@@ -444,6 +503,24 @@ public struct PortalForegroundCollector {
             electricityBalance: electricity.balance,
             electricityIssue: electricity.issue,
             warnings: combinedWarnings,
+            gradesAvailable: gradesAvailable,
+            scheduleAvailable: false
+        )
+    }
+
+    private func resultAfterEducationFailure() async throws -> PortalCollectedData {
+        let electricity = try await readElectricity()
+        var warnings: [PortalCollectionWarning] = [.gradesUnavailable, .scheduleUnavailable]
+        if electricity.issue != nil {
+            warnings.append(.electricityUnavailable)
+        }
+        return PortalCollectedData(
+            grades: [],
+            schedule: emptySchedulePayload(),
+            electricityBalance: electricity.balance,
+            electricityIssue: electricity.issue,
+            warnings: warnings,
+            gradesAvailable: false,
             scheduleAvailable: false
         )
     }

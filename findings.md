@@ -688,3 +688,79 @@
   planning notes and Widget work. No electricity implementation is dirty initially.
 - No CONTEXT.md or repository-local AGENTS.md/ADR was found in the available file
   inventory. User-provided AGENTS.md guidance applies.
+
+## 2026-10-05 iPad follow-up screenshots
+
+- Management screenshot shows a visible white WebView while electricity is in a
+  retryable-failure state; the page toolbar still offers retry electricity and
+  re-login. This is consistent with the user's request to defer changing the
+  visible collection interaction until the data path is confirmed.
+- A second screenshot shows the portal skeleton and the WebView status “已取消采集”;
+  this is evidence that the visible page navigation/cancellation path may be
+  involved, but does not prove whether grades, timetable, or electricity failed first.
+- Widget gallery screenshot shows a blank preview tile for the daily schedule widget;
+  placeholder rendering must be checked independently from the data collection bugs.
+- The first two regression seams were explicitly approved earlier: page-script
+  authentication/electricity output and `collectElectricity` success/retryable result.
+- Current screenshot/build correspondence is not yet confirmed; installed app version
+  and the exact GitHub Actions artifact must be checked before device conclusions.
+- A later screenshot stays at “正在读取成绩、课表和电费…” while the visible page
+  remains a portal skeleton and the UI still offers “取消采集”; this is a pending
+  collection state, not proof of a successful grade/schedule/electricity result.
+- The user clarified that the visible WebView is already the electricity query page,
+  but its information never appears. Rank page-response capture/parsing ahead of
+  authentication-page detection; the screenshot alone still does not identify which
+  preceding collection stage is active.
+- CodeGraph confirms the electricity continuation has a 30-second watchdog and the
+  `/jfdt` page uses an async page-side balance probe with bounded missing-balance
+  retries. `readElectricity()` converts a missing/failed balance into an issue instead
+  of a thrown error, so the enclosing education collection may still complete with
+  warnings unless the continuation itself remains unresolved.
+
+## 2026-10-26 Android parity and release audit
+
+- CodeGraph CLI is healthy at 164 files, 3,333 nodes and 9,598 edges. Android's
+  `api_collect.js` enters `/jfdt/charge/feeitem/toAppitem` with feeitem 182, then reads
+  `#app.__vue__` recursively for `aboutEleric.electricInfo` or `electricInfo`; Android's
+  `PortalApiParsers.electricityBalance` accepts `map.showData` labels including
+  `当前剩余电量`, `剩余电量`, `电费余额`, and `剩余电费`.
+- iOS uses the same direct fee-item query, adds document-start fetch/XHR response
+  capture, Vue2/Vue3/iframe/DOM probes, and a bounded retryable terminal. The existing
+  Python/Node cases cover Android's nested `map.showData.electricInfo` contract.
+- iOS currently awaits education collection before calling `readElectricity()`. A
+  terminal grade/semester failure therefore exits `collect()` before the independent
+  electricity provider runs; Android's targets do not share this dependency.
+- `applyPortalCollection` currently assigns `candidate.grades = result.grades` even
+  when an independent partial result contains no grade rows. The schedule path already
+  has an availability flag and preserves prior schedule data on failure.
+- Public GitHub Actions API shows current HEAD `f2a182d` has successful cross-platform
+  and macOS IPA runs (`37306355675`, `37306355704`). The public unauthenticated portal
+  request returned a JavaScript anti-bot challenge; no authenticated Windows browser
+  session is exposed in this task runtime, so no live user balance can be inspected.
+- Current baseline on Windows: Python 125 tests, AoxiangCore 92 tests, AoxiangApp 60
+  tests pass. Swift emits a non-fatal Windows symlink warning. The `gh` CLI is absent;
+  public run metadata is available through GitHub's REST API.
+- iOS IPA configuration is build 4, marketing version 1.0.1. The existing sideload IPA
+  packaging verifies and retains `PlugIns/AoxiangAssistantWidget.appex`; the previous
+  blank Widget symptom cannot be confirmed as fixed without a signed iPad installation.
+
+## 2026-10-26 final parity verification
+
+- A failed grade-sheet/semester request previously escaped `collect()` before the
+  separate electricity reader ran. The collector now attempts electricity after
+  retryable or malformed education failures and marks both education datasets
+  unavailable, so applying that result retains the prior grades, GPA and timetable.
+- Education authentication/SMS failures remain explicit errors. They are not turned
+  into partial success, which keeps login recovery available after an expired session.
+- Android commit `d5c328f` showed that merged course records can contain multiple
+  same-day meetings. The iOS home view now renders each eligible time slot in section
+  order and uses slot-specific teacher/location values.
+- Existing iOS electricity page capture already tests Android's fee-item route and
+  nested `electricInfo` response variants. This pass does not rewrite that query
+  protocol; real balance visibility remains unverified because this Windows session
+  has no authenticated portal browser and cannot run iPadOS WebKit.
+- Final local verification: Python 126 tests, AoxiangCore 93 tests, AoxiangApp 63
+  tests, and `git diff --check` pass. Android Gradle did not start because the SDK
+  configured by `local.properties` is absent; Xcode is unavailable on Windows.
+- Pending release work: commit/push the `iOS` branch and wait for its macOS archive
+  workflow, which packages IPA variants and verifies the Widget extension is present.

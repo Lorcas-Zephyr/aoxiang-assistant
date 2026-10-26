@@ -145,9 +145,11 @@ public final class OfflineAppViewModel: ObservableObject {
     public func applyPortalCollection(_ result: PortalCollectedData) -> Bool {
         do {
             var candidate = state
-            candidate.grades = result.grades
-            if let gpa = result.gpa {
-                candidate.gpa = gpa
+            if result.gradesAvailable {
+                candidate.grades = result.grades
+                if let gpa = result.gpa {
+                    candidate.gpa = gpa
+                }
             }
             if result.scheduleAvailable {
                 candidate.semesters = result.schedule.semesters

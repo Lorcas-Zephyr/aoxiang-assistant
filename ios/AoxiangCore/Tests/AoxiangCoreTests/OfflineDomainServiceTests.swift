@@ -85,4 +85,32 @@ final class OfflineDomainServiceTests: XCTestCase {
             ["all"]
         )
     }
+
+    func testMeetingsOnDayKeepsMultipleSlotsForTheSameCourseInSectionOrder() {
+        let state = OfflineAppState(
+            courses: [
+                OfflineCourse(
+                    id: "math",
+                    name: "数学",
+                    semesterId: "term",
+                    timeSlots: [
+                        OfflineTimeSlot(weekRange: "1-3", dayOfWeek: 1, classSections: [7, 8]),
+                        OfflineTimeSlot(weekRange: "1-3", dayOfWeek: 1, classSections: [1, 2]),
+                        OfflineTimeSlot(weekRange: "1-3", repeatRule: .odd, dayOfWeek: 1, classSections: [11, 12]),
+                    ]
+                ),
+            ],
+            semesters: [OfflineSemester(id: "term", startDate: "2026-08-31", endDate: "2027-01-10")],
+            selectedSemesterId: "term"
+        )
+
+        let weekOne = OfflineScheduleService.meetings(on: 1, week: 1, in: state)
+        XCTAssertEqual(weekOne.map { $0.course.name }, ["数学", "数学", "数学"])
+        XCTAssertEqual(weekOne.map { $0.timeSlot.classSections }, [[1, 2], [7, 8], [11, 12]])
+        XCTAssertEqual(
+            OfflineScheduleService.meetings(on: 1, week: 2, in: state).map { $0.timeSlot.classSections },
+            [[1, 2], [7, 8]]
+        )
+        XCTAssertTrue(OfflineScheduleService.meetings(on: 2, week: 1, in: state).isEmpty)
+    }
 }

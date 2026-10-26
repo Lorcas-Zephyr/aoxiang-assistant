@@ -770,3 +770,52 @@
   workflow pin checks, and `git diff --check` on Windows.
 - [ ] GitHub macOS archive and real iPad observation remain required for WebKit,
   full-width layout, App Group, and Widget runtime acceptance.
+
+## 2026-10-05 iPad follow-up investigation started
+
+## 2026-10-26 Android parity and delivery work
+
+- Resumed the active iPad/electricity goal after the user requested a fresh Android comparison, fixes for Widget and related data/UI problems, and prompt publication.
+- CodeGraph CLI status is healthy; source-level comparison confirms the Android fee-item route and nested Vue/API electricity shape.
+- Current source tests pass before edits: Python 125, AoxiangCore 92, AoxiangApp 60. Current `f2a182d` macOS archive actions are green, but that is not proof of the reported live iPad query.
+- No authenticated Windows browser control is available in this task runtime; the unauthenticated portal request returned an anti-bot challenge instead of a user page.
+- Next red/green slice: guarantee electricity attempt after an education failure while keeping unavailable grade/schedule state from overwriting persisted data; then harden empty Widget rendering and iPad full-screen configuration.
+
+## 2026-10-26 Android parity fixes verified
+
+- Kept the Android electricity query contract already present in iOS (fee-item route,
+  nested response capture and bounded terminal state) unchanged in this pass. Fixed
+  the collector boundary so retryable or malformed education responses still allow
+  an independent electricity attempt; authentication, SMS and cancellation failures
+  keep their explicit terminal behavior.
+- Partial grade/schedule results now preserve stored education records and GPA, and
+  the management status distinguishes preserved data from successfully updated data.
+- Ported Android's home-list behavior for courses with multiple meetings in one day:
+  iOS now shows every active time slot in section order with slot-specific details.
+- Widget empty-container outline/background, iPad full-screen setting and IPA build 5
+  are included in the pending release diff.
+- Verification passed on Windows: Python 126, AoxiangCore 93, AoxiangApp 63 and
+  `git diff --check`. Android Gradle is blocked by the absent local SDK; Windows has
+  no Xcode, so macOS Actions must compile and archive the shipping iOS app.
+- The existing Android-compatible electricity page protocol is not being rewritten
+  again in this continuation; a new device report should drive any further change.
+
+- User reports electricity still fails, schedule remains empty after an update
+  message, GPA is missing, and iPad layout still is not full-screen.
+- User explicitly says to defer changing the visible collection window behavior
+  until electricity can be confirmed working.
+- Supplied screenshots show a white WebView with retryable electricity failure,
+  another run marked cancelled after rendering a portal skeleton, and a blank
+  Widget gallery preview.
+- A follow-up image confirms another run remained pending on the portal skeleton
+  with a visible cancel action; result-stage boundaries need explicit verification.
+- The repo is clean on branch `iOS` at `f2a182d`; no current code changes exist.
+- CodeGraph MCP tools are absent from this session; local CodeGraph CLI is installed.
+- Planning update was attempted with an incorrect anchor and did not apply; retry
+  against the verified file endings before further investigation.
+- Re-read the current tails of all three planning files, confirmed CodeGraph health
+  (164 files, 3,324 nodes, 9,572 edges), and visually inspected the latest screenshot.
+- User clarified the visible page is already the electricity query page with no data;
+  reprioritized response capture/parsing over login-shell detection. The continuation
+  watchdog and bounded `/jfdt` balance path exist in source; exact runtime result
+  propagation and page bridge coverage remain to inspect.

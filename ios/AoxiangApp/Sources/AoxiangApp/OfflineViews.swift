@@ -35,7 +35,7 @@ public struct HomeScreen: View {
     @ObservedObject var model: OfflineAppViewModel
     public init(model: OfflineAppViewModel) { self.model = model }
 
-    private var todayCourses: [OfflineCourse] {
+    private var todayMeetings: [(course: OfflineCourse, timeSlot: OfflineTimeSlot)] {
         let calendar = OfflineDatePolicy.businessCalendar
         let weekday = calendar.component(.weekday, from: Date())
         let day = weekday == 1 ? 7 : weekday - 1
@@ -46,7 +46,18 @@ public struct HomeScreen: View {
         ) else {
             return []
         }
-        return OfflineScheduleService.courses(on: day, week: week, in: model.state)
+        return OfflineScheduleService.meetings(on: day, week: week, in: model.state)
+    }
+
+    private func meetingDescription(_ course: OfflineCourse, slot: OfflineTimeSlot) -> String {
+        let sections = slot.classSections.sorted()
+        let sectionText = sections.isEmpty
+            ? "上课时间未设置"
+            : "第 \(sections.map(String.init).joined(separator: "、")) 节"
+        let details = [slot.teacher ?? course.teacher, slot.location ?? course.location]
+            .compactMap { $0 }
+            .filter { !$0.isEmpty }
+        return ([sectionText] + details).joined(separator: " · ")
     }
 
     public var body: some View {
@@ -85,11 +96,12 @@ public struct HomeScreen: View {
                     }
                 }
                 Section("今日课程") {
-                    if todayCourses.isEmpty { Text("暂无本地课程").foregroundColor(.secondary) }
-                    ForEach(todayCourses.prefix(5)) { course in
+                    if todayMeetings.isEmpty { Text("暂无本地课程").foregroundColor(.secondary) }
+                    ForEach(Array(todayMeetings.prefix(5).enumerated()), id: \.offset) { entry in
+                        let meeting = entry.element
                         VStack(alignment: .leading, spacing: 3) {
-                            Text(course.name).font(.headline)
-                            Text([course.teacher, course.location].compactMap { $0 }.joined(separator: " · "))
+                            Text(meeting.course.name).font(.headline)
+                            Text(meetingDescription(meeting.course, slot: meeting.timeSlot))
                                 .font(.caption).foregroundColor(.secondary)
                         }
                     }
@@ -573,7 +585,7 @@ public struct ManagementScreen: View {
                         // surfaced as a warning without keeping the sheet open.
                         showingAuthentication = false
                     } else if let electricityIssue = result.electricityIssue {
-                        handleElectricityIssue(electricityIssue)
+                        handleElectricityIssue(electricityIssue, warnings: result.warnings)
                     }
                 } else {
                     collectionStatus = "采集结果未能保存；原有数据保持不变"
@@ -593,23 +605,27 @@ public struct ManagementScreen: View {
     /// electricity read into an actionable foreground state. The electricity
     /// portal has a separate auth/session boundary, so its failure must not
     /// discard grades or schedule or be collapsed into a generic warning.
-    private func handleElectricityIssue(_ issue: ElectricityCollectionIssue) {
+    private func handleElectricityIssue(
+        _ issue: ElectricityCollectionIssue,
+        warnings: [PortalCollectionWarning]
+    ) {
         electricityIssue = issue
         showingAuthentication = true
+        let educationStatus = educationCollectionStatus(for: warnings)
         switch issue {
         case .needsLogin:
             authenticationModel.recordCollectionFailure(.authenticationRequired)
-            collectionStatus = "成绩和课表已更新；电费需要重新登录"
+            collectionStatus = "\(educationStatus)；电费需要重新登录"
         case .needsSMS:
             authenticationModel.recordCollectionFailure(.smsRequired)
-            collectionStatus = "成绩和课表已更新；电费需要短信验证"
+            collectionStatus = "\(educationStatus)；电费需要短信验证"
         case .retryable(let reason):
             authenticationModel.recordCollectionFailure(.retryable(reason))
-            collectionStatus = "成绩和课表已更新；电费读取失败，可重试"
+            collectionStatus = "\(educationStatus)；电费读取失败，可重试"
         case .invalidResponse(let message):
-            collectionStatus = "成绩和课表已更新；电费读取失败：\(message)，请稍后重试"
+            collectionStatus = "\(educationStatus)；电费读取失败：\(message)，请稍后重试"
         case .settlement:
-            collectionStatus = "成绩和课表已更新；电费正在结算，请稍后重试"
+            collectionStatus = "\(educationStatus)；电费正在结算，请稍后重试"
         }
     }
 
@@ -663,26 +679,37 @@ public struct ManagementScreen: View {
     }
 
     private func collectionStatus(for warnings: [PortalCollectionWarning]) -> String {
-        let parts = warnings.map { warning -> String in
+        let parts = warnings.compactMap { warning -> String? in
             switch warning {
             case .electricityUnavailable: return "电费暂不可用"
-            case .scheduleUnavailable: return "课表暂不可用"
+            case .gradesUnavailable: return nil
+            case .scheduleUnavailable: return "课表暂不可用，原课表已保留"
             }
         }
         let widgetWarning = model.lastWidgetSnapshotWarning
-        if parts.isEmpty, widgetWarning == nil {
+        if warnings.isEmpty, widgetWarning == nil {
             return "采集完成，已更新本地数据和小组件快照"
         }
 
-        var status = parts.isEmpty
-            ? "采集完成，本地数据已保存"
-            : "成绩已更新；" + parts.joined(separator: "、")
+        var status = educationCollectionStatus(for: warnings)
+        if !parts.isEmpty { status += "；" + parts.joined(separator: "、") }
         if let widgetWarning {
             status += "；" + widgetWarning
-        } else if !parts.isEmpty {
+        } else if !warnings.isEmpty {
             status += "；小组件快照已刷新"
         }
         return status
+    }
+
+    private func educationCollectionStatus(for warnings: [PortalCollectionWarning]) -> String {
+        let gradesUnavailable = warnings.contains(.gradesUnavailable)
+        let scheduleUnavailable = warnings.contains(.scheduleUnavailable)
+        switch (gradesUnavailable, scheduleUnavailable) {
+        case (true, true): return "成绩和课表未更新，原数据已保留"
+        case (true, false): return "成绩未更新，原成绩已保留"
+        case (false, true): return "成绩已更新，课表未更新，原课表已保留"
+        case (false, false): return "成绩和课表已更新"
+        }
     }
 
     private var authenticationStatusText: String {

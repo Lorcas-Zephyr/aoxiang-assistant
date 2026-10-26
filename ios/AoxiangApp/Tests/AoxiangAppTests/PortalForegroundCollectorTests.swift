@@ -104,6 +104,22 @@ final class PortalForegroundCollectorTests: XCTestCase {
         XCTAssertTrue(transport.requests.allSatisfy { $0.headers["Cache-Control"] == "no-store" })
     }
 
+    func testIncompleteSemesterGradesDoNotBecomeACompleteCollection() async throws {
+        let transport = makeTransport(
+            gpa: .success(json(["gpa": 3.72])),
+            malformedSecondGrade: true
+        )
+        let collector = PortalForegroundCollector(transport: transport) { 18.52 }
+
+        let result = try await collector.collect(state: .readyToCollect)
+
+        XCTAssertFalse(result.gradesAvailable)
+        XCTAssertTrue(result.warnings.contains(.gradesUnavailable))
+        XCTAssertEqual(result.electricityBalance ?? -1, 18.52, accuracy: 0.0001)
+        XCTAssertTrue(result.scheduleAvailable)
+        XCTAssertEqual(result.schedule.courses.count, 1)
+    }
+
     func testCollectionContinuesWhenGPAResponseIsMalformedAndUsesPortraitFallbackPath() async throws {
         let transport = makeTransport(gpa: .success(Data("malformed".utf8)))
         let collector = PortalForegroundCollector(transport: transport) { 0 }
@@ -153,6 +169,29 @@ final class PortalForegroundCollectorTests: XCTestCase {
         XCTAssertEqual(result.grades.first?.course, "数学")
         XCTAssertEqual(result.electricityBalance ?? -1, 18, accuracy: 0.0001)
         XCTAssertFalse(transport.requests.isEmpty)
+    }
+
+    func testElectricityCollectionStillRunsWhenEducationAndFallbackBothFail() async throws {
+        let transport = RecordingTransport(responses: [:])
+        let electricityCalls = LockedCounter()
+        let collector = PortalForegroundCollector(
+            transport: transport,
+            electricityProvider: {
+                electricityCalls.increment()
+                return 18.52
+            },
+            visibleEducationProvider: {
+                throw PortalCollectionFailure.retryable(.serverUnavailable)
+            }
+        )
+
+        let result = try await collector.collect(state: .readyToCollect)
+
+        XCTAssertEqual(electricityCalls.value, 1)
+        XCTAssertEqual(result.electricityBalance ?? -1, 18.52, accuracy: 0.0001)
+        XCTAssertFalse(result.gradesAvailable)
+        XCTAssertFalse(result.scheduleAvailable)
+        XCTAssertEqual(result.warnings, [.gradesUnavailable, .scheduleUnavailable])
     }
 
     func testVisibleEducationProviderRunsInsideAuthenticatedPathBeforeStableHTTP() async throws {
@@ -205,7 +244,7 @@ final class PortalForegroundCollectorTests: XCTestCase {
         XCTAssertFalse(transport.requests.isEmpty)
     }
 
-    func testStableCollectionRejectsResponsesThatContainNoValidGrades() async {
+    func testCollectionPreservesEducationAvailabilityWhenNoGradeRowsAreValid() async throws {
         let gradeSheet = json(["studentId": "student-1", "semesterIds": ["term-1"]])
         let emptyGradeResponse = json([
             "semesterId2studentGrades": ["term-1": [[
@@ -221,14 +260,12 @@ final class PortalForegroundCollectorTests: XCTestCase {
         ])
         let collector = PortalForegroundCollector(transport: transport) { 2.5 }
 
-        do {
-            _ = try await collector.collect(state: .readyToCollect)
-            XCTFail("expected invalid grade response")
-        } catch let error as PortalCollectionFailure {
-            XCTAssertEqual(error, .invalidResponse("grade rows unavailable"))
-        } catch {
-            XCTFail("unexpected error: \(error)")
-        }
+        let result = try await collector.collect(state: .readyToCollect)
+
+        XCTAssertFalse(result.gradesAvailable)
+        XCTAssertFalse(result.scheduleAvailable)
+        XCTAssertTrue(result.warnings.contains(.gradesUnavailable))
+        XCTAssertEqual(result.electricityBalance ?? -1, 2.5, accuracy: 0.0001)
     }
 
     func testCollectionAcceptsDirectGradeRowsReturnedBySheetEndpoint() async throws {
@@ -577,7 +614,8 @@ final class PortalForegroundCollectorTests: XCTestCase {
 
     private func makeTransport(
         gpa: Result<Data, Error>,
-        includeNextScheduleSemester: Bool = false
+        includeNextScheduleSemester: Bool = false,
+        malformedSecondGrade: Bool = false
     ) -> RecordingTransport {
         let gradeSheet = json([
             "studentId": "student-1",
@@ -679,7 +717,10 @@ final class PortalForegroundCollectorTests: XCTestCase {
         let gpaPath = try! PortalEndpoints.gpa(studentID: "student-1").url.path
         return RecordingTransport(responses: [
             PortalEndpoints.gradeSheet().url.path: [.success(gradeSheet)],
-            "/student/for-std/grade/sheet/info/student-1": [.success(gradeOne), .success(gradeTwo)],
+            "/student/for-std/grade/sheet/info/student-1": [
+                .success(gradeOne),
+                malformedSecondGrade ? .success(Data("not-json".utf8)) : .success(gradeTwo),
+            ],
             gpaPath: [gpa],
             PortalEndpoints.courseTable().url.path: [.success(courseTable)],
             "/student/ws/semester/get/term-1": [.success(semester)],

@@ -864,3 +864,52 @@ goal can close. Structify remains out of scope.
 - 不改 Android 已知月历按钮 bug，但 iOS 月历/周视图切换必须始终保留本周/全部课程控制。
 - 不覆盖 Widget 相关未完成改动，不混入视觉重构。
 - Windows 不声称完成真实 iOS WebKit/Xcode 或设备验证。
+
+## 2026-10-05 iPad 复测问题排查
+
+### Goal
+
+定位并修复 iPad 上电费仍不可查询、课表提示更新但内容为空、GPA 不显示、应用未占满屏幕的问题。用户明确暂缓“采集时弹出页面/静默后台采集”行为变更，直到电费结果得到确认。
+
+### Agreed regression seams
+
+- 页面采集脚本的登录态识别与电费结果输出。
+- `collectElectricity` 的成功或可重试终态。
+
+### Phases
+
+- [ ] 核对当前工作区/交付构建并同步 CodeGraph，记录截图中的电费状态。
+- [ ] 在上述 seam 建立可重复的失败信号，区分成绩、课表和电费阶段。
+- [ ] 根据调用链修复电费结果落库、课表更新/可见性及 GPA 展示问题。
+- [ ] 独立修复 iPad 全屏布局并添加配置/行为回归。
+- [ ] 运行 Python、AoxiangCore、AoxiangApp、相关 Node 与 diff 检查，记录设备验证限制。
+
+### Constraints
+
+- 暂不改认证页面弹出、自动查询或后台静默采集的交互行为。
+- 不丢弃已有成绩、课表、电费有效数据；失败时不能显示完整成功。
+- 真实 WebKit、iPad 窗口尺寸与 Widget gallery 行为仍须 macOS/iPad 验证。
+
+## 2026-10-26 安卓对照与 iPad 交付修复
+
+### Goal
+
+按安卓独立目标采集方式修复 iOS 电费查询，防止成绩/课表故障阻断电费；同时修复 Widget 空数据可见性、课表/GPA 数据保留与 iPad 全屏配置，并尽快生成包含 Widget 扩展的新 sideload IPA。
+
+### Phases
+
+- [x] 核对工作区、GitHub 当前构建、CodeGraph 和 Windows 可执行基线。
+- [x] 为教育阶段失败仍可采集电费、且旧成绩/课表不被空结果覆盖建立回归。
+- [x] 对照 Android `map.showData.electricInfo` 查询路径与 iOS 页面采集/解析覆盖；保留既有电费协议实现，仅修复采集阶段互相阻断的问题。
+- [x] 修复 Widget 空状态可见性和 iPad 全屏配置，并补对应契约检查。
+- [x] 复刻 Android 首页同课多时段展示；增加同日多节次、单双周和排序回归。
+- [x] Python (126)、AoxiangCore (93)、AoxiangApp (63) 与 `git diff --check` 通过；Android Gradle 未能启动，本机缺 Android SDK。
+- [ ] 提交并推送 `iOS`，等待 macOS Actions 归档并核验 sideload IPA 含 Widget。
+
+### Constraints
+
+- 保留原有凭据与 Cookie 边界；未取得课程数据时不得将空集合当成成功覆盖。
+- 仍暂缓更改认证窗口弹出和静默后台采集行为，直到设备上确认电费可读。
+- Windows 测试不能替代 iPadOS WebKit、App Group 签名权限和 Widget gallery 真机验收。
+- 认证失效与短信状态必须继续中止教育采集并交还认证界面；只有可重试网络/响应异常走独立电费兜底。
+- 本轮不重新调整已经实现的电费页面协议与 JavaScript 捕获；后续以设备反馈和本轮回归结果为依据再决定是否需要新修复。

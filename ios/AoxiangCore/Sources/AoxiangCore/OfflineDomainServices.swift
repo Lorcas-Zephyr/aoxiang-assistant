@@ -99,6 +99,34 @@ public enum OfflineScheduleService {
         }
     }
 
+    public static func meetings(
+        on dayOfWeek: Int,
+        week: Int,
+        in state: OfflineAppState,
+        semesterID: String? = nil
+    ) -> [(course: OfflineCourse, timeSlot: OfflineTimeSlot)] {
+        guard (1...7).contains(dayOfWeek), week > 0 else { return [] }
+        let meetings = courses(in: state, semesterID: semesterID).flatMap { course in
+            course.timeSlots.enumerated().compactMap { index, slot -> (OfflineCourse, OfflineTimeSlot, Int)? in
+                guard slot.dayOfWeek == dayOfWeek,
+                      isWeekActive(week, weekRange: slot.weekRange, repeatRule: slot.repeatRule) else {
+                    return nil
+                }
+                return (course, slot, index)
+            }
+        }.sorted { lhs, rhs in
+            let lhsStart = lhs.1.classSections.min() ?? Int.max
+            let rhsStart = rhs.1.classSections.min() ?? Int.max
+            if lhsStart != rhsStart { return lhsStart < rhsStart }
+            let lhsEnd = lhs.1.classSections.max() ?? Int.max
+            let rhsEnd = rhs.1.classSections.max() ?? Int.max
+            if lhsEnd != rhsEnd { return lhsEnd < rhsEnd }
+            if lhs.0.name != rhs.0.name { return lhs.0.name < rhs.0.name }
+            return lhs.2 < rhs.2
+        }
+        return meetings.map { (course: $0.0, timeSlot: $0.1) }
+    }
+
     public static func isWeekActive(
         _ week: Int,
         weekRange: String,

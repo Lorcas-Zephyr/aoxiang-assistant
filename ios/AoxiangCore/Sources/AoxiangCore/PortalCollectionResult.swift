@@ -2,6 +2,7 @@ import Foundation
 
 public enum PortalCollectionWarning: String, Equatable {
     case electricityUnavailable
+    case gradesUnavailable
     case scheduleUnavailable
 }
 
@@ -72,6 +73,9 @@ public struct PortalCollectedData: Equatable {
     public let grades: [OfflineGrade]
     public let gpa: Double?
     public let schedule: PortalCollectionParsers.SchedulePayload
+    /// `false` means the education response did not contain a complete,
+    /// validated grade collection. Callers must preserve grades and GPA.
+    public let gradesAvailable: Bool
     /// `false` means the education response contained valid grades but the
     /// schedule endpoint was unavailable. Callers must preserve the existing
     /// local schedule in that case.
@@ -93,11 +97,13 @@ public struct PortalCollectedData: Equatable {
         electricityBalance: Double? = nil,
         electricityIssue: ElectricityCollectionIssue? = nil,
         warnings: [PortalCollectionWarning] = [],
+        gradesAvailable: Bool = true,
         scheduleAvailable: Bool = true
     ) {
         self.grades = grades
         self.gpa = gpa
         self.schedule = schedule
+        self.gradesAvailable = gradesAvailable
         self.electricityBalance = electricityBalance
         self.electricityIssue = electricityIssue
         self.warnings = warnings

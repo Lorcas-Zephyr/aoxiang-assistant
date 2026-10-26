@@ -22,6 +22,8 @@
     <string>$(MARKETING_VERSION)</string>
     <key>CFBundleVersion</key>
     <string>$(CURRENT_PROJECT_VERSION)</string>
+    <key>UIRequiresFullScreen</key>
+    <true/>
     <key>BGTaskSchedulerPermittedIdentifiers</key>
     <array>
         <string>cn.nwpu.aoxiang.refresh</string>

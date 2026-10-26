@@ -78,7 +78,7 @@ private struct AoxiangWidgetSurface<Content: View>: View {
                 .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: AoxiangWidgetStyle.surfaceRadius))
                 .overlay {
                     RoundedRectangle(cornerRadius: AoxiangWidgetStyle.surfaceRadius)
-                        .strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.7)
+                        .strokeBorder(Color.primary.opacity(0.14), lineWidth: 0.7)
                 }
         }
 #else
@@ -86,7 +86,7 @@ private struct AoxiangWidgetSurface<Content: View>: View {
             .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: AoxiangWidgetStyle.surfaceRadius))
             .overlay {
                 RoundedRectangle(cornerRadius: AoxiangWidgetStyle.surfaceRadius)
-                    .strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.7)
+                    .strokeBorder(Color.primary.opacity(0.14), lineWidth: 0.7)
             }
 #endif
     }
@@ -96,7 +96,7 @@ private extension View {
     @ViewBuilder
     func aoxiangWidgetContainerBackground() -> some View {
         if #available(iOS 17.0, *) {
-            containerBackground(for: .widget) { Color.clear }
+            containerBackground(for: .widget) { Color(uiColor: .systemBackground) }
         } else {
             self
         }
