@@ -841,3 +841,23 @@
   including macOS Swift tests, IPA archive, Widget extension layout verification, and
   upload of `AoxiangAssistant-ipa-variants-24` (7,579,318 bytes). The user will verify
   the live login/query behavior on iPad.
+
+## 2026-10-26 electricity hand-off correction
+
+- Correction to the previous note: the iOS bootstrap did not match Android's primary
+  electricity flow. Android's `auto_collect.js` takes the authenticated page token from
+  `/plat` and sends it through `/berserker-base/redirect`; the iOS script skipped that
+  hand-off and went straight to a lower-case `/toAppitem` path.
+- The supplied response URL uses `/toAppItem` (capital `I`), and its `synjones-auth`
+  value is empty for the bare redirect. Use this observed fee-page spelling and pass
+  the token through the authenticated redirect; the screenshot alone does not prove
+  that path case caused the 401.
+- The iOS bootstrap now returns the token to `/berserker-base/redirect` with Android's
+  `appId`, `type`, and `loginFrom` query contract. Only a redirect loop back to `/plat`
+  may use the bounded direct fallback, now with the exact `/toAppItem` casing.
+- The runtime tests were run red before the change: they observed direct `/toAppitem`
+  navigation. Afterward all 54 focused Python/Node tests, the full Python suite (130),
+  AoxiangCore (98), AoxiangApp (70), and `git diff --check` passed.
+- This correction is not included in the previous IPA artifact 24. Push it and wait for
+  a fresh macOS archive/IPA workflow before asking the user to install it. Real iPad
+  electricity and GPA behavior remain unverified; keep the collection page visible.

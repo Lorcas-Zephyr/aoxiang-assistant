@@ -887,3 +887,20 @@
   It passed portable Swift tests, unsigned iPhone/iPad archive, Widget extension layout checks,
   and uploaded `AoxiangAssistant-ipa-variants-24` (7,579,318 bytes).
 - Only live authenticated iPad behavior remains unverified; the user will perform that acceptance.
+
+## 2026-10-26 Android electricity hand-off correction
+
+- Recompared the screenshot and current Android/iOS source after the user shared the bare
+  redirect result. Android's primary collector passes the `/plat` token back through
+  `/berserker-base/redirect`; iOS had skipped this hand-off and directly used the
+  lower-case `/toAppitem` path. The screenshot's terminal route is `/toAppItem`.
+- Added regression expectations for Android's token-bearing redirect and exact fallback
+  path. The Python/Node test was red before the source change and green afterward.
+- Updated iOS to follow the redirect contract on the primary path and retain one bounded
+  direct fallback with the portal's exact path spelling. No authentication-sheet behavior
+  changed.
+- Windows validation: Python 130, AoxiangCore 98, AoxiangApp 70, and `git diff --check`
+  pass. CodeGraph was synced after the source/test edits.
+- Pending: push this correction to `iOS` and verify a fresh
+  macOS IPA archive/Widget artifact. Existing artifact 24 predates this correction. Live
+  iPad electricity/GPA results remain for user acceptance.

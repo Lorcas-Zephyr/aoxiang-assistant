@@ -37,6 +37,6 @@ final class PortalEndpointTests: XCTestCase {
     func testElectricityIsExplicitlyAVisiblePageCapability() {
         let url = PortalEndpoints.electricityPage()
         XCTAssertEqual(url.host, PortalEndpoints.electricityHost)
-        XCTAssertEqual(url.path, "/jfdt/charge/feeitem/toAppitem")
+        XCTAssertEqual(url.path, "/jfdt/charge/feeitem/toAppItem")
     }
 }

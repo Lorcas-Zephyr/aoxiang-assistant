@@ -73,7 +73,7 @@ class VisibleCollectionScriptTest(unittest.TestCase):
         self.assertIn("app.__vueParentComponent", source)
         self.assertIn("app.__vue_app__", source)
         self.assertIn("performance.getEntriesByType('resource')", source)
-        self.assertIn("'/jfdt/charge/feeitem/toAppitem'", source)
+        self.assertIn("'/jfdt/charge/feeitem/toAppItem'", source)
         self.assertIn('electricityRedirectPath = "/berserker-base/redirect"', source)
         self.assertIn("target.searchParams.set('feeitemid', '182')", source)
         self.assertIn("target.searchParams.set('appId', '36')", source)

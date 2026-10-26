@@ -88,7 +88,7 @@ final class VisibleCollectionNavigationPolicyTests: XCTestCase {
             URL(string: "https://passport.nwpu.edu.cn/sso/login?service=card")!,
             URL(string: "https://yktapp.nwpu.edu.cn/berserker-base/redirect?appId=36")!,
             URL(string: "https://yktapp.nwpu.edu.cn/plat")!,
-            URL(string: "https://yktapp.nwpu.edu.cn/jfdt/charge/feeitem/toAppitem")!,
+            URL(string: "https://yktapp.nwpu.edu.cn/jfdt/charge/feeitem/toAppItem")!,
         ]
 
         for url in urls {
@@ -209,7 +209,7 @@ final class VisibleCollectionNavigationPolicyTests: XCTestCase {
             VisibleCollectionNavigationPolicy.electricityPageURL(token: "token+/=")
         )
         XCTAssertEqual(url.host, "yktapp.nwpu.edu.cn")
-        XCTAssertEqual(url.path, "/jfdt/charge/feeitem/toAppitem")
+        XCTAssertEqual(url.path, "/jfdt/charge/feeitem/toAppItem")
         XCTAssertEqual(
             URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.map {
                 "\($0.name)=\($0.value ?? "")"
@@ -240,7 +240,7 @@ final class VisibleCollectionNavigationPolicyTests: XCTestCase {
             )
         }
         XCTAssertFalse(policy.shouldMaintainElectricityBootstrapAllowance(after:
-            URL(string: "https://yktapp.nwpu.edu.cn/jfdt/charge/feeitem/toAppitem")!
+            URL(string: "https://yktapp.nwpu.edu.cn/jfdt/charge/feeitem/toAppItem")!
         ))
         XCTAssertFalse(policy.shouldMaintainElectricityBootstrapAllowance(after:
             URL(string: "https://uis.nwpu.edu.cn/cas/login?error=access_denied")!
@@ -271,7 +271,7 @@ final class VisibleCollectionNavigationPolicyTests: XCTestCase {
         ))
         XCTAssertFalse(policy.shouldStartElectricityDirectFallback(
             afterHandoffProbes: limit,
-            at: URL(string: "https://yktapp.nwpu.edu.cn/jfdt/charge/feeitem/toAppitem")!,
+            at: URL(string: "https://yktapp.nwpu.edu.cn/jfdt/charge/feeitem/toAppItem")!,
             hasAlreadyTriedDirectPage: false
         ))
         XCTAssertFalse(policy.shouldStartElectricityDirectFallback(
@@ -323,7 +323,7 @@ final class VisibleCollectionNavigationPolicyTests: XCTestCase {
         ))
         XCTAssertFalse(policy.shouldFinishElectricityAfterDirectFallbackRedirect(
             afterFallbackProbes: limit,
-            at: URL(string: "https://yktapp.nwpu.edu.cn/jfdt/charge/feeitem/toAppitem")!,
+            at: URL(string: "https://yktapp.nwpu.edu.cn/jfdt/charge/feeitem/toAppItem")!,
             hasAlreadyTriedDirectPage: true
         ))
     }

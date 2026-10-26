@@ -978,3 +978,18 @@ Identify why the authenticated iOS flow shows an empty electricity page and fail
 - Keep credentials, SMS codes, cookies, tokens, student IDs and raw personal records out of logs, fixtures and saved planning notes.
 - A direct redirect URL returning 401 does not prove the complete CAS login flow is broken; the full wrapper and live iPad session remain unverified.
 - Windows SwiftPM cannot verify iOS WebKit compilation or a real iPad session; the macOS workflow and user-device acceptance are required.
+
+## 2026-10-26 electricity hand-off correction
+
+The follow-up screenshot exposed a concrete Android/iOS difference: Android returns the
+authenticated `/plat` token through `/berserker-base/redirect`, while the prior iOS script
+went directly to the fee page using a noncanonical path spelling. Keep the original live-account
+verification limits and visible collection behavior.
+
+- [x] Add a red/green runtime regression for the token-bearing Berserker redirect and a
+  direct fallback path spelled exactly as `/toAppItem`.
+- [x] Update iOS to use Android's primary redirect hand-off and exact fee-item route casing.
+- [x] Run Python 130, AoxiangCore 98, AoxiangApp 70, and `git diff --check` on Windows.
+- [x] Sync the local CodeGraph index after edits.
+- [ ] Push the correction and verify a new macOS IPA/Widget workflow.
+- [ ] Leave live authenticated iPad validation to the user.

@@ -225,9 +225,8 @@ globalThis.performance = { getEntriesByType: () => [] };
 
     def test_electricity_portal_uses_token_from_same_origin_iframe_storage(self):
         # The card portal can render the account card in a same-origin frame.
-        # The bootstrap must read that frame's short-lived token and navigate
-        # the visible top-level WebView through the Android-compatible direct
-        # fee-item route.
+        # The bootstrap must read that frame's short-lived token and return it
+        # through Android's Berserker redirect hand-off.
         result = self.run_electricity_portal_script("""
 const location = {
   href: 'https://yktapp.nwpu.edu.cn/plat',
@@ -260,10 +259,12 @@ globalThis.document = document;
 globalThis.window = window;
 globalThis.location = location;
 """)
-        self.assertEqual(result.get("action"), "direct_started", result)
-        self.assertIn("/jfdt/charge/feeitem/toAppitem?", result["href"])
-        self.assertIn("feeitemid=182", result["href"])
+        self.assertEqual(result.get("action"), "redirect_started", result)
+        self.assertIn("/berserker-base/redirect?", result["href"])
+        self.assertIn("appId=36", result["href"])
+        self.assertIn("type=app", result["href"])
         self.assertIn("synjones-auth=frame-token", result["href"])
+        self.assertIn("loginFrom=h5", result["href"])
 
     def test_electricity_portal_uses_token_from_same_origin_iframe_cookie(self):
         result = self.run_electricity_portal_script("""
@@ -298,10 +299,12 @@ globalThis.document = document;
 globalThis.window = window;
 globalThis.location = location;
 """)
-        self.assertEqual(result.get("action"), "direct_started", result)
-        self.assertIn("/jfdt/charge/feeitem/toAppitem?", result["href"])
-        self.assertIn("feeitemid=182", result["href"])
+        self.assertEqual(result.get("action"), "redirect_started", result)
+        self.assertIn("/berserker-base/redirect?", result["href"])
+        self.assertIn("appId=36", result["href"])
+        self.assertIn("type=app", result["href"])
         self.assertIn("synjones-auth=frame-cookie-token", result["href"])
+        self.assertIn("loginFrom=h5", result["href"])
 
     def test_electricity_portal_uses_direct_fee_page_after_redirect_attempt(self):
         result = self.run_electricity_portal_script("""
@@ -337,7 +340,7 @@ globalThis.window = window;
 globalThis.location = location;
 """, redirect_attempted=True)
         self.assertEqual(result.get("action"), "direct_started", result)
-        self.assertIn("/jfdt/charge/feeitem/toAppitem?", result["href"])
+        self.assertIn("/jfdt/charge/feeitem/toAppItem?", result["href"])
         self.assertIn("feeitemid=182", result["href"])
         self.assertIn("synjones-auth=fallback-token", result["href"])
 
@@ -368,10 +371,10 @@ globalThis.document = document;
 globalThis.window = window;
 globalThis.location = location;
 """)
-        self.assertEqual(result.get("action"), "direct_started", result)
-        self.assertIn("/jfdt/charge/feeitem/toAppitem?", result["href"])
-        self.assertIn("feeitemid=182", result["href"])
+        self.assertEqual(result.get("action"), "redirect_started", result)
+        self.assertIn("/berserker-base/redirect?", result["href"])
         self.assertIn("synjones-auth=loading-shell-token", result["href"])
+        self.assertIn("loginFrom=h5", result["href"])
 
     def test_electricity_portal_hands_off_loading_shell_token_to_direct_fee_page_after_redirect_attempt(self):
         # If the Berserker redirect returned to /plat, the same non-login
@@ -410,7 +413,7 @@ globalThis.window = window;
 globalThis.location = location;
 """, redirect_attempted=True)
         self.assertEqual(result.get("action"), "direct_started", result)
-        self.assertIn("/jfdt/charge/feeitem/toAppitem?", result["href"])
+        self.assertIn("/jfdt/charge/feeitem/toAppItem?", result["href"])
         self.assertIn("feeitemid=182", result["href"])
         self.assertIn("synjones-auth=iframe-loading-token", result["href"])
 

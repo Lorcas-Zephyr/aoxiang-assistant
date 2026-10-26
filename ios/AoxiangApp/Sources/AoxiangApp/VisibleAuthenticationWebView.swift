@@ -70,11 +70,9 @@ public struct VisibleCollectionNavigationPolicy {
     /// establish the `/jfdt` page session. The phone's CAS link targets this
     /// endpoint directly; the older `/plat` bootstrap remains accepted below.
     public static let electricityRedirectPath = "/berserker-base/redirect"
-    /// The currently deployed fee page. Keep this separate from the CAS
-    /// hand-off because both routes are used by the Android collector: the
-    /// direct route is the stable data entry point, while the redirect is a
-    /// recovery path for deployments that first need a card-session cookie.
-    public static let electricityPagePath = "/jfdt/charge/feeitem/toAppitem"
+    /// The fee-item route used for the bounded direct-page recovery path.
+    /// Preserve the exact spelling observed in the portal's live redirect.
+    public static let electricityPagePath = "/jfdt/charge/feeitem/toAppItem"
     public static let electricityFeeItemID = "182"
     public static let electricityRedirectAppID = "36"
     public static let electricityRedirectType = "app"
@@ -1391,18 +1389,27 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
           if (loginShell) return clickAuthEntry() ? 'auth_clicked' : 'waiting';
           if (!token) return clickAuthEntry() ? 'auth_clicked' : 'waiting';
           try { sessionStorage.setItem('synjones-auth', token); } catch (_) {}
-          // Keep the iOS path identical to Android: once the authenticated
-          // card page exposes its token, enter the fee item directly. The
-          // redirect shell is not a data page and can remain on "查询信息"
-          // without ever publishing the Vue response.
-          const target = new URL('/jfdt/charge/feeitem/toAppitem', location.origin);
-          target.searchParams.set('feeitemid', '182');
-          target.searchParams.set('synjones-auth', token);
-          target.searchParams.set('appId', '36');
-          target.searchParams.set('loginFrom', 'h5');
-          target.searchParams.set('type', 'app');
-          if (location.href !== target.href) location.replace(target.href);
-          return 'direct_started';
+          // Match Android's primary flow: return the page-owned token through
+          // the Berserker endpoint, which establishes the fee-page session.
+          // If that hand-off has already looped back to /plat, use the direct
+          // fee-item page as the single bounded recovery attempt.
+          if (__AOXIANG_REDIRECT_ATTEMPTED__) {
+            const feePage = new URL('/jfdt/charge/feeitem/toAppItem', location.origin);
+            feePage.searchParams.set('feeitemid', '182');
+            feePage.searchParams.set('synjones-auth', token);
+            feePage.searchParams.set('appId', '36');
+            feePage.searchParams.set('loginFrom', 'h5');
+            feePage.searchParams.set('type', 'app');
+            if (location.href !== feePage.href) location.replace(feePage.href);
+            return 'direct_started';
+          }
+          const redirect = new URL('/berserker-base/redirect', location.origin);
+          redirect.searchParams.set('appId', '36');
+          redirect.searchParams.set('type', 'app');
+          redirect.searchParams.set('synjones-auth', token);
+          redirect.searchParams.set('loginFrom', 'h5');
+          if (location.href !== redirect.href) location.replace(redirect.href);
+          return 'redirect_started';
         })()
     """#
 
@@ -1443,7 +1450,7 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
             readStorage(['synjones-auth', 'access_token', 'accessToken', 'synjonesAuth', 'token']) ||
             readCookie(['synjones-auth', 'access_token', 'accessToken', 'synjonesAuth', 'token']) || '';
           if (!token) return 'unavailable';
-          const target = new URL('/jfdt/charge/feeitem/toAppitem', location.origin);
+          const target = new URL('/jfdt/charge/feeitem/toAppItem', location.origin);
           target.searchParams.set('feeitemid', '182');
           target.searchParams.set('synjones-auth', token);
           target.searchParams.set('appId', '36');

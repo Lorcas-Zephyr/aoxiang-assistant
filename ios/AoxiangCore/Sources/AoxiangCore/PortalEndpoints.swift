@@ -62,7 +62,7 @@ public enum PortalEndpoints {
     /// page JavaScript/Vue state rather than a stable JSON endpoint, so it must
     /// remain on the visible WebView path until an actual HTTP contract exists.
     public static func electricityPage() -> URL {
-        electricityBaseURL.appendingPathComponent("jfdt/charge/feeitem/toAppitem")
+        electricityBaseURL.appendingPathComponent("jfdt/charge/feeitem/toAppItem")
     }
 
     private static func educationRequest(path: String, query: [URLQueryItem] = []) -> StableHTTPCollectionRequest {
