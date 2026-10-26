@@ -887,3 +887,20 @@
 - Commit `f54d2e4` passed macOS Action `40368217627`: portable Swift tests, Xcode device
   archive, Widget layout checks, and IPA upload. Artifact `AoxiangAssistant-ipa-variants-28`
   passed the build script's host bundle version checks for `1.0.2 (7)`.
+
+## 2026-10-27 follow-up probe result
+
+- The user-provided `1.0.2 (7)` screenshot reports `ecampus.nwpu.edu.cn/main.html`,
+  a route-rule match, both required main-document markers (`个人中心`, `我的待办`),
+  no frames, a completed JavaScript callback, and `.needsLogin` in the view model
+  and shared session store.
+- A regression using that same URL and marker set passes the pure matcher;
+  `AuthenticationStateMachine` also accepts `.authenticationSucceeded` from
+  `.needsLogin`. URL matching, DOM marker location, callback completion, and the
+  ordinary state transition therefore do not explain the reported result by themselves.
+- The `1.0.2` diagnostic summary did not report the success rule independently from
+  SMS/credential marker priority. The updated probe decision is testable and now
+  reports that branch, transition acceptance, view-model/machine/session states, and
+  whether the callback URL still matches the WebView's current page.
+- Root cause remains unconfirmed until the `1.0.3 (8)` probe runs on the iPad.
+  Electricity routes, acceptance behavior, and the visible collection flow are unchanged.

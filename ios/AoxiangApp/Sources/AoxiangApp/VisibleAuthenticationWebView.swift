@@ -115,6 +115,38 @@ struct AuthenticationProbeResult: Codable, Equatable {
             rule.matches(url: url, bodyMarkerMatches: $0)
         }
     }
+
+    func decision(
+        url: URL,
+        successRules: [AuthenticationSuccessRule]
+    ) -> AuthenticationProbeDecision {
+        if mainFrameMarkers.contains("短信") || mainFrameMarkers.contains("sms") {
+            return .smsRequired
+        }
+        if mainFrameMarkers.contains("密码错误") || mainFrameMarkers.contains("invalid") {
+            return .credentialsRejected
+        }
+        if successRules.contains(where: { matches(rule: $0, url: url) }) {
+            return .authenticationSucceeded
+        }
+        return .noMatch
+    }
+}
+
+enum AuthenticationProbeDecision: Equatable {
+    case smsRequired
+    case credentialsRejected
+    case authenticationSucceeded
+    case noMatch
+
+    var diagnosticLabel: String {
+        switch self {
+        case .smsRequired: return "短信"
+        case .credentialsRejected: return "凭据错误"
+        case .authenticationSucceeded: return "认证成功"
+        case .noMatch: return "未匹配"
+        }
+    }
 }
 
 public enum VisibleCollectionTarget: Equatable {
@@ -2955,16 +2987,31 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
                         self.authenticationProbeSummary = "URL=\(urlLabel); JS=已返回但格式无法识别; 状态=\(self.authenticationStateLabel(self.state))"
                         return
                     }
-                    if result.mainFrameMarkers.contains("短信") || result.mainFrameMarkers.contains("sms") {
-                        self.transition(.smsRequired)
-                    } else if result.mainFrameMarkers.contains("密码错误") || result.mainFrameMarkers.contains("invalid") {
-                        self.transition(.credentialsRejected)
-                    } else if self.successRules.contains(where: { result.matches(rule: $0, url: url) }) {
-                        self.completeAuthentication()
+                    let successRuleMatched = self.successRules.contains {
+                        result.matches(rule: $0, url: url)
                     }
+                    let decision = result.decision(url: url, successRules: self.successRules)
+                    var transitionOutcome = "未触发"
+                    switch decision {
+                    case .smsRequired:
+                        transitionOutcome = self.transition(.smsRequired) ? "短信成功" : "短信拒绝"
+                    case .credentialsRejected:
+                        transitionOutcome = self.transition(.credentialsRejected) ? "拒绝凭据" : "凭据事件拒绝"
+                    case .authenticationSucceeded:
+                        transitionOutcome = self.completeAuthentication() ? "认证成功" : "认证事件拒绝"
+                    case .noMatch:
+                        break
+                    }
+                    let callbackURLMatchesCurrent = self.webView.url.flatMap {
+                        VisibleCollectionNavigationPolicy.sanitizedInspectionURLKey(for: $0)
+                    } == inspectionKey
                     self.authenticationProbeSummary = self.makeAuthenticationProbeSummary(
                         url: url,
-                        result: result
+                        result: result,
+                        successRuleMatched: successRuleMatched,
+                        decision: decision,
+                        transitionOutcome: transitionOutcome,
+                        callbackURLMatchesCurrent: callbackURLMatchesCurrent
                     )
                 }
             }
@@ -3040,7 +3087,11 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
 
     private func makeAuthenticationProbeSummary(
         url: URL,
-        result: AuthenticationProbeResult
+        result: AuthenticationProbeResult,
+        successRuleMatched: Bool,
+        decision: AuthenticationProbeDecision,
+        transitionOutcome: String,
+        callbackURLMatchesCurrent: Bool
     ) -> String {
         let routeMatches = successRules.contains { $0.matchesURL(url) }
         let mainPersonalCenter = result.mainFrameMarkers.contains("个人中心")
@@ -3050,7 +3101,10 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
         let frameRuleMatches = successRules.contains {
             result.sameOriginFrameMatches(rule: $0, url: url)
         }
-        return "URL \(diagnosticURLLabel(url)) | 路径规则\(routeMatches ? "命中" : "未命中") | 主文档 个人中心\(mainPersonalCenter ? "✓" : "×") 待办\(mainTodo ? "✓" : "×") | 同源框架\(result.sameOriginFrameMarkers.count) 个人中心\(framePersonalCenter ? "✓" : "×") 待办\(frameTodo ? "✓" : "×") 规则\(frameRuleMatches ? "命中" : "未命中") | 跨域框架\(result.inaccessibleFrameCount) | JS完成 | 状态\(authenticationStateLabel(state))/会话\(authenticationStateLabel(sessionStore.state))"
+        return "URL \(diagnosticURLLabel(url)) | 路径规则\(routeMatches ? "命中" : "未命中") | 主规则\(successRuleMatched ? "命中" : "未命中")\n"
+            + "主文档 个人中心\(mainPersonalCenter ? "✓" : "×") 待办\(mainTodo ? "✓" : "×") | 同源框架\(result.sameOriginFrameMarkers.count) 个人中心\(framePersonalCenter ? "✓" : "×") 待办\(frameTodo ? "✓" : "×") 规则\(frameRuleMatches ? "命中" : "未命中") | 跨域框架\(result.inaccessibleFrameCount)\n"
+            + "JS完成 | 分支=\(decision.diagnosticLabel) | 转换=\(transitionOutcome)\n"
+            + "回调页面=\(callbackURLMatchesCurrent ? "当前" : "已变化") | VM=\(authenticationStateLabel(state)) / 机器=\(authenticationStateLabel(machine.state)) / 会话=\(authenticationStateLabel(sessionStore.state))"
     }
 
     private func diagnosticURLLabel(_ url: URL) -> String {
@@ -3087,23 +3141,27 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
             || normalized.hasPrefix("/student/for-std/course-table")
     }
 
-    private func transition(_ event: AuthenticationEvent) {
+    @discardableResult
+    private func transition(_ event: AuthenticationEvent) -> Bool {
         do {
             state = try machine.handle(event)
             sessionStore.set(state)
+            return true
         } catch {
-            if isBenignDuplicate(event) { return }
+            if isBenignDuplicate(event) { return true }
             // A repeated navigation callback is harmless; illegal transitions
             // remain observable without changing the current state.
             lastError = error.localizedDescription
+            return false
         }
     }
 
-    private func completeAuthentication() {
+    @discardableResult
+    private func completeAuthentication() -> Bool {
         if case .needsSMS = state {
-            transition(.smsVerified)
+            return transition(.smsVerified)
         } else {
-            transition(.authenticationSucceeded)
+            return transition(.authenticationSucceeded)
         }
     }
 
@@ -3162,7 +3220,7 @@ public struct AuthenticationScreen: View {
                 .font(.caption)
                 .foregroundColor(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .lineLimit(4)
+                .lineLimit(8)
                 .padding(.horizontal, 8)
                 .padding(.top, 6)
             if let collectionStatus {

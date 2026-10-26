@@ -1013,8 +1013,17 @@ until the device reports which stage failed.
 - [x] Raise host and Widget version to `1.0.2 (7)` in Xcode, IPA workflow, build
   script defaults, and configuration tests.
 - [x] Verify the iOS WebKit build, IPA layout, and package version in GitHub Actions.
-- [ ] Install the diagnostic IPA on iPad and report the displayed probe summary.
-- [ ] Use the displayed probe result to identify the failing boundary before changing
+- [x] Install the `1.0.2 (7)` diagnostic IPA and provide its probe summary.
+- [x] Verify with screenshot-shaped main-document data that the URL, both required
+  markers, and the state-machine success event should match.
+- [x] Add a pure probe-decision seam and diagnostics for the rule match, selected
+  branch, transition result, all three authentication states, and current URL status.
+- [x] Raise the next diagnostic build to `1.0.3 (8)` across app, Widget, workflow,
+  builder defaults, and version tests.
+- [x] Run Python 130, AoxiangCore 98, AoxiangApp 73, Swift parse,
+  `git diff --check`, and sync CodeGraph.
+- [ ] Push the diagnostic version and verify the macOS IPA Action.
+- [ ] Use the `1.0.3 (8)` device result to identify the failing boundary before changing
   authentication or electricity behavior.
 
 ### Constraints

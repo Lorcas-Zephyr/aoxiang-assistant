@@ -926,3 +926,24 @@
   Widget layout checks passed, and artifact `AoxiangAssistant-ipa-variants-28` uploaded
   with host version `1.0.2 (7)`.
 - The root cause still requires the sanitized probe result from the iPad.
+
+## 2026-10-27 iPad authentication probe follow-up
+
+- The user supplied the missing `1.0.2 (7)` runtime probe result. It shows that the
+  eCampus route and both required signed-in markers are present in the main document,
+  the JavaScript callback completes, and the view model/shared store still say login is
+  required.
+- Added a pure probe decision and a regression matching the screenshot-shaped input.
+  The test passed for `.authenticationSucceeded`; a second assertion proves the full
+  success rule is reported independently if an SMS marker wins decision priority.
+- The diagnostic now separates URL/path match, full main-document rule match, chosen
+  decision branch, transition outcome, view-model/state-machine/session-store values,
+  and whether the callback is still for the current WebView URL. It continues to avoid
+  page text and session data. No electricity or automatic-collection behavior changed.
+- Bumped the host and Widget to `1.0.3 (8)` and aligned the IPA workflow, builder
+  defaults, and version tests.
+- Verification passed: Python 130, AoxiangCore 98, AoxiangApp 73, Swift syntax parse,
+  and `git diff --check`. CodeGraph sync completed and reports an up-to-date index
+  (169 files, 3,496 nodes, 10,070 edges).
+- Push and the new macOS IPA Action remain pending; the iPad runtime result is still
+  required to confirm the root cause.

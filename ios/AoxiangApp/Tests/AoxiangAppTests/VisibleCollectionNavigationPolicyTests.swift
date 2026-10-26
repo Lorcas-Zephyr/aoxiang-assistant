@@ -47,6 +47,28 @@ final class VisibleCollectionNavigationPolicyTests: XCTestCase {
         XCTAssertTrue(topFrameProbe.matches(rule: .ecampusPortalHome, url: portalHome))
     }
 
+    func testPortalProbeDecisionUsesMainDocumentMarkersAndPreservesRuleMatchDiagnostics() throws {
+        let portalHome = try XCTUnwrap(URL(string: "https://ecampus.nwpu.edu.cn/main.html#/Index"))
+        let signedInProbe = try XCTUnwrap(AuthenticationProbeResult.decode(Data(
+            #"{"mainFrameMarkers":["个人中心","我的待办"],"sameOriginFrameMarkers":[],"inaccessibleFrameCount":0}"#.utf8
+        )))
+
+        XCTAssertTrue(signedInProbe.matches(rule: .ecampusPortalHome, url: portalHome))
+        XCTAssertEqual(
+            signedInProbe.decision(url: portalHome, successRules: [.ecampusPortalHome]),
+            .authenticationSucceeded
+        )
+
+        let probeWithAnSMSMarker = try XCTUnwrap(AuthenticationProbeResult.decode(Data(
+            #"{"mainFrameMarkers":["个人中心","我的待办","sms"],"sameOriginFrameMarkers":[],"inaccessibleFrameCount":0}"#.utf8
+        )))
+        XCTAssertTrue(probeWithAnSMSMarker.matches(rule: .ecampusPortalHome, url: portalHome))
+        XCTAssertEqual(
+            probeWithAnSMSMarker.decision(url: portalHome, successRules: [.ecampusPortalHome]),
+            .smsRequired
+        )
+    }
+
     func testFirstPartyCampusPopupsAreRoutedIntoTheCurrentWebView() throws {
         let policy = VisibleCollectionNavigationPolicy()
         let destinations = [
