@@ -1,5 +1,7 @@
 (function (mode) {
   const allowNavigation = __ALLOW_NAV__;
+  // 校车系统用 localStorage.NO 作为身份参数，首次进入时由原生层注入。
+  const BUS_NO = __BUS_NO__;
   const host = location.hostname;
   const path = location.pathname;
   const stateKey = "__aoxiangAssistantApiState_" + mode;
@@ -284,6 +286,134 @@
     return response
       ? result("electricity_api_raw", { response })
       : result("api_waiting");
+  }
+
+  // ---------------------------------------------------------------- bus --
+  // 校车（后勤通勤车）H5：所有接口都是 POST + x-www-form-urlencoded，
+  // 身份参数 no/GH 取自 localStorage.NO，可由原生层注入的 BUS_NO 兜底。
+  // 详见 docs/HQ_BUS_API.md。
+
+  const busIdentity = () => {
+    let value = "";
+    try {
+      value = String(localStorage.getItem("NO") || "").trim();
+    } catch (ignored) {}
+    if (!value) value = String(BUS_NO == null ? "" : BUS_NO).trim();
+    if (value) {
+      try { localStorage.setItem("NO", value); } catch (ignored) {}
+    }
+    return value;
+  };
+
+  const busBody = (fields) => Object.keys(fields)
+    .map((key) => encodeURIComponent(key) + "=" + encodeURIComponent(String(fields[key] == null ? "" : fields[key])))
+    .join("&") + "&";
+
+  const busPost = async (path, fields) => {
+    const response = await fetchResponse(path, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        Accept: "application/json, text/plain, */*"
+      },
+      body: busBody(fields)
+    });
+    if (!response.ok) throw new Error("HTTP " + response.status + " " + path);
+    return response.json();
+  };
+
+  const busDate = (date) =>
+    date.getFullYear() + "/" + (date.getMonth() + 1) + "/" + date.getDate();
+
+  const busIsoDate = (date) =>
+    date.getFullYear() + "-" + String(date.getMonth() + 1).padStart(2, "0") + "-" +
+    String(date.getDate()).padStart(2, "0");
+
+  const busItems = (response) => {
+    const data = response && response.data;
+    return Array.isArray(data) ? data : [];
+  };
+
+  const collectBus = async () => {
+    const no = busIdentity();
+    if (!no) throw new Error("校车身份参数缺失，请先在应用内打开一次校车页面");
+    const today = new Date();
+    const tomorrow = new Date(today.getTime() + 24 * 3600 * 1000);
+
+    // 我的预约：「待核验」是页面默认筛选，再补一次不带状态的查询，
+    // 以免审核中的记录被过滤掉。两次结果按内容去重。
+    const reservations = [];
+    const seen = new Set();
+    for (const status of ["待核验", ""]) {
+      let response;
+      try {
+        response = await busPost("/api/GetMyAppointment", { YYRGH: no, YYZT: status, no });
+      } catch (ignored) {
+        continue;
+      }
+      const data = response && response.data;
+      const list = data && Array.isArray(data.list) ? data.list : [];
+      list.forEach((item) => {
+        const key = JSON.stringify(item);
+        if (seen.has(key)) return;
+        seen.add(key);
+        reservations.push(item);
+      });
+    }
+
+    let routesResponse = null;
+    try {
+      routesResponse = await busPost("/api/GetRouteByType", { type: "通勤车", no });
+    } catch (ignored) {}
+    const routes = routesResponse && routesResponse.data &&
+      Array.isArray(routesResponse.data.filteredBusRoutes)
+      ? routesResponse.data.filteredBusRoutes : [];
+
+    // 只取今明两天的班次，避免把预约提醒变成批量扫描。
+    const groups = [];
+    for (const route of routes.slice(0, 4)) {
+      for (const day of [today, tomorrow]) {
+        let response;
+        try {
+          response = await busPost("/api/GetReserveInfoList", {
+            rq: busDate(day),
+            xllx: "通勤车",
+            xlId: route.Objid,
+            gh: no,
+            no
+          });
+        } catch (ignored) {
+          continue;
+        }
+        const items = busItems(response);
+        if (!items.length) continue;
+        groups.push({
+          date: busIsoDate(day),
+          routeId: route.Objid || "",
+          routeName: route.Name || "",
+          items
+        });
+      }
+    }
+
+    return {
+      phase: "bus_api_raw",
+      no,
+      routes: routesResponse,
+      reservations: { isSuccess: true, data: { list: reservations } },
+      tripGroups: groups
+    };
+  };
+
+  if (mode === "bus") {
+    if (host !== "hq-bus.nwpu.edu.cn") return result("api_unavailable");
+    if (!path.startsWith("/h5")) {
+      if (!allowNavigation) return result("api_unavailable");
+      location.replace(location.origin + "/h5/");
+      return result("clicked", { clicked: "direct_api_bus" });
+    }
+    if (!document.querySelector("#app")) return result("api_waiting");
+    return launch(collectBus);
   }
 
   return result("api_unavailable");

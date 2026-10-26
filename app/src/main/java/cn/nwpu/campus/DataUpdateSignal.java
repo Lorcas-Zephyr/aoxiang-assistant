@@ -10,6 +10,7 @@ public final class DataUpdateSignal {
     public static final String TARGET_GRADES = "grades";
     public static final String TARGET_SCHEDULE = "schedule";
     public static final String TARGET_ELECTRICITY = "electricity";
+    public static final String TARGET_BUS = "bus";
 
     private static final String PREFERENCES = "campus_private";
     private static final String REVISION_PREFIX = "data_revision_";
@@ -35,7 +36,8 @@ public final class DataUpdateSignal {
     public static boolean isValidTarget(String target) {
         return TARGET_GRADES.equals(target)
                 || TARGET_SCHEDULE.equals(target)
-                || TARGET_ELECTRICITY.equals(target);
+                || TARGET_ELECTRICITY.equals(target)
+                || TARGET_BUS.equals(target);
     }
 
     private static String revisionKey(String target) {
