@@ -904,3 +904,6 @@
   whether the callback URL still matches the WebView's current page.
 - Root cause remains unconfirmed until the `1.0.3 (8)` probe runs on the iPad.
   Electricity routes, acceptance behavior, and the visible collection flow are unchanged.
+- Commit `da581c9` passed macOS Action `40377594375`; the archive version check and
+  Widget layout verification succeeded. Artifact `AoxiangAssistant-ipa-variants-29`
+  (7,641,162 bytes) is available for the next iPad probe.

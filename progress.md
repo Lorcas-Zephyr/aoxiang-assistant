@@ -945,5 +945,9 @@
 - Verification passed: Python 130, AoxiangCore 98, AoxiangApp 73, Swift syntax parse,
   and `git diff --check`. CodeGraph sync completed and reports an up-to-date index
   (169 files, 3,496 nodes, 10,070 edges).
-- Push and the new macOS IPA Action remain pending; the iPad runtime result is still
-  required to confirm the root cause.
+- Commit `da581c9` is pushed to `origin/iOS`. Action `40377594375` succeeded for the
+  matching commit, including portable Swift tests, the unsigned device archive, IPA
+  bundle-layout checks, and artifact upload. Artifact `AoxiangAssistant-ipa-variants-29`
+  is 7,641,162 bytes; the builder validated archive version `1.0.3 (8)`.
+- The iPad runtime result remains required to confirm the root cause; the visible
+  authentication and electricity collection behavior is unchanged in this build.

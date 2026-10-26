@@ -1022,7 +1022,8 @@ until the device reports which stage failed.
   builder defaults, and version tests.
 - [x] Run Python 130, AoxiangCore 98, AoxiangApp 73, Swift parse,
   `git diff --check`, and sync CodeGraph.
-- [ ] Push the diagnostic version and verify the macOS IPA Action.
+- [x] Push the diagnostic version and verify the macOS IPA Action `40377594375`;
+  artifact `AoxiangAssistant-ipa-variants-29` passed version and Widget-layout checks.
 - [ ] Use the `1.0.3 (8)` device result to identify the failing boundary before changing
   authentication or electricity behavior.
 
