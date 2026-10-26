@@ -157,10 +157,10 @@ public struct VisibleCollectionNavigationPolicy {
         guard targetFrameIsNil,
               let url,
               url.scheme?.lowercased() == "https",
-              url.host?.lowercased() == "jwxt.nwpu.edu.cn" else {
+              let host = url.host?.lowercased() else {
             return false
         }
-        return url.path.lowercased().hasPrefix("/student/")
+        return host == "nwpu.edu.cn" || host.hasSuffix(".nwpu.edu.cn")
     }
 
     public static func electricityRedirectURL(token: String) -> URL? {
@@ -392,6 +392,7 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
     private let sessionStore: AuthenticationSessionStore
     private var lastInspectedURLKey: String?
     private var stateDetectionInFlight = false
+    private var authenticationHydrationTask: Task<Void, Never>?
     private var electricityContinuation: CheckedContinuation<Double, Error>?
     private var electricityTimeoutTask: Task<Void, Never>?
     private var electricityPollTask: Task<Void, Never>?
@@ -454,6 +455,8 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
     }
 
     public func startInteractiveLogin() {
+        authenticationHydrationTask?.cancel()
+        authenticationHydrationTask = nil
         machine = AuthenticationStateMachine()
         state = machine.state
         sessionStore.set(state)
@@ -783,6 +786,7 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
 
     public func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         detectAuthenticationState(in: webView)
+        scheduleAuthenticationHydrationRetry(in: webView)
         if educationContinuation != nil,
            navigationPolicy.isAuthenticationRedirect(
                webView.url,
@@ -2883,6 +2887,36 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
                 }
             }
         )
+    }
+
+    private func scheduleAuthenticationHydrationRetry(in webView: WKWebView) {
+        authenticationHydrationTask?.cancel()
+        authenticationHydrationTask = nil
+        guard state == .needsLogin,
+              let url = webView.url,
+              let host = url.host?.lowercased(),
+              isAllowedHost(host),
+              let inspectionKey = VisibleCollectionNavigationPolicy.sanitizedInspectionURLKey(for: url) else {
+            return
+        }
+
+        authenticationHydrationTask = Task { @MainActor [weak self, weak webView] in
+            for _ in 0..<12 {
+                do {
+                    try await Task.sleep(nanoseconds: 500_000_000)
+                } catch {
+                    return
+                }
+                guard let self, let webView, !Task.isCancelled,
+                      self.state == .needsLogin,
+                      let currentURL = webView.url,
+                      VisibleCollectionNavigationPolicy.sanitizedInspectionURLKey(for: currentURL) == inspectionKey else {
+                    return
+                }
+                self.detectAuthenticationState(in: webView)
+            }
+            self?.authenticationHydrationTask = nil
+        }
     }
 
     private func isAllowedHost(_ host: String) -> Bool {

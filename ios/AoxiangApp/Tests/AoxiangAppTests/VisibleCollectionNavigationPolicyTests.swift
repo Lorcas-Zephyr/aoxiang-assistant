@@ -22,24 +22,41 @@ final class VisibleCollectionNavigationPolicyTests: XCTestCase {
             body: "统一身份认证 用户名 密码 登录"
         ))
         XCTAssertFalse(rule.matches(
+            url: portalHome,
+            body: "个人中心"
+        ))
+        XCTAssertFalse(rule.matches(
             url: URL(string: "https://example.com/main.html#/Index")!,
             body: "郑又祥 个人中心 我的待办"
         ))
     }
 
-    func testOnlyJWXTStudentPopupIsRoutedIntoTheCurrentWebView() throws {
+    func testFirstPartyCampusPopupsAreRoutedIntoTheCurrentWebView() throws {
         let policy = VisibleCollectionNavigationPolicy()
+        let destinations = [
+            "https://jwxt.nwpu.edu.cn/student/home",
+            "https://jwxt.nwpu.edu.cn/",
+            "https://ecampus.nwpu.edu.cn/main.html#/Index",
+            "https://ehall.nwpu.edu.cn/app",
+            "https://nwpu.edu.cn/",
+        ]
 
-        XCTAssertTrue(policy.shouldRouteEducationPopupInSameWebView(
-            try XCTUnwrap(URL(string: "https://jwxt.nwpu.edu.cn/student/home")),
-            targetFrameIsNil: true
-        ))
+        for destination in destinations {
+            XCTAssertTrue(policy.shouldRouteEducationPopupInSameWebView(
+                try XCTUnwrap(URL(string: destination)),
+                targetFrameIsNil: true
+            ), destination)
+        }
         XCTAssertFalse(policy.shouldRouteEducationPopupInSameWebView(
             try XCTUnwrap(URL(string: "https://jwxt.nwpu.edu.cn/student/home")),
             targetFrameIsNil: false
         ))
         XCTAssertFalse(policy.shouldRouteEducationPopupInSameWebView(
-            try XCTUnwrap(URL(string: "https://example.com/student/home")),
+            try XCTUnwrap(URL(string: "https://nwpu.edu.cn.example.com/app")),
+            targetFrameIsNil: true
+        ))
+        XCTAssertFalse(policy.shouldRouteEducationPopupInSameWebView(
+            try XCTUnwrap(URL(string: "https://example.com/app")),
             targetFrameIsNil: true
         ))
         XCTAssertFalse(policy.shouldRouteEducationPopupInSameWebView(
