@@ -346,9 +346,22 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
     private var educationContinuation: CheckedContinuation<PortalVisibleEducationData, Error>?
     private var educationTimeoutTask: Task<Void, Never>?
     private var educationEvaluationInFlight = false
+    private enum CommuterBusStage: Equatable {
+        case loadingStudentPage
+        case resolvingStudentID
+        case loadingBusPage
+        case collecting
+    }
+    private var commuterBusContinuation: CheckedContinuation<Data, Error>?
+    private var commuterBusTimeoutTask: Task<Void, Never>?
+    private var commuterBusStage: CommuterBusStage?
+    private var commuterBusEvaluationInFlight = false
+    private var commuterBusStudentID: String?
+    private var commuterBusNavigationCancellationExpected = false
     private let studentGradeURL = URL(string: "https://jwxt.nwpu.edu.cn/student/for-std/grade/sheet/")!
     private let studentPortraitURL = URL(string: "https://jwxt.nwpu.edu.cn/student/for-std/student-portrait")!
     private let electricityLoginURL = VisibleCollectionNavigationPolicy.electricityCASBootstrapURL
+    private let commuterBusHomeURL = URL(string: "https://hq-bus.nwpu.edu.cn/h5/")!
     private let navigationPolicy = VisibleCollectionNavigationPolicy()
 
     public init(
@@ -455,7 +468,8 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
         guard state == .readyToCollect else {
             throw PortalCollectionFailure.invalidResponse("collection not prepared")
         }
-        guard electricityContinuation == nil, portraitContinuation == nil else {
+        guard electricityContinuation == nil, portraitContinuation == nil,
+              educationContinuation == nil, commuterBusContinuation == nil else {
             throw PortalCollectionFailure.retryable(.invalidResponse)
         }
         // Match Android's business-time guard. A settlement-window attempt
@@ -522,7 +536,8 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
         guard state == .readyToCollect else {
             throw PortalCollectionFailure.invalidResponse("collection not prepared")
         }
-        guard electricityContinuation == nil, portraitContinuation == nil else {
+        guard electricityContinuation == nil, portraitContinuation == nil,
+              educationContinuation == nil, commuterBusContinuation == nil else {
             throw PortalCollectionFailure.retryable(.invalidResponse)
         }
         return try await withTaskCancellationHandler(operation: {
@@ -561,7 +576,7 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
             throw PortalCollectionFailure.invalidResponse("collection not prepared")
         }
         guard electricityContinuation == nil, portraitContinuation == nil,
-              educationContinuation == nil else {
+              educationContinuation == nil, commuterBusContinuation == nil else {
             throw PortalCollectionFailure.retryable(.invalidResponse)
         }
         return try await withTaskCancellationHandler(operation: {
@@ -589,6 +604,49 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
         }, onCancel: { [weak self] in
             Task { @MainActor [weak self] in
                 self?.finishEducation(.failure(PortalCollectionFailure.cancelled))
+            }
+        })
+    }
+
+    /// Resolves the authenticated student number on the education origin,
+    /// then runs the Android-compatible bus collector on its own H5 origin.
+    /// Only sanitized JSON crosses back to native code.
+    public func collectCommuterBusSnapshot() async throws -> Data {
+        guard state == .readyToCollect else {
+            throw PortalCollectionFailure.invalidResponse("collection not prepared")
+        }
+        guard electricityContinuation == nil, portraitContinuation == nil,
+              educationContinuation == nil, commuterBusContinuation == nil else {
+            throw PortalCollectionFailure.retryable(.invalidResponse)
+        }
+        return try await withTaskCancellationHandler(operation: {
+            try await withCheckedThrowingContinuation { continuation in
+                guard !Task.isCancelled else {
+                    continuation.resume(throwing: PortalCollectionFailure.cancelled)
+                    return
+                }
+                commuterBusContinuation = continuation
+                commuterBusStage = .loadingStudentPage
+                commuterBusEvaluationInFlight = false
+                commuterBusStudentID = nil
+                commuterBusNavigationCancellationExpected = false
+                commuterBusTimeoutTask?.cancel()
+                commuterBusTimeoutTask = Task { [weak self] in
+                    try? await Task.sleep(nanoseconds: 90_000_000_000)
+                    guard !Task.isCancelled else { return }
+                    await MainActor.run {
+                        self?.finishCommuterBus(.failure(PortalCollectionFailure.retryable(.serverUnavailable)))
+                    }
+                }
+                guard !Task.isCancelled else {
+                    finishCommuterBus(.failure(PortalCollectionFailure.cancelled))
+                    return
+                }
+                webView.load(URLRequest(url: studentGradeURL))
+            }
+        }, onCancel: { [weak self] in
+            Task { @MainActor [weak self] in
+                self?.finishCommuterBus(.failure(PortalCollectionFailure.cancelled))
             }
         })
     }
@@ -661,9 +719,20 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
             finishPortrait(.failure(PortalCollectionFailure.authenticationRequired))
             return
         }
+        if commuterBusContinuation != nil,
+           commuterBusStage == .loadingStudentPage,
+           navigationPolicy.isAuthenticationRedirect(
+               webView.url,
+               target: .education,
+               allowsExpectedElectricityCASBootstrap: false
+           ) {
+            finishCommuterBus(.failure(PortalCollectionFailure.authenticationRequired))
+            return
+        }
         handleEducationNavigation(in: webView)
         handlePortraitNavigation(in: webView)
         handleElectricityNavigation(in: webView)
+        handleCommuterBusNavigation(in: webView)
     }
 
     public func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
@@ -691,6 +760,9 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
         if educationContinuation != nil {
             finishEducation(.failure(PortalCollectionFailure.retryable(.networkUnavailable)))
         }
+        if commuterBusContinuation != nil {
+            finishCommuterBus(.failure(PortalCollectionFailure.retryable(.networkUnavailable)))
+        }
     }
 
     public func webView(
@@ -709,12 +781,15 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
         if educationContinuation != nil {
             finishEducation(.failure(PortalCollectionFailure.retryable(.networkUnavailable)))
         }
+        if commuterBusContinuation != nil {
+            finishCommuterBus(.failure(PortalCollectionFailure.retryable(.networkUnavailable)))
+        }
     }
 
     private func recordNavigationFailure(_ error: Error) {
         lastError = error.localizedDescription
         let operation: AuthenticationOperation =
-            (electricityContinuation != nil || portraitContinuation != nil || educationContinuation != nil)
+            (electricityContinuation != nil || portraitContinuation != nil || educationContinuation != nil || commuterBusContinuation != nil)
                 ? .collection
                 : .login
         transition(.retryableFailure(RetryableAuthenticationFailure(
@@ -728,7 +803,14 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
     /// the replacement is proceeding normally; treating it as a network
     /// failure aborts collection before `/jfdt` has a chance to load.
     private func isExpectedNavigationCancellation(_ error: Error) -> Bool {
-        VisibleCollectionNavigationPolicy.isExpectedWebViewNavigationInterruption(
+        if (error as NSError).code == NSURLErrorCancelled {
+            if commuterBusContinuation != nil { return true }
+            if commuterBusNavigationCancellationExpected {
+                commuterBusNavigationCancellationExpected = false
+                return true
+            }
+        }
+        return VisibleCollectionNavigationPolicy.isExpectedWebViewNavigationInterruption(
             error,
             duringElectricityHandoff: electricityContinuation != nil &&
                 electricityNavigationHandoffPending
@@ -781,6 +863,87 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
                 self.educationEvaluationInFlight = false
                 self.finishEducation(.failure(PortalCollectionFailure.retryable(.serverUnavailable)))
             }
+        }
+    }
+
+    private func handleCommuterBusNavigation(in webView: WKWebView) {
+        guard commuterBusContinuation != nil,
+              !commuterBusEvaluationInFlight,
+              let url = webView.url,
+              let stage = commuterBusStage else { return }
+
+        switch stage {
+        case .loadingStudentPage:
+            guard url.host?.lowercased() == studentGradeURL.host?.lowercased(),
+                  isEducationCollectionPage(url.path) else { return }
+            commuterBusStage = .resolvingStudentID
+            commuterBusEvaluationInFlight = true
+            Task { @MainActor [weak self, weak webView] in
+                guard let self, let webView else { return }
+                do {
+                    let value = try await webView.callAsyncJavaScript(
+                        Self.commuterBusStudentIDScript,
+                        arguments: [:],
+                        in: nil,
+                        contentWorld: .page
+                    )
+                    guard self.commuterBusContinuation != nil else { return }
+                    self.commuterBusEvaluationInFlight = false
+                    guard let studentID = (value as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
+                          !studentID.isEmpty else {
+                        self.finishCommuterBus(.failure(PortalCollectionFailure.retryable(.invalidResponse)))
+                        return
+                    }
+                    self.commuterBusStudentID = studentID
+                    self.commuterBusStage = .loadingBusPage
+                    webView.load(URLRequest(url: self.commuterBusHomeURL))
+                } catch {
+                    guard self.commuterBusContinuation != nil else { return }
+                    self.commuterBusEvaluationInFlight = false
+                    self.finishCommuterBus(.failure(PortalCollectionFailure.retryable(.serverUnavailable)))
+                }
+            }
+
+        case .loadingBusPage:
+            guard url.host?.lowercased() == commuterBusHomeURL.host?.lowercased(),
+                  url.path.lowercased().hasPrefix("/h5") else { return }
+            commuterBusStage = .collecting
+            commuterBusEvaluationInFlight = true
+            Task { @MainActor [weak self, weak webView] in
+                guard let self, let webView else { return }
+                do {
+                    guard let studentID = self.commuterBusStudentID else {
+                        throw PortalCollectionFailure.retryable(.invalidResponse)
+                    }
+                    let script = try Self.commuterBusCollectionScript(studentID: studentID)
+                    let value = try await webView.callAsyncJavaScript(
+                        script,
+                        arguments: [:],
+                        in: nil,
+                        contentWorld: .page
+                    )
+                    guard self.commuterBusContinuation != nil else { return }
+                    self.commuterBusEvaluationInFlight = false
+                    guard let data = VisibleCollectionJavaScriptResult.jsonData(from: value),
+                          let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                          root["phase"] as? String == "bus_api_raw" else {
+                        self.finishCommuterBus(.failure(PortalCollectionFailure.retryable(.invalidResponse)))
+                        return
+                    }
+                    self.finishCommuterBus(.success(data))
+                } catch let failure as PortalCollectionFailure {
+                    guard self.commuterBusContinuation != nil else { return }
+                    self.commuterBusEvaluationInFlight = false
+                    self.finishCommuterBus(.failure(failure))
+                } catch {
+                    guard self.commuterBusContinuation != nil else { return }
+                    self.commuterBusEvaluationInFlight = false
+                    self.finishCommuterBus(.failure(PortalCollectionFailure.retryable(.serverUnavailable)))
+                }
+            }
+
+        case .resolvingStudentID, .collecting:
+            return
         }
     }
 
@@ -1255,6 +1418,63 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
         guard let continuation = educationContinuation else { return }
         educationContinuation = nil
         continuation.resume(with: result)
+    }
+
+    private func finishCommuterBus(_ result: Result<Data, Error>) {
+        commuterBusTimeoutTask?.cancel()
+        commuterBusTimeoutTask = nil
+        commuterBusEvaluationInFlight = false
+        commuterBusStage = nil
+        commuterBusStudentID = nil
+        guard let continuation = commuterBusContinuation else { return }
+        commuterBusContinuation = nil
+        if case .failure(let error) = result,
+           let failure = error as? PortalCollectionFailure,
+           failure == .cancelled {
+            commuterBusNavigationCancellationExpected = true
+            webView.stopLoading()
+        }
+        continuation.resume(with: result)
+    }
+
+    private static let commuterBusStudentIDScript = #"""
+        (async () => {
+          const clean = value => String(value == null ? '' : value).trim();
+          const direct = clean(window.studentId || window.studentID || window.studentAssoc || '');
+          if (direct) return direct;
+          try {
+            const element = document.querySelector('#studentId, input[name="studentId"], [data-student-id], [data-student-assoc]');
+            const value = clean(element && (element.value || element.getAttribute('data-student-id') || element.getAttribute('data-student-assoc')) || '');
+            if (value) return value;
+          } catch (_) {}
+          try {
+            const response = await fetch('/student/for-std/student-portrait/getStdInfo', {
+              credentials: 'include', cache: 'no-store', headers: { Accept: 'application/json' }
+            });
+            if (!response.ok) return '';
+            const info = await response.json();
+            return clean(info && info.student && (info.student.id || info.student.studentId || info.student.studentAssoc) ||
+              info && (info.studentId || info.studentID || info.studentAssoc) ||
+              info && info.data && (info.data.id || info.data.studentId || info.data.studentAssoc) || '');
+          } catch (_) { return ''; }
+        })()
+    """#
+
+    private static func commuterBusCollectionScript(studentID: String) throws -> String {
+        guard !studentID.isEmpty, studentID.count <= 64,
+              !studentID.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }),
+              let resourceURL = Bundle.module.url(forResource: "CommuterBusCollection", withExtension: "js") else {
+            throw PortalCollectionFailure.invalidResponse("校车采集脚本或教务身份不可用")
+        }
+        let template = try String(contentsOf: resourceURL, encoding: .utf8)
+        guard template.components(separatedBy: "__BUS_NO__").count == 2 else {
+            throw PortalCollectionFailure.invalidResponse("校车采集脚本格式错误")
+        }
+        let literalData = try JSONSerialization.data(withJSONObject: studentID, options: [.fragmentsAllowed])
+        guard let literal = String(data: literalData, encoding: .utf8) else {
+            throw PortalCollectionFailure.invalidResponse("教务身份编码失败")
+        }
+        return template.replacingOccurrences(of: "__BUS_NO__", with: literal)
     }
 
     /// Captures only a validated electricity number from page-owned network

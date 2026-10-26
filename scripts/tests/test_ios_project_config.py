@@ -122,7 +122,7 @@ class IOSProjectConfigurationTest(unittest.TestCase):
             self.assertIn("SUPPORTS_MACCATALYST = NO;", target)
 
     def test_device_validation_build_has_a_new_installable_version(self):
-        self.assertIn("CURRENT_PROJECT_VERSION = 5;", self.project)
+        self.assertIn("CURRENT_PROJECT_VERSION = 6;", self.project)
         self.assertIn("MARKETING_VERSION = 1.0.1;", self.project)
         for info in (self.ios_app_info, self.ios_widget_info):
             self.assertIn(
@@ -230,7 +230,7 @@ class IOSProjectConfigurationTest(unittest.TestCase):
         self.assertIn("sharedContainerAvailable", self.ios_offline_views)
         self.assertIn("App Group", self.ios_offline_views)
         self.assertIn("canRetryCollection", self.ios_offline_views)
-        self.assertIn("interactiveDismissDisabled(isCollecting)", self.ios_offline_views)
+        self.assertIn("interactiveDismissDisabled(isCollecting || isCollectingCommuterBus)", self.ios_offline_views)
 
     def test_all_ipad_navigation_views_force_single_column_layout(self):
         """iPad must not render each tab as a narrow split-navigation sidebar."""
@@ -326,7 +326,7 @@ class IOSProjectConfigurationTest(unittest.TestCase):
         ):
             self.assertIn(required, script)
         self.assertIn('IOS_EXPECTED_MARKETING_VERSION: "1.0.1"', IPA_WORKFLOW_FILE.read_text(encoding="utf-8"))
-        self.assertIn('IOS_EXPECTED_BUILD_VERSION: "5"', IPA_WORKFLOW_FILE.read_text(encoding="utf-8"))
+        self.assertIn('IOS_EXPECTED_BUILD_VERSION: "6"', IPA_WORKFLOW_FILE.read_text(encoding="utf-8"))
 
     def test_re_signable_ipa_requires_widget_bundle_to_be_an_app_extension(self):
         build_script = IPA_BUILD_SCRIPT.read_text(encoding="utf-8")

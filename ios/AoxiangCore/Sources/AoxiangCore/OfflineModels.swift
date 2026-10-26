@@ -347,9 +347,12 @@ public struct OfflineAppState: Codable, Equatable {
     /// Latest locally collected electricity value. It is private app state and
     /// deliberately excluded from the portable Android backup envelope.
     public var electricityBalance: Double?
+    /// Bus routes, trips and appointments are account-local and are deliberately
+    /// excluded from the portable schedule backup.
+    public var commuterBus: CommuterBusSnapshot
 
     private enum CodingKeys: String, CodingKey {
-        case schemaVersion, courses, semesters, selectedSemesterId, display, grades, gpa, electricityBalance
+        case schemaVersion, courses, semesters, selectedSemesterId, display, grades, gpa, electricityBalance, commuterBus
     }
 
     public init(
@@ -360,7 +363,8 @@ public struct OfflineAppState: Codable, Equatable {
         display: OfflineDisplaySettings = OfflineDisplaySettings(),
         grades: [OfflineGrade] = [],
         gpa: Double? = nil,
-        electricityBalance: Double? = nil
+        electricityBalance: Double? = nil,
+        commuterBus: CommuterBusSnapshot = CommuterBusSnapshot()
     ) {
         self.schemaVersion = schemaVersion
         self.courses = courses
@@ -370,6 +374,7 @@ public struct OfflineAppState: Codable, Equatable {
         self.grades = grades
         self.gpa = gpa
         self.electricityBalance = electricityBalance
+        self.commuterBus = commuterBus
     }
 
     public init(from decoder: Decoder) throws {
@@ -382,6 +387,8 @@ public struct OfflineAppState: Codable, Equatable {
         grades = try values.decodeIfPresent([OfflineGrade].self, forKey: .grades) ?? []
         gpa = try values.decodeIfPresent(Double.self, forKey: .gpa)
         electricityBalance = try values.decodeIfPresent(Double.self, forKey: .electricityBalance)
+        commuterBus = try values.decodeIfPresent(CommuterBusSnapshot.self, forKey: .commuterBus)
+            ?? CommuterBusSnapshot()
     }
 
     public func validated() throws -> OfflineAppState {
@@ -443,6 +450,7 @@ public struct OfflineAppState: Codable, Equatable {
         if let gpa, !gpa.isFinite || !(0.0...5.0).contains(gpa) {
             throw OfflineDataError.invalidField("gpa")
         }
+        _ = try commuterBus.validated()
         return self
     }
 }

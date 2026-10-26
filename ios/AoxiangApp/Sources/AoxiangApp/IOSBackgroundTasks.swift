@@ -351,6 +351,79 @@ private struct SystemNotificationAuthorizationPort: IOSNotificationAuthorization
     }
 }
 
+public enum IOSCommuterBusReminderScheduler {
+    private static let departurePrefix = "aoxiang-bus-departure-"
+    private static let statusPrefix = "aoxiang-bus-status-"
+
+    public static func refresh(
+        previous: CommuterBusSnapshot,
+        current: CommuterBusSnapshot,
+        now: Date = Date()
+    ) {
+        let center = UNUserNotificationCenter.current()
+        for reservation in CommuterBusReminderPolicy.statusChanges(
+            previous: previous.reservations,
+            current: current.reservations
+        ) {
+            let content = UNMutableNotificationContent()
+            content.title = "校车预约状态已更新"
+            content.body = "\(reservation.routeName) · \(reservation.date) \(reservation.departureTime)：\(reservation.status)"
+            content.sound = .default
+            center.add(UNNotificationRequest(
+                identifier: statusPrefix + encoded(reservation.id),
+                content: content,
+                trigger: nil
+            ))
+        }
+
+        let eligible = current.reservations.filter {
+            CommuterBusReminderPolicy.canRemindDeparture(for: $0) &&
+                ($0.departureDate().map { $0 > now } ?? false)
+        }
+        let expectedIDs = Set(eligible.map { departurePrefix + encoded($0.id) })
+        center.getPendingNotificationRequests { requests in
+            let staleIDs = requests.map(\.identifier).filter {
+                $0.hasPrefix(departurePrefix) && !expectedIDs.contains($0)
+            }
+            center.removePendingNotificationRequests(withIdentifiers: staleIDs)
+            for reservation in eligible {
+                guard let reminderDate = CommuterBusReminderPolicy.departureReminderDate(for: reservation) else { continue }
+                let content = UNMutableNotificationContent()
+                content.title = "校车即将发车"
+                content.body = "\(reservation.routeName) 将于 \(reservation.departureTime) 发车"
+                content.sound = .default
+                let trigger: UNNotificationTrigger?
+                if reminderDate <= now {
+                    trigger = nil
+                } else {
+                    var calendar = Calendar(identifier: .gregorian)
+                    calendar.timeZone = CommuterBusDatePolicy.timeZone
+                    let components = calendar.dateComponents([.year, .month, .day, .hour, .minute], from: reminderDate)
+                    trigger = UNCalendarNotificationTrigger(dateMatching: components, repeats: false)
+                }
+                center.add(UNNotificationRequest(
+                    identifier: departurePrefix + encoded(reservation.id),
+                    content: content,
+                    trigger: trigger
+                ))
+            }
+        }
+    }
+
+    public static func cancelAll() {
+        UNUserNotificationCenter.current().getPendingNotificationRequests { requests in
+            let identifiers = requests.map(\.identifier).filter {
+                $0.hasPrefix(departurePrefix) || $0.hasPrefix(statusPrefix)
+            }
+            UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: identifiers)
+        }
+    }
+
+    private static func encoded(_ value: String) -> String {
+        value.unicodeScalars.map { String($0.value, radix: 16) }.joined(separator: "-")
+    }
+}
+
 public final class IOSUserAttentionNotifier: SyncUserAttentionNotifier, IOSNotificationAuthorizationPort {
     private let authorization: IOSNotificationAuthorizationPort
 

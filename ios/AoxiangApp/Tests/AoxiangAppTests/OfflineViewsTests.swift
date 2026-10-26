@@ -89,6 +89,32 @@ final class OfflineViewsTests: XCTestCase {
         XCTAssertTrue(source.contains("requestCollection()"))
     }
 
+    func testCommuterBusRefreshAndReadOnlyDetailsAreAvailable() throws {
+        let source = try offlineViewsSource()
+
+        XCTAssertTrue(source.contains("同步路线、班次和预约"))
+        XCTAssertTrue(source.contains("collectCommuterBusSnapshot()"))
+        XCTAssertTrue(source.contains("校车预约与发车提醒"))
+        XCTAssertFalse(source.contains("提交预约"))
+        XCTAssertFalse(source.contains("取消预约"))
+    }
+
+    func testPendingCommuterBusRequestResumesAfterAuthentication() throws {
+        let source = try offlineViewsSource()
+
+        XCTAssertTrue(source.contains(
+            "guard pendingCommuterBusStart, canStartCommuterBusCollection else { return }"
+        ))
+        XCTAssertTrue(source.contains(
+            "if pendingCommuterBusStart {\n                beginPendingCommuterBusIfNeeded()\n            } else {\n                requestCollection()\n            }"
+        ))
+    }
+
+    func testScheduleCourseColorBlocksUseHalfOpacity() throws {
+        let source = try offlineViewsSource()
+        XCTAssertTrue(source.contains("courseColor(course).opacity(0.5)"))
+    }
+
     private func offlineViewsSource() throws -> String {
         let appRoot = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()

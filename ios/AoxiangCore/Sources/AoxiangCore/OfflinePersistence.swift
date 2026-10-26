@@ -134,6 +134,9 @@ public final class OfflineDataController {
         // field as an instruction to delete them.
         var candidate = imported
         candidate.grades = state.grades
+        candidate.gpa = state.gpa
+        candidate.electricityBalance = state.electricityBalance
+        candidate.commuterBus = state.commuterBus
         return try replace(candidate, allowingRecovery: true)
     }
 

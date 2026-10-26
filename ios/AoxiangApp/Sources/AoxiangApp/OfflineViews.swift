@@ -4,6 +4,7 @@ import AoxiangCore
 #if os(iOS) && canImport(SwiftUI)
 import SwiftUI
 import UniformTypeIdentifiers
+import UserNotifications
 
 public struct AoxiangRootView: View {
     @StateObject private var model: OfflineAppViewModel
@@ -104,6 +105,31 @@ public struct HomeScreen: View {
                             Text(meetingDescription(meeting.course, slot: meeting.timeSlot))
                                 .font(.caption).foregroundColor(.secondary)
                         }
+                    }
+                }
+                Section("校车") {
+                    if let reservation = model.state.commuterBus.nextReservation() {
+                        HStack {
+                            Text("最近预约")
+                            Spacer()
+                            Text("\(reservation.routeName) · \(reservation.date) \(reservation.departureTime)")
+                                .foregroundColor(.secondary)
+                                .lineLimit(1)
+                        }
+                        Text(reservation.status).font(.caption).foregroundColor(.secondary)
+                    } else if let trip = model.state.commuterBus.nextOpenTrip() {
+                        HStack {
+                            Text("下一班可预约")
+                            Spacer()
+                            Text("\(trip.routeName) · \(trip.departureTime) · 余 \(trip.remainingSeats.map(String.init) ?? "--")")
+                                .foregroundColor(.secondary)
+                                .lineLimit(1)
+                        }
+                    } else {
+                        Text("同步后查看路线、班次和预约").foregroundColor(.secondary)
+                    }
+                    Button { model.selectedTab = .management } label: {
+                        Label("查看校车信息", systemImage: "bus")
                     }
                 }
             }
@@ -228,13 +254,20 @@ public struct ScheduleScreen: View {
                 } else {
                     ForEach(courses) { course in
                         Button { selectedCourse = course } label: {
-                          VStack(alignment: .leading, spacing: 4) {
-                            Text(course.name).font(.headline)
-                            ForEach(Array(course.timeSlots.enumerated()), id: \.offset) { _, slot in
-                                Text("周\(slot.dayOfWeek) · 第\(slot.classSections.map(String.init).joined(separator: ","))节 · \(slot.repeatRule.rawValue.isEmpty ? "每周" : slot.repeatRule.rawValue)")
-                                    .font(.caption).foregroundColor(.secondary)
+                            HStack(spacing: 10) {
+                                RoundedRectangle(cornerRadius: 3)
+                                    .fill(courseColor(course).opacity(0.5))
+                                    .frame(width: 8)
+                                    .frame(maxHeight: .infinity)
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(course.name).font(.headline)
+                                    ForEach(Array(course.timeSlots.enumerated()), id: \.offset) { _, slot in
+                                        Text("周\(slot.dayOfWeek) · 第\(slot.classSections.map(String.init).joined(separator: ","))节 · \(slot.repeatRule.rawValue.isEmpty ? "每周" : slot.repeatRule.rawValue)")
+                                            .font(.caption).foregroundColor(.secondary)
+                                    }
+                                }
                             }
-                          }
+                            .padding(.vertical, 3)
                         }.buttonStyle(.plain)
                     }
                 }
@@ -253,6 +286,30 @@ public struct ScheduleScreen: View {
               let current = OfflineScheduleService.academicWeek(for: Date(), semester: semester, calendar: calendar) else { return all }
         let week = max(1, current + weekOffset)
         return all.filter { course in course.timeSlots.contains { OfflineScheduleService.isWeekActive(week, weekRange: $0.weekRange, repeatRule: $0.repeatRule) } }
+    }
+
+    private func courseColor(_ course: OfflineCourse) -> Color {
+        if let raw = course.color?.trimmingCharacters(in: .whitespacesAndNewlines),
+           let parsed = Color(hexString: raw) {
+            return parsed
+        }
+        let palette: [Color] = [.blue, .green, .orange, .pink, .teal, .indigo, .red]
+        let stableIndex = course.id.unicodeScalars.reduce(0) { ($0 + Int($1.value)) % palette.count }
+        return palette[stableIndex]
+    }
+}
+
+private extension Color {
+    init?(hexString: String) {
+        let value = hexString.trimmingCharacters(in: CharacterSet.alphanumerics.inverted)
+        guard value.count == 6 || value.count == 8,
+              let number = UInt64(value, radix: 16) else { return nil }
+        let hasAlpha = value.count == 8
+        let red = Double((number >> (hasAlpha ? 24 : 16)) & 0xFF) / 255
+        let green = Double((number >> (hasAlpha ? 16 : 8)) & 0xFF) / 255
+        let blue = Double((number >> (hasAlpha ? 8 : 0)) & 0xFF) / 255
+        let alpha = hasAlpha ? Double(number & 0xFF) / 255 : 1
+        self.init(.sRGB, red: red, green: green, blue: blue, opacity: alpha)
     }
 }
 
@@ -286,6 +343,7 @@ public struct SettingsScreen: View {
     @AppStorage("aoxiang_auto_update") private var automaticUpdates = true
     @AppStorage("aoxiang_notifications") private var notifications = true
     @AppStorage("aoxiang_electricity_reminder") private var electricityReminder = true
+    @AppStorage("aoxiang_commuter_bus_reminders") private var commuterBusReminders = false
     @State private var showingAbout = false
 
     public init(model: OfflineAppViewModel) { self.model = model }
@@ -301,6 +359,7 @@ public struct SettingsScreen: View {
                 Section("偏好") {
                     Toggle("通知", isOn: $notifications)
                     Toggle("电费提醒", isOn: $electricityReminder)
+                    Toggle("校车预约与发车提醒", isOn: $commuterBusReminders)
                     Toggle("深色模式", isOn: Binding(
                         get: { model.state.display.darkMode },
                         set: { model.setDarkMode($0) }
@@ -317,6 +376,27 @@ public struct SettingsScreen: View {
             }
         }
         .navigationViewStyle(.stack)
+        .onChange(of: commuterBusReminders) { enabled in
+            guard enabled else {
+                IOSCommuterBusReminderScheduler.cancelAll()
+                return
+            }
+            requestAndRefreshCommuterBusReminders()
+        }
+        .onChange(of: notifications) { enabled in
+            if !enabled {
+                IOSCommuterBusReminderScheduler.cancelAll()
+            } else if commuterBusReminders {
+                requestAndRefreshCommuterBusReminders()
+            }
+        }
+    }
+
+    private func requestAndRefreshCommuterBusReminders() {
+        guard notifications && commuterBusReminders else { return }
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
+        let snapshot = model.state.commuterBus
+        IOSCommuterBusReminderScheduler.refresh(previous: snapshot, current: snapshot)
     }
 
     private func detailRow(_ title: String, _ value: String) -> some View {
@@ -339,13 +419,20 @@ public struct ManagementScreen: View {
     @State private var exportDocument = BackupFileDocument(data: Data())
     @State private var showingAuthentication = false
     @State private var collectionTask: Task<Void, Never>?
+    @State private var commuterBusTask: Task<Void, Never>?
     @State private var collectionStatus: String?
+    @State private var commuterBusStatus: String?
     @State private var electricityIssue: ElectricityCollectionIssue?
     @State private var widgetStatus: String?
     @State private var isCollecting = false
+    @State private var isCollectingCommuterBus = false
     @State private var activeCollectionID: UUID?
+    @State private var activeCommuterBusCollectionID: UUID?
     @State private var pendingCollectionStart = false
+    @State private var pendingCommuterBusStart = false
     @State private var authenticationSurfaceMounted = false
+    @AppStorage("aoxiang_notifications") private var notificationsEnabled = true
+    @AppStorage("aoxiang_commuter_bus_reminders") private var commuterBusReminders = false
     @StateObject private var authenticationModel: VisibleAuthenticationViewModel
 
     public init(model: OfflineAppViewModel) {
@@ -390,6 +477,59 @@ public struct ManagementScreen: View {
                         Text("将重新刷新成绩、课表和电费")
                             .font(.caption)
                             .foregroundColor(.secondary)
+                    }
+                }
+                Section("校车") {
+                    Button(action: requestCommuterBusCollection) {
+                        Label(
+                            isCollectingCommuterBus ? "正在查询校车" : "同步路线、班次和预约",
+                            systemImage: isCollectingCommuterBus ? "hourglass" : "bus"
+                        )
+                    }
+                    .disabled(isCollectingCommuterBus || isCollecting)
+                    if let commuterBusStatus {
+                        Text(commuterBusStatus).font(.caption).foregroundColor(.secondary)
+                    }
+                    if model.state.commuterBus.updatedAt > 0 {
+                        let updatedAt = model.state.commuterBus.updatedAt
+                        Text("上次更新：\(Date(timeIntervalSince1970: TimeInterval(updatedAt) / 1000).formatted(date: .abbreviated, time: .shortened))")
+                            .font(.caption).foregroundColor(.secondary)
+                    }
+                    if model.state.commuterBus.routes.isEmpty {
+                        Text("暂无已保存路线").foregroundColor(.secondary)
+                    } else {
+                        ForEach(model.state.commuterBus.routes) { route in
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(route.name)
+                                Text([route.stationText, route.studentCharge.isEmpty ? nil : "学生 \(route.studentCharge) 元"]
+                                    .compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · "))
+                                    .font(.caption).foregroundColor(.secondary)
+                            }
+                        }
+                    }
+                    if !model.state.commuterBus.trips.isEmpty {
+                        ForEach(model.state.commuterBus.trips) { trip in
+                            HStack {
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text("\(trip.routeName) · \(trip.date) \(trip.departureTime)")
+                                    Text(trip.hint.isEmpty ? (trip.isReservable ? "可预约" : "暂不可预约") : trip.hint)
+                                        .font(.caption).foregroundColor(.secondary)
+                                }
+                                Spacer()
+                                Text("余 \(trip.remainingSeats.map(String.init) ?? "--")")
+                                    .font(.caption)
+                            }
+                        }
+                    }
+                    if model.state.commuterBus.reservations.isEmpty {
+                        Text("暂无预约").foregroundColor(.secondary)
+                    } else {
+                        ForEach(model.state.commuterBus.reservations) { reservation in
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text("\(reservation.routeName) · \(reservation.date) \(reservation.departureTime)")
+                                Text(reservation.status).font(.caption).foregroundColor(.secondary)
+                            }
+                        }
                     }
                 }
                 Section("数据") {
@@ -489,26 +629,34 @@ public struct ManagementScreen: View {
                 AuthenticationScreen(
                     model: authenticationModel,
                     onPrepareToCollect: requestCollection,
-                    isCollecting: isCollecting,
-                    collectionStatus: collectionStatus,
+                    isCollecting: isCollecting || isCollectingCommuterBus,
+                    collectionStatus: isCollectingCommuterBus ? commuterBusStatus : collectionStatus,
                     electricityRetryAvailable: canRetryElectricity
                 )
                 .safeAreaInset(edge: .top, spacing: 0) {
                     if isCollecting {
                         collectionCancellationBar
+                    } else if isCollectingCommuterBus {
+                        collectionCancellationBar
                     }
                 }
-                .interactiveDismissDisabled(isCollecting)
+                .interactiveDismissDisabled(isCollecting || isCollectingCommuterBus)
                 .onAppear { authenticationSurfaceMounted = true }
                 .onAppear { beginPendingCollectionIfNeeded() }
+                .onAppear { beginPendingCommuterBusIfNeeded() }
                 .onDisappear { authenticationSurfaceMounted = false }
             }
             .onDisappear {
                 collectionTask?.cancel()
+                commuterBusTask?.cancel()
             }
             .onChange(of: authenticationModel.state) { newState in
                 guard newState == .authenticated else { return }
+            if pendingCommuterBusStart {
+                beginPendingCommuterBusIfNeeded()
+            } else {
                 requestCollection()
+            }
             }
         }
         .navigationViewStyle(.stack)
@@ -528,6 +676,93 @@ public struct ManagementScreen: View {
         guard pendingCollectionStart else { return }
         pendingCollectionStart = false
         beginCollection()
+    }
+
+    private func requestCommuterBusCollection() {
+        guard !isCollectingCommuterBus && !isCollecting else { return }
+        guard canStartCommuterBusCollection else {
+            pendingCommuterBusStart = true
+            showingAuthentication = true
+            return
+        }
+        guard authenticationSurfaceMounted else {
+            pendingCommuterBusStart = true
+            showingAuthentication = true
+            return
+        }
+        beginCommuterBusCollection()
+    }
+
+    private func beginPendingCommuterBusIfNeeded() {
+        guard pendingCommuterBusStart, canStartCommuterBusCollection else { return }
+        pendingCommuterBusStart = false
+        beginCommuterBusCollection()
+    }
+
+    private var canStartCommuterBusCollection: Bool {
+        authenticationModel.state == .authenticated ||
+            authenticationModel.state == .readyToCollect ||
+            authenticationModel.canRetryCollection
+    }
+
+    private func beginCommuterBusCollection() {
+        guard !isCollectingCommuterBus && !isCollecting else { return }
+        if authenticationModel.canRetryCollection {
+            guard authenticationModel.retryCollection() else {
+                commuterBusStatus = "当前会话无法重试，请重新登录"
+                return
+            }
+        }
+        if authenticationModel.state == .authenticated {
+            authenticationModel.prepareToCollect()
+        }
+        guard authenticationModel.state == .readyToCollect else {
+            commuterBusStatus = "请先完成统一认证"
+            return
+        }
+        showingAuthentication = true
+        isCollectingCommuterBus = true
+        commuterBusStatus = "正在查询路线、班次和预约…"
+        let collectionID = UUID()
+        activeCommuterBusCollectionID = collectionID
+        let previousSnapshot = model.state.commuterBus
+        commuterBusTask?.cancel()
+        commuterBusTask = Task { @MainActor in
+            defer { finishCommuterBusCollection(id: collectionID) }
+            do {
+                let payload = try await authenticationModel.collectCommuterBusSnapshot()
+                guard activeCommuterBusCollectionID == collectionID, !Task.isCancelled else { return }
+                guard let result = model.applyCommuterBusCollection(payload: payload) else {
+                    commuterBusStatus = model.errorMessage ?? "校车数据没有更新；旧数据已保留"
+                    return
+                }
+                let updated = [result.routesComplete, result.tripsComplete, result.reservationsComplete].filter { $0 }.count
+                commuterBusStatus = updated == 3
+                    ? "校车信息已更新"
+                    : "部分校车信息已更新，其余内容保留上次结果"
+                if notificationsEnabled && commuterBusReminders {
+                    IOSCommuterBusReminderScheduler.refresh(
+                        previous: previousSnapshot,
+                        current: result.snapshot
+                    )
+                }
+                showingAuthentication = false
+            } catch let failure as PortalCollectionFailure {
+                guard activeCommuterBusCollectionID == collectionID, !Task.isCancelled else { return }
+                authenticationModel.recordCollectionFailure(failure)
+                commuterBusStatus = failure.localizedDescription
+            } catch {
+                guard activeCommuterBusCollectionID == collectionID, !Task.isCancelled else { return }
+                commuterBusStatus = error.localizedDescription
+            }
+        }
+    }
+
+    private func finishCommuterBusCollection(id: UUID) {
+        guard activeCommuterBusCollectionID == id else { return }
+        activeCommuterBusCollectionID = nil
+        commuterBusTask = nil
+        isCollectingCommuterBus = false
     }
 
     private func beginCollection() {
@@ -641,7 +876,10 @@ public struct ManagementScreen: View {
 
     private var collectionCancellationBar: some View {
         HStack(spacing: 8) {
-            Label("正在采集", systemImage: "arrow.triangle.2.circlepath")
+            Label(
+                isCollectingCommuterBus ? "正在查询校车" : "正在采集",
+                systemImage: "arrow.triangle.2.circlepath"
+            )
                 .font(.caption)
                 .foregroundColor(.secondary)
             Spacer()
@@ -656,14 +894,20 @@ public struct ManagementScreen: View {
     }
 
     private func cancelCollection() {
-        guard isCollecting || collectionTask != nil else { return }
+        guard isCollecting || isCollectingCommuterBus || collectionTask != nil || commuterBusTask != nil else { return }
 
         pendingCollectionStart = false
+        pendingCommuterBusStart = false
         activeCollectionID = nil
+        activeCommuterBusCollectionID = nil
         collectionTask?.cancel()
+        commuterBusTask?.cancel()
         collectionTask = nil
+        commuterBusTask = nil
         isCollecting = false
+        isCollectingCommuterBus = false
         collectionStatus = "已取消采集"
+        commuterBusStatus = "已取消校车同步"
         showingAuthentication = false
     }
 
@@ -676,6 +920,7 @@ public struct ManagementScreen: View {
         activeCollectionID = nil
         collectionTask = nil
         isCollecting = false
+        beginPendingCommuterBusIfNeeded()
     }
 
     private func collectionStatus(for warnings: [PortalCollectionWarning]) -> String {

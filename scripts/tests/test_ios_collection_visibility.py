@@ -52,9 +52,9 @@ class IOSCollectionVisibilityTest(unittest.TestCase):
             "the collection task must start only after the authentication sheet is mounted",
         )
         self.assertIn(
-            ".interactiveDismissDisabled(isCollecting)",
+            ".interactiveDismissDisabled(isCollecting || isCollectingCommuterBus)",
             source,
-            "the collection sheet must not be swiped away while page JavaScript is active",
+            "the authentication sheet must remain mounted during education or bus page JavaScript",
         )
 
     def test_retry_is_consumed_by_one_collection_callback(self):

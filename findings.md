@@ -764,3 +764,57 @@
   configured by `local.properties` is absent; Xcode is unavailable on Windows.
 - Pending release work: commit/push the `iOS` branch and wait for its macOS archive
   workflow, which packages IPA variants and verifies the Widget extension is present.
+
+## 2026-10-26 Android v2.4.0 sync investigation
+
+- CodeGraph CLI is installed and healthy (`164` indexed files, `3,341` nodes,
+  `9,615` edges). MCP wrappers are not exposed in this session, so the matching
+  local CLI was used for file maps and symbol/call-path exploration.
+- `v2.4.0` is tag `eef54af`. Release notes add commuter bus route/trip/remaining-seat
+  reads, reservation refresh and departure/status notifications, plus course-card
+  opacity around 50%.
+- Bus requests use POST form data at `hq-bus.nwpu.edu.cn/h5/`; the portal's dynamic
+  WAF parameters are generated in the page runtime, so requests must stay in that
+  same-origin WebView. Android reads routes, today/tomorrow trips, and appointments
+  with both `待核验` and unfiltered status, then de-duplicates appointments.
+- Android `BusSyncData.merge` tracks route, reservation and trip completeness
+  separately and retains the prior cached section when an API response is partial.
+- `docs/HQ_BUS_API.md` explicitly says submission/cancellation was not captured;
+  only show read-only appointment data on iOS.
+- iOS has an `OfflineAppState`/atomic JSON persistence path, an existing app view model,
+  and best-effort `BackgroundSyncCoordinator`; the latter intentionally does not create
+  hidden WebViews. The current visible collection WebView can host the bus H5 query.
+- The visible education collector already reads `student.id`/`studentId` from the
+  authenticated portal profile endpoint. That identifier can be passed transiently into
+  the bus page; the credential-free authentication state store remains unchanged.
+- The education script currently keeps that identifier inside its JavaScript result path.
+  The bus workflow will make a separate same-origin `callAsyncJavaScript` profile read,
+  then use the value only while querying the bus H5 in the same visible WKWebView.
+- `ManagementScreen` already owns and keeps the authentication sheet mounted for
+  collection. The bus action can reuse that foreground surface and preserve the existing
+  electricity interaction.
+- Android `BusNotifications` covers reservation status changes and one departure alert
+  within 30 minutes; it suppresses initial historical statuses and de-duplicates alerts.
+  Course colors are already persisted in `OfflineCourse.color`, so no schema change is
+  needed to apply the v2.4.0 50% course-block opacity.
+- The repository has a Node-backed visible-collection runtime test harness that can be
+  extended to execute the new bus page script against deterministic mocked responses.
+- iOS background work cannot safely reproduce Android's hidden WebView/WAF refresh.
+  Keep network collection user-triggered and visible, while scheduling local departure
+  reminders from stored reservations.
+
+## 2026-10-26 iOS v2.4.0 parity review
+
+- The commuter-bus request now resumes after login when started from an unauthenticated
+  session. The auth sheet no longer consumes the pending bus action before login.
+- Notification preference changes rebuild departure reminders from persisted
+  reservations; a fresh network query is not required just to enable reminders.
+- The WebView resource is part of the `AoxiangApp` local Swift Package consumed by the
+  Xcode project, so the page-side collector is included through `.process("Resources")`.
+- The current iOS policy remains intentionally foreground-only for bus network access.
+  iOS does not safely recreate Android's authenticated same-origin page/WAF environment
+  in a background task without hidden WebView/session handling; local reminders use the
+  last saved reservation data.
+- Verification on Windows: Python 129, Core 97, App 66; the new login-resume test was
+  demonstrated red then green; `git diff --check` passes. macOS Actions must validate
+  iOS-only WebKit compilation and package the build 6 Widget-capable IPA.

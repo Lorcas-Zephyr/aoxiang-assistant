@@ -27,6 +27,12 @@ final class VisibleAuthenticationWebViewTests: XCTestCase {
         }
     }
 
+    func testCancellingCommuterBusCollectionFinishesTheContinuation() async {
+        await assertCollectionCancellation { model in
+            _ = try await model.collectCommuterBusSnapshot()
+        }
+    }
+
     func testEducationNavigationFailureIsRecordedAsCollectionRetryableFailure() async throws {
         let model = makeReadyModel()
         let task = Task { @MainActor in

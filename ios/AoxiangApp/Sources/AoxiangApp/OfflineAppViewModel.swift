@@ -186,6 +186,34 @@ public final class OfflineAppViewModel: ObservableObject {
     }
 
     @discardableResult
+    public func applyCommuterBusCollection(
+        payload: Data,
+        now: Date = Date()
+    ) -> CommuterBusSyncResult? {
+        do {
+            let result = try CommuterBusSyncMerger.merge(
+                payload: payload,
+                previous: state.commuterBus,
+                updatedAt: Int64(now.timeIntervalSince1970 * 1000),
+                today: CommuterBusDatePolicy.today(now: now)
+            )
+            guard result.hasUpdate else {
+                errorMessage = "校车接口没有返回可用数据；上次结果已保留"
+                return nil
+            }
+            var candidate = state
+            candidate.commuterBus = result.snapshot
+            _ = try controller.replace(candidate)
+            state = controller.state
+            errorMessage = nil
+            return result
+        } catch {
+            errorMessage = error.localizedDescription
+            return nil
+        }
+    }
+
+    @discardableResult
     public func addGrade(course: String, score: Double?, point: Double?, credits: Double) -> Bool {
         do {
             try controller.addGrade(OfflineGrade(

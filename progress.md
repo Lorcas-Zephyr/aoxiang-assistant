@@ -800,6 +800,41 @@
 - The existing Android-compatible electricity page protocol is not being rewritten
   again in this continuation; a new device report should drive any further change.
 
+## 2026-10-26 Android v2.4.0 sync started
+
+- Confirmed the prior iOS release commit is already on `origin/iOS` and the worktree is clean.
+- Verified CodeGraph index health, mapped the iOS Core/App file structure, and read the
+  Android `v2.4.0` release notes, bus API contract, collectors, parsers and reminder policy.
+- Android v2.4.0 behavior is already complete; I selected regression checks that exercise
+  the public Core parse/merge behavior and the page-side request script. This was an
+  implementation choice, not information the user needed to provide.
+- Read-only bus scope and no-hidden-WebView background limit are recorded in `task_plan.md`.
+- Confirmed the existing authenticated education page resolves the current student
+  identifier without persisting credentials; bus lookup can consume it transiently.
+- Starting the TDD slice with Core tests for Android response mapping and independent
+  partial-section merge behavior.
+- Core TDD slice completed: the new regression was run red before implementation,
+  then all 3 `CommuterBusContractTests` passed. Local state remains backward-compatible,
+  bus fields stay out of portable backup, and Android backup import preserves the cache.
+- Re-synced CodeGraph after the Core changes and confirmed WebKit already uses
+  `callAsyncJavaScript` for authenticated page work. The account identifier stays page-local;
+  the upcoming bus action will run visibly in that same WKWebView.
+- Reminder-policy regression was run red, then passed with Android-equivalent behavior:
+  no first-seen/pending-status alerts and one departure window from now through 30 minutes.
+
+- A focused UI regression was run red for the unauthenticated bus-sync path. The pending
+  request now survives the authentication sheet's first appearance and resumes bus sync
+  after login instead of starting the unrelated grades/electricity collector.
+- Enabling bus reminders now schedules from the saved reservation snapshot immediately;
+  disabling either notification preference cancels the bus notifications.
+- Final Windows checks pass: Python 129, AoxiangCore 97, AoxiangApp 66, and
+  `git diff --check`. The local SwiftPM tests emit a non-fatal Windows symlink warning.
+- Build is 1.0.1 (6). The workflow packages the host-only, sideload-with-Widget, and
+  full-widget IPA variants and checks the Widget extension in the sideload artifact.
+- Pending: commit/push `iOS`, inspect the resulting macOS archive run and IPA artifact,
+  then mark the Goal complete. Real iPad installation and account-backed queries remain
+  for the user's own acceptance.
+
 - User reports electricity still fails, schedule remains empty after an update
   message, GPA is missing, and iPad layout still is not full-screen.
 - User explicitly says to defer changing the visible collection window behavior

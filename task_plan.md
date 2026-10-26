@@ -913,3 +913,33 @@ goal can close. Structify remains out of scope.
 - Windows 测试不能替代 iPadOS WebKit、App Group 签名权限和 Widget gallery 真机验收。
 - 认证失效与短信状态必须继续中止教育采集并交还认证界面；只有可重试网络/响应异常走独立电费兜底。
 - 本轮不重新调整已经实现的电费页面协议与 JavaScript 捕获；后续以设备反馈和本轮回归结果为依据再决定是否需要新修复。
+
+## 2026-10-26 同步 Android v2.4.0 校车功能
+
+### Goal
+
+将 Android `v2.4.0` 的已发布行为同步到 iOS：只读显示通勤车路线、今日/明日班次与余位、我的预约；保存最后一次完整数据并为预约安排本地提醒；课表课程色块改为约 50% 不透明度。校车网络查询由用户在可见页面手动发起，保持现有五个主页面结构。
+
+### Phases
+
+- [x] 确认 `v2.4.0` 发布标签、API 契约、动态防护边界及 iOS Core/App 的可复用结构。
+- [x] 在 Core 公开模型解析和同步合并边界添加失败回归，再实现路线、班次、预约模型与部分响应保留。
+- [x] 将只读采集接入通勤车 H5 同源 WebView，临时读取当前教务身份并解析路线、今日/明日班次与预约；失败分项保留旧缓存。
+- [x] 在首页提供校车概览和管理页刷新入口，显示路线、余位和我的预约；保留只读边界。
+- [x] 根据预约状态安排本地提醒。iOS 不创建隐藏 WebView：校车网络刷新需要用户打开管理页手动启动，系统后台时仅依赖已保存数据安排发车提醒。
+- [x] 同步课表约 50% 色块透明度，完成 Python、Core、App、采集脚本、配置及 diff 验收。
+- [ ] 提升 iOS build，推送代码并确认新的 macOS IPA workflow 成功且包含 Widget 扩展。
+
+### Constraints
+
+- 校车 API 请求只能在 `hq-bus.nwpu.edu.cn/h5/` 同源真实 WebView 中执行，让页面动态 WAF 附加参数；账号身份只从当前认证会话安全传入，不持久化 Cookie/密码。
+- Android v2.4.0 未捕获真实预约提交/取消接口；iOS 只读查询，不提供虚假的下单或取消能力。
+- iOS BackgroundTasks 不创建隐藏 WebView；自动刷新只能 best-effort，不能承诺 Android 式持续后台采集。
+- 认证、网络或部分 API 失败时保留上次有效数据；不触碰已修复的电费查询协议/JavaScript。
+- 用户会在新 IPA 上自行验收真实设备行为；本机 Windows 不声称完成 iPadOS/Xcode/WebKit 验证。
+
+### Verification before release
+
+- Windows: Python 129 tests, AoxiangCore 97 tests, AoxiangApp 66 tests, and `git diff --check` pass.
+- The login-resume regression was run red before the UI state fix, then passed; the runtime script tests cover successful and partial Android-shaped responses.
+- Xcode/iOS WebKit compilation and archive remain gated by the macOS Actions run after push; Windows cannot verify the final IPA.

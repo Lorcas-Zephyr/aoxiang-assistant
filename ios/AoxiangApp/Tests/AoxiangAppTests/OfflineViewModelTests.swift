@@ -245,5 +245,51 @@ final class OfflineViewModelTests: XCTestCase {
         let expectedWarnings: [PortalCollectionWarning] = [.scheduleUnavailable, .electricityUnavailable]
         XCTAssertEqual(model.lastPortalCollectionWarnings, expectedWarnings)
     }
+
+    func testCommuterBusCollectionPersistsSuccessfulSectionsAndKeepsFailedSections() throws {
+        let oldSnapshot = CommuterBusSnapshot(
+            updatedAt: 100,
+            routes: [CommuterBusRoute(id: "old-route", name: "旧路线")],
+            trips: [CommuterBusTrip(
+                id: "old-trip", date: "2026-10-27", routeID: "old-route",
+                routeName: "旧路线", departureTime: "08:00", isReservable: true
+            )],
+            reservations: [CommuterBusReservation(
+                id: "old-order", status: "待核验", routeName: "旧路线",
+                date: "2026-10-27", departureTime: "08:00"
+            )]
+        )
+        let controller = try OfflineDataController(store: InMemoryOfflineStateStore(
+            value: OfflineAppState(commuterBus: oldSnapshot)
+        ))
+        let model = OfflineAppViewModel(
+            controller: controller,
+            snapshotWriter: UnavailableWidgetSnapshotStore()
+        )
+        let payload = Data("""
+        {
+          "routesComplete": true,
+          "reservationsComplete": false,
+          "tripsComplete": false,
+          "routes": { "isSuccess": true, "data": { "filteredBusRoutes": [
+            { "Objid": "new-route", "Name": "新路线" }
+          ] } },
+          "reservations": { "isSuccess": false, "data": { "list": [] } },
+          "tripGroups": []
+        }
+        """.utf8)
+
+        let result = model.applyCommuterBusCollection(
+            payload: payload,
+            now: Date(timeIntervalSince1970: 1_798_000_000)
+        )
+
+        XCTAssertEqual(result?.routesComplete, true)
+        XCTAssertEqual(result?.reservationsComplete, false)
+        XCTAssertEqual(model.state.commuterBus.routes.map(\.id), ["new-route"])
+        XCTAssertEqual(model.state.commuterBus.trips.map(\.id), ["old-trip"])
+        XCTAssertEqual(model.state.commuterBus.reservations.map(\.id), ["old-order"])
+        XCTAssertEqual(controller.state.commuterBus, model.state.commuterBus)
+    }
 }
 #endif

@@ -19,7 +19,8 @@ let package = Package(
         .target(
             name: "AoxiangApp",
             dependencies: ["AoxiangCore"],
-            path: "Sources/AoxiangApp"
+            path: "Sources/AoxiangApp",
+            resources: [.process("Resources")]
         ),
         .testTarget(
             name: "AoxiangAppTests",
