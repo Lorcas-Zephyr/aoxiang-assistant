@@ -883,4 +883,7 @@
   hide/auto-dismiss behavior is deferred until electricity is confirmed on iPad.
 - REA MCP is exposed in this session, but local Chrome has no CDP debugging port, so
   there was no passive live-page attach. No browser control was used.
-- The macOS archive workflow and live iPad query remain pending.
+- macOS Actions run `40339224980` succeeded for commit `0b857738ba5c2fa290127e5ab4d7af0a889d7206`.
+  It passed portable Swift tests, unsigned iPhone/iPad archive, Widget extension layout checks,
+  and uploaded `AoxiangAssistant-ipa-variants-24` (7,579,318 bytes).
+- Only live authenticated iPad behavior remains unverified; the user will perform that acceptance.

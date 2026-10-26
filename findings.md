@@ -835,5 +835,9 @@
 - Per the user's hold, this pass keeps the portal page visible during collection and
   defers changes to the window/popup behavior until live electricity works on iPad.
 - REA MCP is present, but Chrome has no CDP endpoint enabled; passive inspection of a
-  live authenticated page was unavailable. The screenshot remains user-supplied
-  runtime evidence, and iOS WebKit behavior remains unverified until macOS/iPad testing.
+  live authenticated page was unavailable. The screenshot remains user-supplied runtime
+  evidence. macOS verified WebKit compilation/archive; a live iPad session remains unverified.
+- Commit `0b85773` is pushed to `origin/iOS`. Actions run `40339224980` succeeded,
+  including macOS Swift tests, IPA archive, Widget extension layout verification, and
+  upload of `AoxiangAssistant-ipa-variants-24` (7,579,318 bytes). The user will verify
+  the live login/query behavior on iPad.

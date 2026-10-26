@@ -968,7 +968,8 @@ Identify why the authenticated iOS flow shows an empty electricity page and fail
 - [x] Inventory the project and trace Android/iOS electricity and GPA paths with CodeGraph; interpret the supplied 401 screenshot against those contracts.
 - [x] Add the screenshot-shaped 401 regression and the Core persistence regression for GPA independent of incomplete grades.
 - [x] Run the complete Python, Core, and App test suites on Windows.
-- [ ] Push the reviewed changes and verify the macOS iOS/WebKit archive workflow. The user will verify live account behavior on iPad.
+- [x] Push commit `0b85773`; macOS workflow `40339224980` passed portable Swift tests, IPA archive, Widget layout verification, and artifact upload. Artifact `AoxiangAssistant-ipa-variants-24` is ready for user download.
+- [x] Mark implementation/build goal complete. Live authenticated electricity and GPA behavior remain for the user's iPad acceptance.
 
 ### Constraints
 
