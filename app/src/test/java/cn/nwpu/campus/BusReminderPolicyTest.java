@@ -96,11 +96,15 @@ public class BusReminderPolicyTest {
         assertEquals(LocalDate.now().plusDays(1).toString(), next.date);
     }
 
-    @Test public void pastReservationsStillRenderWhenNothingIsUpcoming() {
+    @Test public void pastReservationsDoNotRenderAsUpcoming() {
         BusModels.Snapshot snapshot = new BusModels.Snapshot();
         snapshot.reservations.add(reservationAt("2020-01-01", "10:00", "已通过"));
-        assertTrue(snapshot.nextReservation() != null);
+        assertTrue(snapshot.nextReservation() == null);
         assertTrue(snapshot.nextOpenTrip() == null);
+    }
+
+    @Test public void completelyEmptyReservationHasNoDeduplicationKey() {
+        assertEquals("", new BusModels.Reservation().key());
     }
 
     @Test public void parseHelpersAcceptBothDateFormats() {

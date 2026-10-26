@@ -334,9 +334,62 @@
     return Array.isArray(data) ? data : [];
   };
 
+  const busResponseError = (response) => {
+    if (!response) return "校车接口无响应";
+    const values = [
+      response.message, response.msg, response.Message, response.Msg,
+      response.error, response.errorMessage, response.ErrorMessage,
+      response.tip, response.title,
+      response.data && response.data.message,
+      response.data && response.data.msg,
+      response.data && response.data.Message,
+      response.data && response.data.Msg
+    ];
+    for (const value of values) {
+      const text = String(value == null ? "" : value).replace(/\s+/g, " ").trim();
+      if (text && text !== "null" && text !== "undefined") return text;
+    }
+    return "校车接口返回失败";
+  };
+
+  const busFailed = (response) => !response || response.isSuccess === false ||
+    String(response.isSuccess).toLowerCase() === "false";
+
+  const isUnknownBusUser = (message) =>
+    /用户不存在|工号不存在|未找到用户|未找到该用户|账号不存在/.test(String(message || ""));
+
   const collectBus = async () => {
-    const no = busIdentity();
+    let no = busIdentity();
     if (!no) throw new Error("校车身份参数缺失，请先在应用内打开一次校车页面");
+
+    // The bus site occasionally leaves an old NO in WebView localStorage after
+    // an account switch. Verify it through the read-only home menu first; when
+    // the server rejects it, retry once with the current portal account.
+    let identityError = "";
+    let iconResponse = null;
+    try {
+      iconResponse = await busPost("/api/GetIcon", { GH: no, no });
+      const error = busFailed(iconResponse) ? busResponseError(iconResponse) : "";
+      if (isUnknownBusUser(error)) identityError = error;
+    } catch (error) {
+      // GetIcon is only an identity probe. A WAF/network failure must not
+      // invalidate otherwise successful appointment data.
+      identityError = "";
+    }
+    if (identityError && isUnknownBusUser(identityError) &&
+        String(BUS_NO || "").trim() && String(BUS_NO).trim() !== no) {
+      no = String(BUS_NO).trim();
+      try { localStorage.removeItem("NO"); } catch (ignored) {}
+      try { localStorage.setItem("NO", no); } catch (ignored) {}
+      identityError = "";
+      try {
+        iconResponse = await busPost("/api/GetIcon", { GH: no, no });
+        const error = busFailed(iconResponse) ? busResponseError(iconResponse) : "";
+        identityError = isUnknownBusUser(error) ? error : "";
+      } catch (error) {
+        identityError = "";
+      }
+    }
     const today = new Date();
     const tomorrow = new Date(today.getTime() + 24 * 3600 * 1000);
 
@@ -344,13 +397,22 @@
     // 以免审核中的记录被过滤掉。两次结果按内容去重。
     const reservations = [];
     const seen = new Set();
+    let reservationError = identityError;
+    let reservationRequests = 0;
     for (const status of ["待核验", ""]) {
       let response;
       try {
         response = await busPost("/api/GetMyAppointment", { YYRGH: no, YYZT: status, no });
-      } catch (ignored) {
+      } catch (error) {
+        if (!reservationError) reservationError = String(error && error.message || error || "").trim();
         continue;
       }
+      if (busFailed(response) || !response.data ||
+          !Array.isArray(response.data.list)) {
+        if (!reservationError) reservationError = busResponseError(response);
+        continue;
+      }
+      reservationRequests += 1;
       const data = response && response.data;
       const list = data && Array.isArray(data.list) ? data.list : [];
       list.forEach((item) => {
@@ -364,15 +426,29 @@
     let routesResponse = null;
     try {
       routesResponse = await busPost("/api/GetRouteByType", { type: "通勤车", no });
-    } catch (ignored) {}
-    const routes = routesResponse && routesResponse.data &&
+      // Routes are auxiliary to “我的预约”; only report their error when the
+      // appointment requests also produced no usable response.
+    } catch (error) {
+      if (!reservationError && reservationRequests === 0) {
+        reservationError = String(error && error.message || error || "").trim();
+      }
+    }
+    if (!reservationError && reservationRequests === 0 && busFailed(routesResponse)) {
+      reservationError = busResponseError(routesResponse);
+    }
+    const routesComplete = !!(routesResponse && !busFailed(routesResponse) &&
+      routesResponse.data && Array.isArray(routesResponse.data.filteredBusRoutes));
+    const routes = routesComplete &&
       Array.isArray(routesResponse.data.filteredBusRoutes)
       ? routesResponse.data.filteredBusRoutes : [];
 
     // 只取今明两天的班次，避免把预约提醒变成批量扫描。
     const groups = [];
-    for (const route of routes.slice(0, 4)) {
+    let tripRequests = 0;
+    let tripResponses = 0;
+    for (const route of routes) {
       for (const day of [today, tomorrow]) {
+        tripRequests += 1;
         let response;
         try {
           response = await busPost("/api/GetReserveInfoList", {
@@ -385,6 +461,8 @@
         } catch (ignored) {
           continue;
         }
+        if (busFailed(response) || !Array.isArray(response.data)) continue;
+        tripResponses += 1;
         const items = busItems(response);
         if (!items.length) continue;
         groups.push({
@@ -399,9 +477,18 @@
     return {
       phase: "bus_api_raw",
       no,
+      icon: iconResponse,
       routes: routesResponse,
-      reservations: { isSuccess: true, data: { list: reservations } },
-      tripGroups: groups
+      reservations: {
+        isSuccess: reservationRequests === 2,
+        data: { list: reservations },
+        message: reservationError
+      },
+      tripGroups: groups,
+      routesComplete,
+      reservationsComplete: reservationRequests === 2,
+      tripsComplete: routesComplete && tripResponses === tripRequests,
+      reservationError
     };
   };
 

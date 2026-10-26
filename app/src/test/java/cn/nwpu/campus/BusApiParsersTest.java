@@ -114,7 +114,19 @@ public class BusApiParsersTest {
         assertFalse(reservation.rejected());
         assertEquals("2026-09-24", reservation.date);
         assertTrue(reservation.departureAt() != null);
-        assertTrue(reservation.summary.contains("yydh") || reservation.summary.contains("fy"));
+        assertFalse(reservation.summary.contains("预约号"));
+        assertFalse(reservation.summary.contains("YY20260924001"));
+        assertTrue(reservation.summary.contains("费用 5 元"));
+        assertFalse(reservation.summary.contains("yydh"));
+    }
+
+    @Test public void dropsReservationRowsWithoutAnIdentity() throws Exception {
+        JSONObject response = new JSONObject()
+                .put("isSuccess", true)
+                .put("data", new JSONObject().put("list",
+                        new JSONArray().put(new JSONObject().put("yyzt", "待核验"))));
+
+        assertTrue(BusApiParsers.reservations(response).isEmpty());
     }
 
     @Test public void emptyOrBrokenPayloadsDoNotThrow() {

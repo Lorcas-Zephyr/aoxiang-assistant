@@ -5,10 +5,15 @@ import android.app.PendingIntent;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.content.pm.PackageManager;
 import android.os.Build;
+
+import java.time.LocalDateTime;
+import java.time.ZoneId;
 
 final class BackgroundSyncScheduler {
     static final String ACTION_WAKE = "cn.nwpu.campus.action.BACKGROUND_WAKE";
+    static final String TARGET_BUS_REMINDER = "bus_departure";
     private static final int REQUEST_CODE = 1005;
 
     private BackgroundSyncScheduler() {}
@@ -20,11 +25,7 @@ final class BackgroundSyncScheduler {
     static void schedule(Context context, long minimumDelayMillis) {
         Context app = context.getApplicationContext();
         SharedPreferences store = app.getSharedPreferences("campus_private", Context.MODE_PRIVATE);
-        if (!hasCredentials(store)) {
-            cancel(app);
-            return;
-        }
-        NextUpdate next = nextUpdate(store, System.currentTimeMillis());
+        NextUpdate next = nextUpdate(app, store, System.currentTimeMillis());
         if (next == null) {
             cancel(app);
             return;
@@ -51,19 +52,46 @@ final class BackgroundSyncScheduler {
         if (manager != null) manager.cancel(pendingIntent(app));
     }
 
-    static NextUpdate nextUpdate(SharedPreferences store, long now) {
+    static NextUpdate nextUpdate(Context context, SharedPreferences store, long now) {
         NextUpdate next = null;
-        String[] targets = {"grades", "electricity", "schedule"};
-        for (String target : targets) {
-            if (!isEnabled(store, target)) continue;
-            long last = store.getLong("auto_last_" + target, 0L);
-            long dueAt = last == 0L ? now : last + intervalMillis(store, target);
-            if ("electricity".equals(target)) {
-                dueAt = SyncTimePolicy.deferElectricityDueAt(dueAt, now);
+        if (hasCredentials(store)) {
+            String[] targets = {"grades", "electricity", "schedule", "bus"};
+            for (String target : targets) {
+                if (!isEnabled(store, target)) continue;
+                long last = store.getLong("auto_last_" + target, 0L);
+                long dueAt = last == 0L ? now : last + intervalMillis(store, target);
+                if ("electricity".equals(target)) {
+                    dueAt = SyncTimePolicy.deferElectricityDueAt(dueAt, now);
+                }
+                if (next == null || dueAt < next.dueAt) next = new NextUpdate(target, dueAt);
             }
-            if (next == null || dueAt < next.dueAt) next = new NextUpdate(target, dueAt);
+        }
+        long reminderAt = nextBusReminderAt(context, store, now);
+        if (reminderAt >= 0L && (next == null || reminderAt < next.dueAt)) {
+            next = new NextUpdate(TARGET_BUS_REMINDER, reminderAt);
         }
         return next;
+    }
+
+    private static long nextBusReminderAt(Context context, SharedPreferences store, long now) {
+        if (!store.getBoolean("bus_departure_reminder_enabled", true)
+                || (Build.VERSION.SDK_INT >= 33
+                && context.checkSelfPermission("android.permission.POST_NOTIFICATIONS")
+                != PackageManager.PERMISSION_GRANTED)) return -1L;
+        long next = Long.MAX_VALUE;
+        BusModels.Snapshot snapshot = BusStorage.load(store);
+        for (BusModels.Reservation reservation : snapshot.reservations) {
+            if (reservation.rejected()) continue;
+            LocalDateTime departure = reservation.departureAt();
+            if (departure == null) continue;
+            long departureAt = departure.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli();
+            if (departureAt < now) continue;
+            String key = BusReminderPolicy.departureKey(reservation);
+            if (BusStorage.isReminded(store, key)) continue;
+            long dueAt = Math.max(now, departureAt - BusReminderPolicy.DEPARTURE_LEAD_MS);
+            if (dueAt < next) next = dueAt;
+        }
+        return next == Long.MAX_VALUE ? -1L : next;
     }
 
     private static PendingIntent pendingIntent(Context context) {
@@ -80,12 +108,12 @@ final class BackgroundSyncScheduler {
 
     private static boolean isEnabled(SharedPreferences store, String target) {
         String key = "auto_" + target.replace("grades", "grade") + "_enabled";
-        return store.getBoolean(key, true);
+        return store.getBoolean(key, !"bus".equals(target));
     }
 
     private static long intervalMillis(SharedPreferences store, String target) {
         String prefix = "grades".equals(target) ? "grade" : target;
-        int fallback = "schedule".equals(target) ? 60 : 10;
+        int fallback = "schedule".equals(target) || "bus".equals(target) ? 60 : 10;
         int value = Math.max(1, store.getInt(prefix + "_interval_value", fallback));
         String unit = store.getString(prefix + "_interval_unit", "分钟");
         long multiplier = "天".equals(unit) ? 86_400_000L
