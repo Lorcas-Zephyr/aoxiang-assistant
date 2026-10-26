@@ -901,6 +901,10 @@
   changed.
 - Windows validation: Python 130, AoxiangCore 98, AoxiangApp 70, and `git diff --check`
   pass. CodeGraph was synced after the source/test edits.
-- Pending: push this correction to `iOS` and verify a fresh
-  macOS IPA archive/Widget artifact. Existing artifact 24 predates this correction. Live
-  iPad electricity/GPA results remain for user acceptance.
+- Commit `a58d091` is pushed to `origin/iOS`; CodeGraph is up to date and the worktree is
+  clean. Cross-platform run `40342150151` and IPA run `40342150127` both succeeded.
+- IPA run `40342150127` passed portable Swift tests, unsigned iPhone/iPad archive, Widget
+  bundle layout verification, and upload of `AoxiangAssistant-ipa-variants-25` (7,579,695
+  bytes). Artifact 24 predates the correction.
+- Real iPad electricity/GPA behavior remains for the user's acceptance. The visible
+  collection page remains unchanged.

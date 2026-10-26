@@ -991,5 +991,6 @@ verification limits and visible collection behavior.
 - [x] Update iOS to use Android's primary redirect hand-off and exact fee-item route casing.
 - [x] Run Python 130, AoxiangCore 98, AoxiangApp 70, and `git diff --check` on Windows.
 - [x] Sync the local CodeGraph index after edits.
-- [ ] Push the correction and verify a new macOS IPA/Widget workflow.
+- [x] Push the correction and verify a new macOS IPA/Widget workflow (`a58d091`, Actions
+  `40342150127`; artifact `AoxiangAssistant-ipa-variants-25`).
 - [ ] Leave live authenticated iPad validation to the user.

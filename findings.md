@@ -858,6 +858,9 @@
 - The runtime tests were run red before the change: they observed direct `/toAppitem`
   navigation. Afterward all 54 focused Python/Node tests, the full Python suite (130),
   AoxiangCore (98), AoxiangApp (70), and `git diff --check` passed.
-- This correction is not included in the previous IPA artifact 24. Push it and wait for
-  a fresh macOS archive/IPA workflow before asking the user to install it. Real iPad
-  electricity and GPA behavior remain unverified; keep the collection page visible.
+- Commit `a58d091` is pushed to `origin/iOS`. Cross-platform run `40342150151` and IPA
+  run `40342150127` succeeded. The IPA run passed portable Swift tests, unsigned iPhone/iPad
+  archive, Widget bundle layout verification, and artifact upload.
+- Fresh artifact `AoxiangAssistant-ipa-variants-25` is available (7,579,695 bytes) and
+  includes this correction. Live electricity/GPA behavior remains for iPad acceptance;
+  keep the collection page visible until that is confirmed.
