@@ -1032,7 +1032,9 @@ until the device reports which stage failed.
   version assertions.
 - [x] Run Python 130, AoxiangCore 98, AoxiangApp 75, Swift parsing, and
   `git diff --check`.
-- [ ] Push and verify macOS Xcode archive / IPA Widget checks.
+- [x] Push commit `ca65150` and verify macOS Action `40392772168` succeeded for the
+  same source SHA; archive and Widget-layout checks passed. Artifact
+  `AoxiangAssistant-ipa-variants-30` was uploaded.
 - [ ] Install `1.0.4 (9)` and verify the Android-style SSO return starts collection.
 
 ### Constraints

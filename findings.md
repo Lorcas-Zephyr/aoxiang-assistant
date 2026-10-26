@@ -926,3 +926,6 @@
 - This is the confirmed implementation gap behind the iOS/Android behavior difference;
   live iPad acceptance is still needed to verify the real school's redirect sequence.
   Electricity routing and response parsing are untouched in this correction.
+- Commit `ca65150` passed macOS Action `40392772168`, including Xcode device archive,
+  Widget-layout verification, and upload of `AoxiangAssistant-ipa-variants-30`
+  (7,646,476 bytes). The IPA build script enforces archive version `1.0.4 (9)`.

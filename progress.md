@@ -970,5 +970,12 @@
   were not changed. Bumped app/Widget to `1.0.4 (9)` across the Xcode project, IPA
   workflow, build script, and config tests.
 - Windows verification passes: Python 130, AoxiangCore 98, AoxiangApp 75, Swift
-  parse, and `git diff --check`. Push and macOS WebKit archive validation remain next;
-  iPad installation will determine whether the redirect shape matches Android.
+  parse, and `git diff --check`. CodeGraph is synced and healthy (169 files, 3,503
+  nodes, 10,095 edges).
+- Commit `ca65150` is pushed. macOS Action `40392772168` passed portable Swift tests,
+  unsigned device archive, IPA bundle layout checks, and artifact upload. The builder
+  checks archive metadata against version `1.0.4 (9)`; artifact
+  `AoxiangAssistant-ipa-variants-30` is 7,646,476 bytes.
+- The implementation gap is now matched to Android's tracker and retry policy. The
+  iPad still needs one live check to confirm the portal uses the same UIS-to-campus
+  navigation sequence and that auto-collection proceeds afterward.
