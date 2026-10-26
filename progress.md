@@ -922,5 +922,7 @@
 - Raised the package version to `1.0.2 (7)` across host app, Widget, workflow, script,
   and version assertions. Windows verification passes: Python 130, AoxiangCore 98,
   AoxiangApp 72, Swift parsing, CodeGraph sync, and `git diff --check`.
-- macOS iOS/WebKit archive and diagnostic IPA are pending. The root cause still requires
-  the sanitized probe result from the iPad.
+- macOS Action `40368217627` succeeded for commit `f54d2e4`; the iOS archive compiled,
+  Widget layout checks passed, and artifact `AoxiangAssistant-ipa-variants-28` uploaded
+  with host version `1.0.2 (7)`.
+- The root cause still requires the sanitized probe result from the iPad.

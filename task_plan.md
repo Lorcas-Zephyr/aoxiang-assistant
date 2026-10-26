@@ -1012,7 +1012,8 @@ until the device reports which stage failed.
 - [x] Keep authentication acceptance limited to the existing main-document rule.
 - [x] Raise host and Widget version to `1.0.2 (7)` in Xcode, IPA workflow, build
   script defaults, and configuration tests.
-- [ ] Verify the iOS WebKit build in GitHub Actions and install the diagnostic IPA.
+- [x] Verify the iOS WebKit build, IPA layout, and package version in GitHub Actions.
+- [ ] Install the diagnostic IPA on iPad and report the displayed probe summary.
 - [ ] Use the displayed probe result to identify the failing boundary before changing
   authentication or electricity behavior.
 
