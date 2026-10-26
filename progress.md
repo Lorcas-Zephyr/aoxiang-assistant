@@ -951,3 +951,24 @@
   is 7,641,162 bytes; the builder validated archive version `1.0.3 (8)`.
 - The iPad runtime result remains required to confirm the root cause; the visible
   authentication and electricity collection behavior is unchanged in this build.
+
+## 2026-10-27 Android authentication parity correction
+
+- Re-read Android's `UnifiedAuthTracker`, `MainActivity.SafeClient`,
+  `BackgroundSyncService.startCollector`, and `auto_collect.js` against iOS. Android
+  recognizes SSO by observing `uis.nwpu.edu.cn` followed by any campus-domain page,
+  and polls the live page every second for up to 180 seconds.
+- iOS had replaced that robust redirect/polling behavior with a strict eCampus
+  dashboard-marker check and a six-second retry window. This explains why the two
+  implementations diverged when login completes through a SPA or takes longer than
+  the short iOS window.
+- Added a Swift tracker with red/green tests for the Android URL sequence and direct
+  campus navigation. Wired it to WKWebView navigation requests, successful page loads,
+  and a 180-second one-second retry loop that continues across the UIS host. The marker
+  rule remains as a fallback for an already-authenticated portal session.
+- Electricity URLs, token hand-off, parser, and visible collection window behavior
+  were not changed. Bumped app/Widget to `1.0.4 (9)` across the Xcode project, IPA
+  workflow, build script, and config tests.
+- Windows verification passes: Python 130, AoxiangCore 98, AoxiangApp 75, Swift
+  parse, and `git diff --check`. Push and macOS WebKit archive validation remain next;
+  iPad installation will determine whether the redirect shape matches Android.

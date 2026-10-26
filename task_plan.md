@@ -1024,13 +1024,24 @@ until the device reports which stage failed.
   `git diff --check`, and sync CodeGraph.
 - [x] Push the diagnostic version and verify the macOS IPA Action `40377594375`;
   artifact `AoxiangAssistant-ipa-variants-29` passed version and Widget-layout checks.
-- [ ] Use the `1.0.3 (8)` device result to identify the failing boundary before changing
-  authentication or electricity behavior.
+- [x] Compare the iPad result with Android's actual authentication flow and identify
+  the iOS-only detection difference.
+- [x] Port Android's unified-auth return tracker and 180-second page-state polling;
+  add regression coverage for SSO return and direct campus navigation.
+- [x] Raise app and Widget to `1.0.4 (9)` and align workflow, builder defaults, and
+  version assertions.
+- [x] Run Python 130, AoxiangCore 98, AoxiangApp 75, Swift parsing, and
+  `git diff --check`.
+- [ ] Push and verify macOS Xcode archive / IPA Widget checks.
+- [ ] Install `1.0.4 (9)` and verify the Android-style SSO return starts collection.
 
 ### Constraints
 
 - Never record page text, names, cookies, tokens, query values, fragments, or credentials.
 - Keep the electricity protocol and visible authentication behavior unchanged until a
   diagnostic result identifies the failing boundary.
+- The user supplied the `1.0.2 (7)` diagnostic result and requested Android parity;
+  authentication detection may now be changed to match the verified Android flow.
+- Do not modify the electricity URL, token hand-off, or response parser in this pass.
 - Treat Windows tests and IPA archive as code/build evidence only; live iPad behavior
   remains unverified until the device result is observed.

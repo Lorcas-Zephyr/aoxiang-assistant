@@ -149,6 +149,31 @@ enum AuthenticationProbeDecision: Equatable {
     }
 }
 
+struct UnifiedAuthenticationTracker {
+    private(set) var visitedUnifiedAuthentication = false
+    private(set) var hasExited = false
+
+    mutating func record(_ url: URL?) -> Bool {
+        guard let host = url?.host?.lowercased() else { return false }
+        if host == "uis.nwpu.edu.cn" {
+            visitedUnifiedAuthentication = true
+            return false
+        }
+        guard visitedUnifiedAuthentication,
+              host == "nwpu.edu.cn" || host.hasSuffix(".nwpu.edu.cn") else {
+            return false
+        }
+        guard !hasExited else { return false }
+        hasExited = true
+        return true
+    }
+
+    mutating func reset() {
+        visitedUnifiedAuthentication = false
+        hasExited = false
+    }
+}
+
 public enum VisibleCollectionTarget: Equatable {
     case education
     case portrait
@@ -481,6 +506,7 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
 
     public let webView: WKWebView
     private var machine = AuthenticationStateMachine()
+    private var unifiedAuthenticationTracker = UnifiedAuthenticationTracker()
     private let loginURL: URL
     private let successRules: [AuthenticationSuccessRule]
     private let sessionStore: AuthenticationSessionStore
@@ -551,6 +577,7 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
     public func startInteractiveLogin() {
         authenticationHydrationTask?.cancel()
         authenticationHydrationTask = nil
+        unifiedAuthenticationTracker.reset()
         machine = AuthenticationStateMachine()
         state = machine.state
         sessionStore.set(state)
@@ -847,6 +874,7 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
             group.notify(queue: .main) { [weak self] in
                 guard let self else { return }
                 self.machine = AuthenticationStateMachine()
+                self.unifiedAuthenticationTracker.reset()
                 self.state = self.machine.state
                 self.sessionStore.set(self.state)
                 completion?()
@@ -879,8 +907,21 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
         return nil
     }
 
+    public func webView(
+        _ webView: WKWebView,
+        decidePolicyFor navigationAction: WKNavigationAction,
+        decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
+    ) {
+        if navigationAction.request.url?.host?.lowercased() == "uis.nwpu.edu.cn" {
+            _ = unifiedAuthenticationTracker.record(navigationAction.request.url)
+        }
+        decisionHandler(.allow)
+    }
+
     public func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        detectAuthenticationState(in: webView)
+        if !recordUnifiedAuthenticationReturn(webView.url) {
+            detectAuthenticationState(in: webView)
+        }
         scheduleAuthenticationHydrationRetry(in: webView)
         if educationContinuation != nil,
            navigationPolicy.isAuthenticationRedirect(
@@ -3018,28 +3059,40 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
         )
     }
 
+    private func recordUnifiedAuthenticationReturn(_ url: URL?) -> Bool {
+        guard unifiedAuthenticationTracker.record(url) else { return false }
+        let accepted = completeAuthentication()
+        authenticationProbeSummary = "统一认证已返回校内页面 | 转换=\(accepted ? "成功" : "拒绝") | VM=\(authenticationStateLabel(state)) / 机器=\(authenticationStateLabel(machine.state)) / 会话=\(authenticationStateLabel(sessionStore.state))"
+        return true
+    }
+
     private func scheduleAuthenticationHydrationRetry(in webView: WKWebView) {
         authenticationHydrationTask?.cancel()
         authenticationHydrationTask = nil
         guard state == .needsLogin,
               let url = webView.url,
               let host = url.host?.lowercased(),
-              isAllowedHost(host),
+              isAllowedHost(host) || host == "uis.nwpu.edu.cn",
               let inspectionKey = VisibleCollectionNavigationPolicy.sanitizedInspectionURLKey(for: url) else {
             return
         }
 
         authenticationHydrationTask = Task { @MainActor [weak self, weak webView] in
-            for _ in 0..<12 {
+            for _ in 0..<180 {
                 do {
-                    try await Task.sleep(nanoseconds: 500_000_000)
+                    try await Task.sleep(nanoseconds: 1_000_000_000)
                 } catch {
                     return
                 }
                 guard let self, let webView, !Task.isCancelled,
                       self.state == .needsLogin,
-                      let currentURL = webView.url,
-                      VisibleCollectionNavigationPolicy.sanitizedInspectionURLKey(for: currentURL) == inspectionKey else {
+                      let currentURL = webView.url else {
+                    return
+                }
+                if self.recordUnifiedAuthenticationReturn(currentURL) { return }
+                let currentHost = currentURL.host?.lowercased() ?? ""
+                if currentHost != "uis.nwpu.edu.cn",
+                   VisibleCollectionNavigationPolicy.sanitizedInspectionURLKey(for: currentURL) != inspectionKey {
                     return
                 }
                 self.detectAuthenticationState(in: webView)
@@ -3047,7 +3100,7 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
             guard let self else { return }
             self.authenticationHydrationTask = nil
             if self.state == .needsLogin {
-                self.authenticationProbeSummary = "6 秒探测轮询结束; " + self.authenticationProbeSummary
+                self.authenticationProbeSummary = "180 秒探测轮询结束; " + self.authenticationProbeSummary
             }
         }
     }

@@ -907,3 +907,22 @@
 - Commit `da581c9` passed macOS Action `40377594375`; the archive version check and
   Widget layout verification succeeded. Artifact `AoxiangAssistant-ipa-variants-29`
   (7,641,162 bytes) is available for the next iPad probe.
+
+## 2026-10-27 Android authentication parity correction
+
+- Android `UnifiedAuthTracker` records visits to `uis.nwpu.edu.cn` from all WebView
+  navigation callbacks, then marks authentication complete after returning to any
+  `nwpu.edu.cn` host. `BackgroundSyncService` also evaluates the current page every
+  second for up to 180 attempts.
+- The iOS implementation depended on an eCampus main-document text rule and only
+  retried for 12 half-second checks after a page-finished callback. This was a real
+  behavioral mismatch: a client-side login completion or a login taking longer than
+  six seconds could leave the app stuck in `needsLogin`, even when Android would
+  observe the completed SSO redirect and keep polling.
+- Added the Android-equivalent URL transition tracker to iOS navigation decisions and
+  return-page completion, plus 180 one-second checks across the SSO host transition.
+  Kept the direct logged-in portal marker rule as a fallback. Regression tests cover
+  `JWXT -> UIS -> eCampus` and ensure direct campus navigation does not count as login.
+- This is the confirmed implementation gap behind the iOS/Android behavior difference;
+  live iPad acceptance is still needed to verify the real school's redirect sequence.
+  Electricity routing and response parsing are untouched in this correction.

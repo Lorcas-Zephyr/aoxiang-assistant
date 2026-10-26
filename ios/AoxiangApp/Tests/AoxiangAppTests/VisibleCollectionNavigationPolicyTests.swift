@@ -69,6 +69,24 @@ final class VisibleCollectionNavigationPolicyTests: XCTestCase {
         )
     }
 
+    func testUnifiedAuthenticationTrackerMatchesAndroidReturnToCampusRule() throws {
+        var tracker = UnifiedAuthenticationTracker()
+
+        XCTAssertFalse(tracker.record(URL(string: "https://jwxt.nwpu.edu.cn/student/sso-login")))
+        XCTAssertFalse(tracker.record(URL(string: "https://uis.nwpu.edu.cn/cas/login")))
+        XCTAssertFalse(tracker.record(URL(string: "https://uis.nwpu.edu.cn/cas/login?execution=next")))
+        XCTAssertTrue(tracker.record(URL(string: "https://ecampus.nwpu.edu.cn/main.html#/Index")))
+        XCTAssertTrue(tracker.hasExited)
+    }
+
+    func testUnifiedAuthenticationTrackerIgnoresDirectCampusNavigation() throws {
+        var tracker = UnifiedAuthenticationTracker()
+
+        XCTAssertFalse(tracker.record(URL(string: "https://ecampus.nwpu.edu.cn/main.html#/Index")))
+        XCTAssertFalse(tracker.record(URL(string: "https://jwxt.nwpu.edu.cn/student/home")))
+        XCTAssertFalse(tracker.hasExited)
+    }
+
     func testFirstPartyCampusPopupsAreRoutedIntoTheCurrentWebView() throws {
         let policy = VisibleCollectionNavigationPolicy()
         let destinations = [
