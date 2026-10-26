@@ -144,27 +144,7 @@ public final class OfflineAppViewModel: ObservableObject {
     @discardableResult
     public func applyPortalCollection(_ result: PortalCollectedData) -> Bool {
         do {
-            var candidate = state
-            if result.gradesAvailable {
-                candidate.grades = result.grades
-                if let gpa = result.gpa {
-                    candidate.gpa = gpa
-                }
-            }
-            if result.scheduleAvailable {
-                candidate.semesters = result.schedule.semesters
-                candidate.courses = result.schedule.courses
-                if !candidate.selectedSemesterId.isEmpty,
-                   !candidate.semesters.contains(where: { $0.id == candidate.selectedSemesterId }) {
-                    candidate.selectedSemesterId = candidate.semesters.first?.id ?? ""
-                } else if candidate.selectedSemesterId.isEmpty {
-                    candidate.selectedSemesterId = candidate.semesters.first?.id ?? ""
-                }
-            }
-            if let electricityBalance = result.electricityBalance {
-                candidate.electricityBalance = electricityBalance
-            }
-            _ = try controller.replace(candidate)
+            _ = try controller.replace(result.applying(to: state))
             state = controller.state
             lastPortalCollectionWarnings = result.warnings
             errorMessage = nil

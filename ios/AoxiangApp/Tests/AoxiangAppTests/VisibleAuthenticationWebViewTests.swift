@@ -55,6 +55,42 @@ final class VisibleAuthenticationWebViewTests: XCTestCase {
         assertCollectionRetryableState(model)
     }
 
+    func testElectricityCollectionReopensGateAfterRetryableEducationFailure() async throws {
+        let model = makeReadyModel()
+        let educationTask = Task { @MainActor in
+            try await model.collectEducationData()
+        }
+        await yieldToCollectionStart()
+
+        model.webView(
+            model.webView,
+            didFail: nil,
+            withError: NSError(domain: NSURLErrorDomain, code: NSURLErrorNotConnectedToInternet)
+        )
+
+        do {
+            _ = try await educationTask.value
+            XCTFail("expected education navigation failure")
+        } catch let failure as PortalCollectionFailure {
+            XCTAssertEqual(failure, .retryable(.networkUnavailable))
+        }
+        XCTAssertTrue(model.canRetryCollection)
+
+        let electricityTask = Task { @MainActor in
+            try await model.collectElectricityBalance()
+        }
+        await yieldToCollectionStart()
+        XCTAssertEqual(model.state, .readyToCollect)
+        electricityTask.cancel()
+
+        do {
+            _ = try await electricityTask.value
+            XCTFail("expected cancellation after the electricity request started")
+        } catch let failure as PortalCollectionFailure {
+            XCTAssertEqual(failure, .cancelled)
+        }
+    }
+
     func testProvisionalEducationNavigationFailureIsRecordedAsCollectionRetryableFailure() async throws {
         let model = makeReadyModel()
         let task = Task { @MainActor in

@@ -438,7 +438,7 @@ public struct ManagementScreen: View {
     public init(model: OfflineAppViewModel) {
         self.model = model
         _authenticationModel = StateObject(wrappedValue: VisibleAuthenticationViewModel(
-            loginURL: URL(string: "https://jwxt.nwpu.edu.cn/student/sso-login")!,
+            loginURL: VisibleCollectionNavigationPolicy.educationPortalEntryURL,
             successRule: .jwxtStudentHome,
             sessionStore: model.authenticationStore
         ))
@@ -652,11 +652,11 @@ public struct ManagementScreen: View {
             }
             .onChange(of: authenticationModel.state) { newState in
                 guard newState == .authenticated else { return }
-            if pendingCommuterBusStart {
-                beginPendingCommuterBusIfNeeded()
-            } else {
-                requestCollection()
-            }
+                if pendingCommuterBusStart {
+                    beginPendingCommuterBusIfNeeded()
+                } else {
+                    requestCollection()
+                }
             }
         }
         .navigationViewStyle(.stack)
@@ -780,9 +780,7 @@ public struct ManagementScreen: View {
             collectionStatus = "请先完成统一认证"
             return
         }
-        // Keep the authentication sheet mounted while page JavaScript and
-        // same-origin requests run. Dismissing it here detaches the visible
-        // WebView and makes collection appear to do nothing on iPad.
+        // Keep the visible WebView mounted while page JavaScript and requests run.
         showingAuthentication = true
         isCollecting = true
         collectionStatus = "正在读取成绩、课表和电费…"
@@ -815,9 +813,6 @@ public struct ManagementScreen: View {
                     if result.electricityIssue == nil {
                         electricityIssue = nil
                         collectionStatus = collectionStatus(for: result.warnings)
-                        // The local state is the authoritative foreground
-                        // result. Widget publication is best-effort and is
-                        // surfaced as a warning without keeping the sheet open.
                         showingAuthentication = false
                     } else if let electricityIssue = result.electricityIssue {
                         handleElectricityIssue(electricityIssue, warnings: result.warnings)

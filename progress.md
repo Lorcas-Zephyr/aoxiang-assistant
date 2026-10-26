@@ -865,3 +865,22 @@
   extension check. Artifact `AoxiangAssistant-ipa-variants-22` is available for download.
 - Goal scope is complete. Real iPad installation and live account behavior are left for
   the user's device acceptance.
+
+## 2026-10-26 electricity 401 screenshot and verification
+
+- The supplied screenshot shows a direct `/berserker-base/redirect?appId=36&type=app`
+  request reaching the fee page with an empty `synjones-auth` parameter and returning
+  JSON `code: 401`, `success: false`, `data: null`, `msg: 请求未授权`.
+- The bare redirect is not equivalent to the phone's full CAS URL. CodeGraph/source
+  inspection confirms Android obtains the card token on `/plat` and then includes it
+  in the fee-item URL; the iOS bootstrap uses the full CAS wrapper and same-origin
+  token handoff.
+- Added a JavaScript runtime regression for the screenshot-shaped 401 page body. It
+  returns no balance and cannot mistake the status code for electricity.
+- Full Windows verification passes: Python 130, AoxiangCore 98, AoxiangApp 70, and
+  `git diff --check`. Windows does not run iOS-only WebKit code.
+- Per the user's hold, the portal page remains visible during collection; its
+  hide/auto-dismiss behavior is deferred until electricity is confirmed on iPad.
+- REA MCP is exposed in this session, but local Chrome has no CDP debugging port, so
+  there was no passive live-page attach. No browser control was used.
+- The macOS archive workflow and live iPad query remain pending.

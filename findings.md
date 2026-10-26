@@ -818,3 +818,22 @@
 - Verification on Windows: Python 129, Core 97, App 66; the new login-resume test was
   demonstrated red then green; `git diff --check` passes. macOS Actions must validate
   iOS-only WebKit compilation and package the build 6 Widget-capable IPA.
+
+## 2026-10-26 electricity authorization evidence
+
+- Screenshot observation: directly opening `/berserker-base/redirect?appId=36&type=app`
+  reaches `/jfdt/charge/feeitem/toAppItem` with an empty `synjones-auth` query value;
+  the response body is JSON with status 401 and `请求未授权`.
+- Scope: this proves the bare redirect lacks the card authorization token. It does not
+  prove failure of the full `/berserker-auth/cas/login/supwisdom?targetUrl=...` flow.
+- Android source path: `/plat` handles the unified-auth entry; after authentication,
+  `auto_collect.js` reads a same-origin token from the URL or storage and supplies it
+  to the fee-item route. iOS's current CAS bootstrap and fallback follow that token
+  contract. Do not change the route again without a full-CAS runtime failure.
+- Regression: the JavaScript collector is tested against the screenshot-shaped 401 body
+  and rejects it as a balance. Windows suites pass (Python 130, Core 98, App 70).
+- Per the user's hold, this pass keeps the portal page visible during collection and
+  defers changes to the window/popup behavior until live electricity works on iPad.
+- REA MCP is present, but Chrome has no CDP endpoint enabled; passive inspection of a
+  live authenticated page was unavailable. The screenshot remains user-supplied
+  runtime evidence, and iOS WebKit behavior remains unverified until macOS/iPad testing.

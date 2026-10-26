@@ -51,13 +51,24 @@ public enum VisibleCollectionJavaScriptResult {
 /// values. The electricity portal deliberately starts through one CAS-shaped
 /// URL, so that expected first hop must not be mistaken for session expiry.
 public struct VisibleCollectionNavigationPolicy {
-    public static let electricityCASBootstrapURL = URL(
-        string: "https://yktapp.nwpu.edu.cn/berserker-auth/cas/login/supwisdom?targetUrl=https%3A%2F%2Fyktapp.nwpu.edu.cn%2Fplat"
+    public static let educationPortalEntryURL = URL(
+        string: "https://ecampus.nwpu.edu.cn/main.html#/Index"
     )!
+    public static let electricityCASBootstrapURL: URL = {
+        var components = URLComponents()
+        components.scheme = "https"
+        components.host = "yktapp.nwpu.edu.cn"
+        components.path = "/berserker-auth/cas/login/supwisdom"
+        components.queryItems = [URLQueryItem(
+            name: "targetUrl",
+            value: "https://yktapp.nwpu.edu.cn/berserker-base/redirect?appId=36&type=app"
+        )]
+        return components.url!
+    }()
     /// The card portal's authenticated hand-off. The `/plat` page must pass
     /// its `synjones-auth` token through this endpoint before the server can
-    /// establish the `/jfdt` page session. Keep these values aligned with the
-    /// Android `auto_collect.js` flow.
+    /// establish the `/jfdt` page session. The phone's CAS link targets this
+    /// endpoint directly; the older `/plat` bootstrap remains accepted below.
     public static let electricityRedirectPath = "/berserker-base/redirect"
     /// The currently deployed fee page. Keep this separate from the CAS
     /// hand-off because both routes are used by the Android collector: the
@@ -89,6 +100,19 @@ public struct VisibleCollectionNavigationPolicy {
     public static let electricityAuthEntryLabels = ["统一身份认证", "统一登录", "更多登录方式"]
 
     public init() {}
+
+    public func shouldRouteEducationPopupInSameWebView(
+        _ url: URL?,
+        targetFrameIsNil: Bool
+    ) -> Bool {
+        guard targetFrameIsNil,
+              let url,
+              url.scheme?.lowercased() == "https",
+              url.host?.lowercased() == "jwxt.nwpu.edu.cn" else {
+            return false
+        }
+        return url.path.lowercased().hasPrefix("/student/")
+    }
 
     public static func electricityRedirectURL(token: String) -> URL? {
         let normalizedToken = token.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -284,11 +308,21 @@ public struct VisibleCollectionNavigationPolicy {
               let targetURLText = components.queryItems?.first(where: { $0.name == "targetUrl" })?.value,
               let targetURL = URL(string: targetURLText),
               targetURL.scheme?.lowercased() == "https",
-              targetURL.host?.lowercased() == "yktapp.nwpu.edu.cn",
-              targetURL.path.lowercased() == "/plat" else {
+              targetURL.host?.lowercased() == "yktapp.nwpu.edu.cn" else {
             return false
         }
-        return true
+        if targetURL.path.lowercased() == "/plat" {
+            return true
+        }
+        guard targetURL.path.lowercased() == Self.electricityRedirectPath,
+              let targetComponents = URLComponents(url: targetURL, resolvingAgainstBaseURL: false) else {
+            return false
+        }
+        return targetComponents.queryItems?.contains(where: {
+            $0.name == "appId" && $0.value == Self.electricityRedirectAppID
+        }) == true && targetComponents.queryItems?.contains(where: {
+            $0.name == "type" && $0.value == Self.electricityRedirectType
+        }) == true
     }
 }
 
@@ -316,10 +350,10 @@ public struct AuthenticationSuccessRule: Equatable {
     )
 }
 
-/// A visible, user-driven authentication surface. Credentials are typed by the
-/// user into the page and are never copied into this view model or any backup.
+/// A same-origin authentication and collection surface. Credentials stay in
+/// the portal; collection results never include page session data.
 @MainActor
-public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, WKNavigationDelegate {
+public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, WKNavigationDelegate, WKUIDelegate {
     @Published public private(set) var state: AuthenticationState = .needsLogin
     @Published public private(set) var lastError: String?
 
@@ -386,6 +420,7 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
         webView = WKWebView(frame: .zero, configuration: configuration)
         super.init()
         webView.navigationDelegate = self
+        webView.uiDelegate = self
         webView.allowsBackForwardNavigationGestures = true
     }
 
@@ -465,6 +500,11 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
     /// authentication. Tokens remain inside page JavaScript; only the parsed
     /// non-sensitive balance crosses back to the app.
     public func collectElectricityBalance() async throws -> Double {
+        if canRetryCollection {
+            guard retryCollection() else {
+                throw PortalCollectionFailure.invalidResponse("collection retry unavailable")
+            }
+        }
         guard state == .readyToCollect else {
             throw PortalCollectionFailure.invalidResponse("collection not prepared")
         }
@@ -654,10 +694,12 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
     /// Returns cookie names only. Values are deliberately inaccessible to the
     /// portable layer and are never serialized.
     public func sessionCookieNames(completion: @escaping ([String]) -> Void) {
-        let loginHost = self.loginURL.host ?? ""
+        let cookieHosts = authenticationCookieHosts
         webView.configuration.websiteDataStore.httpCookieStore.getAllCookies { cookies in
             let names = cookies
-                .filter { AoxiangCookieScope.belongsToHost($0, host: loginHost) }
+                .filter { cookie in
+                    cookieHosts.contains { AoxiangCookieScope.belongsToHost(cookie, host: $0) }
+                }
                 .map(\.name)
                 .sorted()
             DispatchQueue.main.async { completion(names) }
@@ -666,10 +708,12 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
 
     public func clearSessionCookies(completion: (() -> Void)? = nil) {
         let store = webView.configuration.websiteDataStore.httpCookieStore
-        let loginHost = self.loginURL.host ?? ""
+        let cookieHosts = authenticationCookieHosts
         store.getAllCookies { cookies in
             let group = DispatchGroup()
-            for cookie in cookies where AoxiangCookieScope.belongsToHost(cookie, host: loginHost) {
+            for cookie in cookies where cookieHosts.contains(where: {
+                AoxiangCookieScope.belongsToHost(cookie, host: $0)
+            }) {
                 group.enter()
                 store.delete(cookie) { group.leave() }
             }
@@ -681,6 +725,31 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
                 completion?()
             }
         }
+    }
+
+    private var authenticationCookieHosts: [String] {
+        Array(Set([
+            loginURL.host?.lowercased(),
+            "ecampus.nwpu.edu.cn",
+            "jwxt.nwpu.edu.cn",
+            "yktapp.nwpu.edu.cn"
+        ].compactMap { $0 }))
+    }
+
+    public func webView(
+        _ webView: WKWebView,
+        createWebViewWith navigationAction: WKNavigationAction,
+        for windowFeatures: WKWindowFeatures
+    ) -> WKWebView? {
+        guard webView === self.webView,
+              navigationPolicy.shouldRouteEducationPopupInSameWebView(
+                  navigationAction.request.url,
+                  targetFrameIsNil: navigationAction.targetFrame == nil
+              ) else {
+            return nil
+        }
+        webView.load(navigationAction.request)
+        return nil
     }
 
     public func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {

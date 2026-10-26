@@ -105,9 +105,9 @@ final class OfflineViewsTests: XCTestCase {
         XCTAssertTrue(source.contains(
             "guard pendingCommuterBusStart, canStartCommuterBusCollection else { return }"
         ))
-        XCTAssertTrue(source.contains(
-            "if pendingCommuterBusStart {\n                beginPendingCommuterBusIfNeeded()\n            } else {\n                requestCollection()\n            }"
-        ))
+        XCTAssertTrue(source.contains("if pendingCommuterBusStart {"))
+        XCTAssertTrue(source.contains("beginPendingCommuterBusIfNeeded()"))
+        XCTAssertTrue(source.contains("} else {\n                    requestCollection()"))
     }
 
     func testScheduleCourseColorBlocksUseHalfOpacity() throws {

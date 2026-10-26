@@ -74,7 +74,8 @@ public struct PortalCollectedData: Equatable {
     public let gpa: Double?
     public let schedule: PortalCollectionParsers.SchedulePayload
     /// `false` means the education response did not contain a complete,
-    /// validated grade collection. Callers must preserve grades and GPA.
+    /// validated grade collection. Callers must preserve the current grade
+    /// list; a non-nil GPA is independently validated and may still be saved.
     public let gradesAvailable: Bool
     /// `false` means the education response contained valid grades but the
     /// schedule endpoint was unavailable. Callers must preserve the existing
@@ -108,6 +109,33 @@ public struct PortalCollectedData: Equatable {
         self.electricityIssue = electricityIssue
         self.warnings = warnings
         self.scheduleAvailable = scheduleAvailable
+    }
+
+    /// Merges independently available collection sections into the current
+    /// state. An incomplete grade list cannot replace stored grades, while a
+    /// valid GPA can still be applied because it is collected separately.
+    public func applying(to state: OfflineAppState) -> OfflineAppState {
+        var candidate = state
+        if gradesAvailable {
+            candidate.grades = grades
+        }
+        if let gpa {
+            candidate.gpa = gpa
+        }
+        if scheduleAvailable {
+            candidate.semesters = schedule.semesters
+            candidate.courses = schedule.courses
+            if !candidate.selectedSemesterId.isEmpty,
+               !candidate.semesters.contains(where: { $0.id == candidate.selectedSemesterId }) {
+                candidate.selectedSemesterId = candidate.semesters.first?.id ?? ""
+            } else if candidate.selectedSemesterId.isEmpty {
+                candidate.selectedSemesterId = candidate.semesters.first?.id ?? ""
+            }
+        }
+        if let electricityBalance {
+            candidate.electricityBalance = electricityBalance
+        }
+        return candidate
     }
 }
 

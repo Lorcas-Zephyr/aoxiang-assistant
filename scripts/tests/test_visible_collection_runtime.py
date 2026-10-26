@@ -717,6 +717,24 @@ globalThis.fetch = async () => ({ ok: false, text: async () => '' });
 """)
         self.assertIsNone(result)
 
+    def test_electricity_script_rejects_401_unauthorized_fee_page_body(self):
+        result = self.run_electricity_script("""
+const response = JSON.stringify({
+  code: 401,
+  success: false,
+  data: null,
+  msg: '请求未授权'
+});
+const document = { querySelector: () => null, body: { innerText: response, textContent: response } };
+const window = {};
+globalThis.document = document;
+globalThis.window = window;
+globalThis.location = { origin: 'https://yktapp.nwpu.edu.cn' };
+globalThis.performance = { getEntriesByType: () => [] };
+globalThis.fetch = async () => ({ ok: false, text: async () => '' });
+""")
+        self.assertIsNone(result)
+
     def test_electricity_capture_reads_balance_from_post_fetch_response(self):
         result = self.run_electricity_capture_script("""
 const window = {};

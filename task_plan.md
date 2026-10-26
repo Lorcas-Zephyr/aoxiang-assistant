@@ -945,3 +945,35 @@ goal can close. Structify remains out of scope.
 - Xcode/iOS WebKit compilation and archive passed in macOS Actions run `40312411052`; Windows still cannot replace real iPad installation and live account acceptance.
 - Commit `a32795d` is on `origin/iOS`. Actions run `40312411052` passed all steps and uploaded `AoxiangAssistant-ipa-variants-22` (7,566,974 bytes); the sideload Widget extension layout check passed.
 - Source parity and the downloadable IPA are complete. Real iPad installation, live campus account queries, notification delivery, and Widget gallery rendering are left for the user's device acceptance.
+
+## 2026-10-26 live electricity and GPA diagnosis
+
+### Goal
+
+Identify why the authenticated iOS flow shows an empty electricity page and fails to display the GPA visible in the portal. Treat synthetic tests and a successful IPA archive as component/build evidence only, not proof of live account behavior.
+
+### Current evidence
+
+- [x] Branch `iOS` is at `b66a2a3` with the current repair changes uncommitted. The local CodeGraph CLI index is healthy; its file inventory and Android/iOS collection paths were used for this pass.
+- [x] The new screenshot shows the bare `/berserker-base/redirect?appId=36&type=app` target landing on `/jfdt/.../toAppItem` with an empty `synjones-auth` parameter and JSON `401 / 请求未授权`. This confirms the bare redirect is not an authenticated URL; it does not establish that the full CAS wrapper failed.
+- [x] Android's `auto_collect.js` obtains `synjones-auth` from the authenticated `/plat` page URL/session storage/cookies before redirecting to the fee page. iOS starts with the supplied full CAS wrapper and its same-origin fallback hands a page-owned token to the Android-compatible fee route.
+- [x] Added an exact JavaScript regression for the screenshot-shaped unauthorized response; the collector returns no balance instead of treating status data as electricity.
+- [x] The GPA merge now applies a validated GPA independently of incomplete grade rows, and `OfflineAppViewModel` persists the merged state.
+- [x] Windows verification passes: Python 130, AoxiangCore 98, AoxiangApp 70, and `git diff --check`.
+- [x] REA MCP tools are exposed again, but passive inspection cannot attach to the local Chrome process because it has no remote-debugging port. The supplied screenshot is the runtime page evidence available in this pass.
+- [x] Windows has Swift and Node but no `xcodebuild`; the iOS-only WebKit tests are excluded from Windows SwiftPM runs.
+
+### Phases
+
+- [x] Inventory the project and trace Android/iOS electricity and GPA paths with CodeGraph; interpret the supplied 401 screenshot against those contracts.
+- [x] Add the screenshot-shaped 401 regression and the Core persistence regression for GPA independent of incomplete grades.
+- [x] Run the complete Python, Core, and App test suites on Windows.
+- [ ] Push the reviewed changes and verify the macOS iOS/WebKit archive workflow. The user will verify live account behavior on iPad.
+
+### Constraints
+
+- Do not rewrite the electricity route/token/bootstrap contract again without a live response or a failing regression that identifies the defect.
+- Keep the authentication page's existing visible behavior until the user confirms electricity works on iPad.
+- Keep credentials, SMS codes, cookies, tokens, student IDs and raw personal records out of logs, fixtures and saved planning notes.
+- A direct redirect URL returning 401 does not prove the complete CAS login flow is broken; the full wrapper and live iPad session remain unverified.
+- Windows SwiftPM cannot verify iOS WebKit compilation or a real iPad session; the macOS workflow and user-device acceptance are required.

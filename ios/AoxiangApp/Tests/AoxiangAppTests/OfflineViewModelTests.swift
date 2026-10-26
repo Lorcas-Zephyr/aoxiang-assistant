@@ -246,6 +246,31 @@ final class OfflineViewModelTests: XCTestCase {
         XCTAssertEqual(model.lastPortalCollectionWarnings, expectedWarnings)
     }
 
+    func testPersistsAvailableGPAWhenGradeResponsesAreIncomplete() throws {
+        let oldState = OfflineAppState(
+            grades: [OfflineGrade(id: "old-grade", course: "旧课", credits: 3, score: 82)],
+            gpa: nil
+        )
+        let store = InMemoryOfflineStateStore(value: oldState)
+        let controller = try OfflineDataController(store: store)
+        let writer = FileWidgetSnapshotStore(
+            fileURL: FileManager.default.temporaryDirectory.appendingPathComponent("portal-incomplete-gpa-\(UUID().uuidString).json")
+        )
+        let model = OfflineAppViewModel(controller: controller, snapshotWriter: writer)
+        let result = PortalCollectedData(
+            grades: [],
+            gpa: 3.72,
+            schedule: PortalCollectionParsers.SchedulePayload(semesters: [], courses: []),
+            warnings: [.gradesUnavailable],
+            gradesAvailable: false
+        )
+
+        XCTAssertTrue(model.applyPortalCollection(result))
+        XCTAssertEqual(model.state.grades.map(\.id), ["old-grade"])
+        XCTAssertEqual(model.state.gpa, 3.72)
+        XCTAssertEqual(store.value?.gpa, 3.72)
+    }
+
     func testCommuterBusCollectionPersistsSuccessfulSectionsAndKeepsFailedSections() throws {
         let oldSnapshot = CommuterBusSnapshot(
             updatedAt: 100,

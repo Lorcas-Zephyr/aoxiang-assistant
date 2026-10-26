@@ -2,6 +2,34 @@ import XCTest
 @testable import AoxiangApp
 
 final class VisibleCollectionNavigationPolicyTests: XCTestCase {
+    func testEducationAuthenticationStartsFromCampusPortalHome() {
+        XCTAssertEqual(
+            VisibleCollectionNavigationPolicy.educationPortalEntryURL.absoluteString,
+            "https://ecampus.nwpu.edu.cn/main.html#/Index"
+        )
+    }
+
+    func testOnlyJWXTStudentPopupIsRoutedIntoTheCurrentWebView() throws {
+        let policy = VisibleCollectionNavigationPolicy()
+
+        XCTAssertTrue(policy.shouldRouteEducationPopupInSameWebView(
+            try XCTUnwrap(URL(string: "https://jwxt.nwpu.edu.cn/student/home")),
+            targetFrameIsNil: true
+        ))
+        XCTAssertFalse(policy.shouldRouteEducationPopupInSameWebView(
+            try XCTUnwrap(URL(string: "https://jwxt.nwpu.edu.cn/student/home")),
+            targetFrameIsNil: false
+        ))
+        XCTAssertFalse(policy.shouldRouteEducationPopupInSameWebView(
+            try XCTUnwrap(URL(string: "https://example.com/student/home")),
+            targetFrameIsNil: true
+        ))
+        XCTAssertFalse(policy.shouldRouteEducationPopupInSameWebView(
+            try XCTUnwrap(URL(string: "http://jwxt.nwpu.edu.cn/student/home")),
+            targetFrameIsNil: true
+        ))
+    }
+
     func testExpectedElectricityCASBootstrapIsNotTreatedAsExpiredAuthentication() {
         let policy = VisibleCollectionNavigationPolicy()
         let bootstrap = URL(string: "https://yktapp.nwpu.edu.cn/berserker-auth/cas/login/supwisdom?targetUrl=https%3A%2F%2Fyktapp.nwpu.edu.cn%2Fplat")!
@@ -26,6 +54,30 @@ final class VisibleCollectionNavigationPolicyTests: XCTestCase {
                 allowsExpectedElectricityCASBootstrap: false
             )
         )
+    }
+
+    func testPhoneElectricityCASBootstrapUsesTheCopiedBerserkerRedirectTarget() throws {
+        let bootstrap = VisibleCollectionNavigationPolicy.electricityCASBootstrapURL
+        let components = URLComponents(url: bootstrap, resolvingAgainstBaseURL: false)
+        let target = components?.queryItems?.first(where: { $0.name == "targetUrl" })?.value
+            .flatMap(URL.init(string:))
+
+        XCTAssertEqual(target?.host, "yktapp.nwpu.edu.cn")
+        XCTAssertEqual(target?.path, VisibleCollectionNavigationPolicy.electricityRedirectPath)
+        XCTAssertEqual(
+            URLComponents(url: try XCTUnwrap(target), resolvingAgainstBaseURL: false)?.queryItems?.map {
+                "\($0.name)=\($0.value ?? "")"
+            },
+            ["appId=36", "type=app"]
+        )
+        XCTAssertTrue(VisibleCollectionNavigationPolicy().isExpectedElectricityCASBootstrap(bootstrap))
+    }
+
+    func testLegacyPlatTargetRemainsAnAcceptedElectricityBootstrap() {
+        let legacy = URL(string:
+            "https://yktapp.nwpu.edu.cn/berserker-auth/cas/login/supwisdom?targetUrl=https%3A%2F%2Fyktapp.nwpu.edu.cn%2Fplat"
+        )!
+        XCTAssertTrue(VisibleCollectionNavigationPolicy().isExpectedElectricityCASBootstrap(legacy))
     }
 
     func testExpectedElectricitySSOIntermediateHopsRemainAllowedDuringBootstrap() {

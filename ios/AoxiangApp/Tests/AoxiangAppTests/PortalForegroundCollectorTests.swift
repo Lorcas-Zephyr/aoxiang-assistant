@@ -115,6 +115,7 @@ final class PortalForegroundCollectorTests: XCTestCase {
 
         XCTAssertFalse(result.gradesAvailable)
         XCTAssertTrue(result.warnings.contains(.gradesUnavailable))
+        XCTAssertEqual(result.gpa, 3.72)
         XCTAssertEqual(result.electricityBalance ?? -1, 18.52, accuracy: 0.0001)
         XCTAssertTrue(result.scheduleAvailable)
         XCTAssertEqual(result.schedule.courses.count, 1)
