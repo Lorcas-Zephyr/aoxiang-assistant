@@ -1055,12 +1055,14 @@ until the device reports which stage failed.
   allowed campus authentication hops, and the `/student/home` to grade-sheet route.
 - [x] Implement the Android-compatible JWXT authenticated-page rule, enter through
   `/student/sso-login`, and wait/poll for the authenticated landing page.
-- [x] Increment the app and Widget to `1.0.5 (10)` and align Xcode, IPA workflow,
+- [x] Fix the archive compiler error by using `WKWebView.estimatedProgress` and
+  translating Android's 60/100 readiness threshold to WebKit's 0.6 scale.
+- [x] Increment the app and Widget to `1.0.6 (11)` and align Xcode, IPA workflow,
   build-script defaults, and version assertions.
 - [x] Run Python 130, AoxiangCore 99, AoxiangApp 77, Swift parse, and
   `git diff --check`; sync CodeGraph.
-- [ ] Push the reviewed commit and verify the macOS IPA Action archive, Widget
-  layout, version metadata, and uploaded artifact.
+- [ ] Push the archive fix and verify the macOS IPA Action archive, Widget layout,
+  version metadata, and uploaded artifact.
 - [ ] Record the remaining live iPad acceptance check without claiming it passed.
 
 ### Diagnosis

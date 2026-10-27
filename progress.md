@@ -999,7 +999,21 @@
 - iOS now uses the Android SSO entry, checks the protected page before opening grades,
   and polls at one-second intervals for up to 180 seconds. Authentication can recover
   from the persisted `authenticationExpired` state after a successful login.
-- Version is `1.0.5 (10)` across the host app, Widget, Xcode project, IPA workflow,
+- Version was `1.0.5 (10)` across the host app, Widget, Xcode project, IPA workflow,
   builder defaults, and configuration tests.
 - Windows verification: Python 130, AoxiangCore 99, AoxiangApp 77, and
   `git diff --check` pass. The macOS IPA Action and live iPad behavior remain pending.
+
+## 2026-10-27 archive compiler correction
+
+- The supplied Actions log identified the archive failure: `WKWebView` has no
+  `progress` property. Android's WebView uses integer progress from 0 to 100;
+  WebKit exposes `estimatedProgress` from 0.0 to 1.0.
+- The polling guard now uses `webView.estimatedProgress >= 0.6`, preserving Android's
+  60% readiness threshold. Education SSO, login recognition, and electricity flow
+  were not changed.
+- Bumped host app and Widget version to `1.0.6 (11)` and aligned Xcode settings,
+  workflow expectations, builder defaults, and configuration assertions.
+- Verification: Python 130, AoxiangCore 99, AoxiangApp 77, the 26 iOS project
+  configuration tests, and `git diff --check` pass. macOS archive verification is
+  pending the next Actions run; iPad runtime acceptance remains with the user.

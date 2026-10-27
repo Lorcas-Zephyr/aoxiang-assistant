@@ -844,7 +844,7 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
                         }
                         guard let self, let webView, !Task.isCancelled,
                               self.educationContinuation != nil else { return }
-                        if webView.progress >= 60 {
+                        if webView.estimatedProgress >= 0.6 {
                             self.handleEducationNavigation(in: webView)
                         }
                     }

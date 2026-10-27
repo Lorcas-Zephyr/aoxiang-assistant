@@ -951,3 +951,13 @@
 - Regression seams: `AuthenticationSuccessRule` and its probe decision for login
   recognition; `VisibleCollectionNavigationPolicy` for the SSO and home-to-grade
   navigation sequence. Live iPad verification remains external to Windows tests.
+
+## 2026-10-27 archive compiler correction
+
+- The uploaded Actions log showed the macOS archive failed at
+  `VisibleAuthenticationWebView.swift:847` because `WKWebView` has no `progress`
+  property. The code had copied Android's 0-100 progress scale into WebKit.
+- Replaced the invalid property with `estimatedProgress >= 0.6`, which preserves the
+  Android 60% readiness check on WebKit's 0.0-1.0 scale.
+- The app/Widget version is now `1.0.6 (11)`. Windows tests pass; the next macOS
+  Actions run must verify the device archive and IPA packaging before delivery.
