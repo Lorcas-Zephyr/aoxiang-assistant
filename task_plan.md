@@ -1061,8 +1061,9 @@ until the device reports which stage failed.
   build-script defaults, and version assertions.
 - [x] Run Python 130, AoxiangCore 99, AoxiangApp 77, Swift parse, and
   `git diff --check`; sync CodeGraph.
-- [ ] Push the archive fix and verify the macOS IPA Action archive, Widget layout,
-  version metadata, and uploaded artifact.
+- [x] Push commit `a398faa` and verify macOS Action `40474497892`: unsigned device
+  archive, Widget layout, `1.0.6 (11)` metadata, and artifact
+  `AoxiangAssistant-ipa-variants-32` all succeeded.
 - [ ] Record the remaining live iPad acceptance check without claiming it passed.
 
 ### Diagnosis

@@ -959,5 +959,9 @@
   property. The code had copied Android's 0-100 progress scale into WebKit.
 - Replaced the invalid property with `estimatedProgress >= 0.6`, which preserves the
   Android 60% readiness check on WebKit's 0.0-1.0 scale.
-- The app/Widget version is now `1.0.6 (11)`. Windows tests pass; the next macOS
-  Actions run must verify the device archive and IPA packaging before delivery.
+- The app/Widget version is now `1.0.6 (11)`. Python, Swift package, syntax, and
+  whitespace checks pass. macOS Action `40474497892` succeeded through the device
+  archive, Widget layout validation, version checks, and artifact upload;
+  `AoxiangAssistant-ipa-variants-32` is the resulting IPA artifact.
+- Live iPad SSO and collection behavior remains unverified pending the user's
+  on-device acceptance.

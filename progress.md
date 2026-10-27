@@ -1015,5 +1015,10 @@
 - Bumped host app and Widget version to `1.0.6 (11)` and aligned Xcode settings,
   workflow expectations, builder defaults, and configuration assertions.
 - Verification: Python 130, AoxiangCore 99, AoxiangApp 77, the 26 iOS project
-  configuration tests, and `git diff --check` pass. macOS archive verification is
-  pending the next Actions run; iPad runtime acceptance remains with the user.
+  configuration tests, Swift syntax parsing, shell syntax validation, CodeGraph
+  sync, and `git diff --check` pass.
+- Commit `a398faa` passed macOS Action `40474497892`: portable Swift tests, unsigned
+  device archive, Widget bundle layout verification, version metadata checks, and
+  IPA upload. Artifact `AoxiangAssistant-ipa-variants-32` was uploaded.
+- Live iPad login-state and education auto-collection acceptance remains with the
+  user; Windows tests and a successful archive do not prove the live campus flow.
