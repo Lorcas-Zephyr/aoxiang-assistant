@@ -94,6 +94,16 @@ final class AuthenticationStateTests: XCTestCase {
         )
     }
 
+    func testSuccessfulPortalAuthenticationRecoversExpiredSavedState() throws {
+        var machine = AuthenticationStateMachine(
+            initialState: .needsUserAttention(reason: .authenticationExpired)
+        )
+
+        XCTAssertEqual(try machine.handle(.authenticationSucceeded), .authenticated)
+        XCTAssertFalse(machine.state.canCollect)
+        XCTAssertEqual(try machine.handle(.prepareToCollect), .readyToCollect)
+    }
+
     func testRetryableFailuresKeepAnExplicitRecoveryTarget() throws {
         var loginMachine = AuthenticationStateMachine()
         let loginFailure = RetryableAuthenticationFailure(

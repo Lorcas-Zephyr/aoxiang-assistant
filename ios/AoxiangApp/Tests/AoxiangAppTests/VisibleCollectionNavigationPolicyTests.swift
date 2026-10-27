@@ -31,6 +31,61 @@ final class VisibleCollectionNavigationPolicyTests: XCTestCase {
         ))
     }
 
+    func testJWXTAuthenticationMatchesAndroidProtectedStudentPageRule() throws {
+        let rule = AuthenticationSuccessRule.jwxtStudentHome
+        let studentPage = try XCTUnwrap(URL(string:
+            "https://jwxt.nwpu.edu.cn/student/for-std/student-portrait"
+        ))
+        let ssoLogin = try XCTUnwrap(URL(string:
+            "https://jwxt.nwpu.edu.cn/student/sso-login"
+        ))
+        let authenticatedPage = try XCTUnwrap(AuthenticationProbeResult.decode(Data(
+            #"{"mainFrameMarkers":[],"sameOriginFrameMarkers":[],"inaccessibleFrameCount":0,"loginFormPresent":false,"protectedStudentPage":true}"#.utf8
+        )))
+        XCTAssertEqual(
+            authenticatedPage.decision(url: studentPage, successRules: [rule]),
+            .authenticationSucceeded
+        )
+
+        let loginFormPage = try XCTUnwrap(AuthenticationProbeResult.decode(Data(
+            #"{"mainFrameMarkers":[],"sameOriginFrameMarkers":[],"inaccessibleFrameCount":0,"loginFormPresent":true,"protectedStudentPage":false}"#.utf8
+        )))
+        XCTAssertEqual(
+            loginFormPage.decision(url: studentPage, successRules: [rule]),
+            .noMatch
+        )
+        XCTAssertEqual(
+            authenticatedPage.decision(url: ssoLogin, successRules: [rule]),
+            .noMatch
+        )
+    }
+
+    func testEducationCollectionUsesAndroidSSOEntryAndStudentHomeTargetRoute() throws {
+        let policy = VisibleCollectionNavigationPolicy()
+        XCTAssertEqual(
+            VisibleCollectionNavigationPolicy.educationSSOURL.absoluteString,
+            "https://jwxt.nwpu.edu.cn/student/sso-login"
+        )
+        XCTAssertTrue(policy.isAllowedCampusSSONavigation(VisibleCollectionNavigationPolicy.educationSSOURL))
+        XCTAssertTrue(policy.isAllowedCampusSSONavigation(URL(string:
+            "https://uis.nwpu.edu.cn/cas/login?service=education"
+        )))
+        XCTAssertFalse(policy.isAllowedCampusSSONavigation(URL(string:
+            "https://example.com/login"
+        )))
+
+        let home = try XCTUnwrap(URL(string: "https://jwxt.nwpu.edu.cn/student/home"))
+        let sso = VisibleCollectionNavigationPolicy.educationSSOURL
+        let gradeSheet = VisibleCollectionNavigationPolicy.educationGradeSheetURL
+        XCTAssertEqual(
+            policy.educationCollectionDestination(after: home, protectedStudentPage: true),
+            gradeSheet
+        )
+        XCTAssertNil(policy.educationCollectionDestination(after: home, protectedStudentPage: false))
+        XCTAssertNil(policy.educationCollectionDestination(after: sso, protectedStudentPage: true))
+        XCTAssertNil(policy.educationCollectionDestination(after: gradeSheet, protectedStudentPage: true))
+    }
+
     func testAuthenticationProbeDistinguishesMainDocumentFromSameOriginFrames() throws {
         let portalHome = try XCTUnwrap(URL(string: "https://ecampus.nwpu.edu.cn/main.html#/Index"))
         let probe = try XCTUnwrap(AuthenticationProbeResult.decode(Data(

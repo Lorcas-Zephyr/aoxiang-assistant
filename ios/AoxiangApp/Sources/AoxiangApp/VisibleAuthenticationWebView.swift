@@ -8,6 +8,7 @@ import WebKit
 public struct AuthenticationSuccessRule: Equatable {
     public let hostSuffix: String
     public let pathPrefixes: [String]
+    public let excludedPathPrefixes: [String]
     public let bodyMarkers: [String]
     public let requiredBodyMarkers: [String]
 
@@ -15,10 +16,12 @@ public struct AuthenticationSuccessRule: Equatable {
         hostSuffix: String,
         pathPrefixes: [String] = [],
         bodyMarkers: [String] = [],
-        requiredBodyMarkers: [String] = []
+        requiredBodyMarkers: [String] = [],
+        excludedPathPrefixes: [String] = []
     ) {
         self.hostSuffix = hostSuffix
         self.pathPrefixes = pathPrefixes
+        self.excludedPathPrefixes = excludedPathPrefixes
         self.bodyMarkers = bodyMarkers
         self.requiredBodyMarkers = requiredBodyMarkers
     }
@@ -55,8 +58,15 @@ public struct AuthenticationSuccessRule: Equatable {
 
     func matchesPath(_ path: String) -> Bool {
         let normalizedPath = path.lowercased()
-        return pathPrefixes.isEmpty || pathPrefixes.contains {
-            normalizedPath.hasPrefix($0.lowercased())
+        guard !excludedPathPrefixes.contains(where: {
+            let prefix = $0.lowercased()
+            return normalizedPath == prefix || normalizedPath.hasPrefix(prefix + "/")
+        }) else {
+            return false
+        }
+        return pathPrefixes.isEmpty || pathPrefixes.contains { rawPrefix in
+            let prefix = rawPrefix.lowercased()
+            return normalizedPath == prefix || normalizedPath.hasPrefix(prefix + "/")
         }
     }
 
@@ -66,7 +76,11 @@ public struct AuthenticationSuccessRule: Equatable {
 
     public static let jwxtStudentHome = AuthenticationSuccessRule(
         hostSuffix: "jwxt.nwpu.edu.cn",
-        pathPrefixes: ["/student/home"]
+        pathPrefixes: ["/student"],
+        excludedPathPrefixes: [
+            "/student/sso-login", "/student/login", "/student/logout",
+            "/student/error", "/student/unauthorized", "/student/forbidden"
+        ]
     )
 
     public static let ecampusPortalHome = AuthenticationSuccessRule(
@@ -80,6 +94,7 @@ struct AuthenticationProbeResult: Codable, Equatable {
     let mainFrameMarkers: Set<String>
     let sameOriginFrameMarkers: [Set<String>]
     let inaccessibleFrameCount: Int
+    let protectedStudentPage: Bool?
 
     static func decode(_ value: Any?) -> AuthenticationProbeResult? {
         let data: Data
@@ -102,7 +117,8 @@ struct AuthenticationProbeResult: Codable, Equatable {
             sameOriginFrameMarkers: result.sameOriginFrameMarkers.map {
                 Set($0.map { $0.lowercased() })
             },
-            inaccessibleFrameCount: max(0, result.inaccessibleFrameCount)
+            inaccessibleFrameCount: max(0, result.inaccessibleFrameCount),
+            protectedStudentPage: result.protectedStudentPage
         )
     }
 
@@ -125,6 +141,12 @@ struct AuthenticationProbeResult: Codable, Equatable {
         }
         if mainFrameMarkers.contains("密码错误") || mainFrameMarkers.contains("invalid") {
             return .credentialsRejected
+        }
+        if successRules.contains(where: {
+            $0.hostSuffix == AuthenticationSuccessRule.jwxtStudentHome.hostSuffix
+                && $0.matchesURL(url)
+        }), protectedStudentPage != true {
+            return .noMatch
         }
         if successRules.contains(where: { matches(rule: $0, url: url) }) {
             return .authenticationSucceeded
@@ -223,6 +245,12 @@ public struct VisibleCollectionNavigationPolicy {
     public static let educationPortalEntryURL = URL(
         string: "https://ecampus.nwpu.edu.cn/main.html#/Index"
     )!
+    public static let educationSSOURL = URL(
+        string: "https://jwxt.nwpu.edu.cn/student/sso-login"
+    )!
+    public static let educationGradeSheetURL = URL(
+        string: "https://jwxt.nwpu.edu.cn/student/for-std/grade/sheet/"
+    )!
     public static let electricityCASBootstrapURL: URL = {
         var components = URLComponents()
         components.scheme = "https"
@@ -279,6 +307,20 @@ public struct VisibleCollectionNavigationPolicy {
             return false
         }
         return host == "nwpu.edu.cn" || host.hasSuffix(".nwpu.edu.cn")
+    }
+
+    func isAllowedCampusSSONavigation(_ url: URL?) -> Bool {
+        guard let url,
+              url.scheme?.lowercased() == "https",
+              let host = url.host?.lowercased() else { return false }
+        return host == "nwpu.edu.cn" || host.hasSuffix(".nwpu.edu.cn")
+    }
+
+    func educationCollectionDestination(after url: URL, protectedStudentPage: Bool) -> URL? {
+        guard protectedStudentPage,
+              url.host?.lowercased() == "jwxt.nwpu.edu.cn",
+              url.path.lowercased() == "/student/home" else { return nil }
+        return Self.educationGradeSheetURL
     }
 
     public static func electricityRedirectURL(token: String) -> URL? {
@@ -529,6 +571,12 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
     private var educationContinuation: CheckedContinuation<PortalVisibleEducationData, Error>?
     private var educationTimeoutTask: Task<Void, Never>?
     private var educationEvaluationInFlight = false
+    private var educationCollectionStage: EducationCollectionStage?
+    private enum EducationCollectionStage: Equatable {
+        case enteringJWXT
+        case loadingGradeSheet
+        case collecting
+    }
     private enum CommuterBusStage: Equatable {
         case loadingStudentPage
         case resolvingStudentID
@@ -541,7 +589,7 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
     private var commuterBusEvaluationInFlight = false
     private var commuterBusStudentID: String?
     private var commuterBusNavigationCancellationExpected = false
-    private let studentGradeURL = URL(string: "https://jwxt.nwpu.edu.cn/student/for-std/grade/sheet/")!
+    private let studentGradeURL = VisibleCollectionNavigationPolicy.educationGradeSheetURL
     private let studentPortraitURL = URL(string: "https://jwxt.nwpu.edu.cn/student/for-std/student-portrait")!
     private let electricityLoginURL = VisibleCollectionNavigationPolicy.electricityCASBootstrapURL
     private let commuterBusHomeURL = URL(string: "https://hq-bus.nwpu.edu.cn/h5/")!
@@ -785,15 +833,25 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
                     return
                 }
                 educationEvaluationInFlight = false
+                educationCollectionStage = .enteringJWXT
                 educationTimeoutTask?.cancel()
-                educationTimeoutTask = Task { [weak self] in
-                    try? await Task.sleep(nanoseconds: 25_000_000_000)
-                    guard !Task.isCancelled else { return }
-                    await MainActor.run {
-                        self?.finishEducation(.failure(PortalCollectionFailure.retryable(.serverUnavailable)))
+                educationTimeoutTask = Task { @MainActor [weak self, weak webView] in
+                    for _ in 0..<180 {
+                        do {
+                            try await Task.sleep(nanoseconds: 1_000_000_000)
+                        } catch {
+                            return
+                        }
+                        guard let self, let webView, !Task.isCancelled,
+                              self.educationContinuation != nil else { return }
+                        if webView.progress >= 60 {
+                            self.handleEducationNavigation(in: webView)
+                        }
                     }
+                    guard let self, self.educationContinuation != nil else { return }
+                    self.finishEducation(.failure(PortalCollectionFailure.retryable(.serverUnavailable)))
                 }
-                webView.load(URLRequest(url: studentGradeURL))
+                webView.load(URLRequest(url: VisibleCollectionNavigationPolicy.educationSSOURL))
             }
         }, onCancel: { [weak self] in
             Task { @MainActor [weak self] in
@@ -929,8 +987,11 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
                target: .education,
                allowsExpectedElectricityCASBootstrap: false
            ) {
-            finishEducation(.failure(PortalCollectionFailure.authenticationRequired))
-            return
+            if educationCollectionStage != .enteringJWXT
+                || !navigationPolicy.isAllowedCampusSSONavigation(webView.url) {
+                finishEducation(.failure(PortalCollectionFailure.authenticationRequired))
+                return
+            }
         }
         if electricityContinuation != nil,
            navigationPolicy.isAuthenticationRedirect(
@@ -1060,11 +1121,47 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
               !educationEvaluationInFlight,
               let url = webView.url,
               url.host?.lowercased() == studentGradeURL.host?.lowercased(),
-              isEducationCollectionPage(url.path) else { return }
+              educationCollectionStage == .enteringJWXT || educationCollectionStage == .loadingGradeSheet else {
+            return
+        }
+
         educationEvaluationInFlight = true
         Task { @MainActor [weak self, weak webView] in
             guard let self, let webView else { return }
             do {
+                let probeValue = try await webView.callAsyncJavaScript(
+                    self.authenticationProbeScript(),
+                    arguments: [:],
+                    in: nil,
+                    contentWorld: .page
+                )
+                guard self.educationContinuation != nil else { return }
+                guard webView.url?.host?.lowercased() == url.host?.lowercased(),
+                      webView.url?.path.lowercased() == url.path.lowercased() else {
+                    self.educationEvaluationInFlight = false
+                    return
+                }
+                guard let probe = AuthenticationProbeResult.decode(probeValue),
+                      probe.protectedStudentPage == true else {
+                    self.educationEvaluationInFlight = false
+                    return
+                }
+                if let destination = self.navigationPolicy.educationCollectionDestination(
+                    after: url,
+                    protectedStudentPage: true
+                ), self.educationCollectionStage == .enteringJWXT {
+                    self.educationCollectionStage = .loadingGradeSheet
+                    self.educationEvaluationInFlight = false
+                    webView.load(URLRequest(url: destination))
+                    return
+                }
+                guard url.path.lowercased().hasPrefix("/student/for-std/grade/sheet"),
+                      self.educationCollectionStage == .loadingGradeSheet || self.educationCollectionStage == .enteringJWXT else {
+                    self.educationEvaluationInFlight = false
+                    return
+                }
+                self.educationCollectionStage = .collecting
+
                 // Xcode 26 imports this iOS 15 API as async throws; there is
                 // no completion-handler overload in the current SDK.
                 let value = try await webView.callAsyncJavaScript(
@@ -1099,6 +1196,8 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
             } catch {
                 guard self.educationContinuation != nil else { return }
                 self.educationEvaluationInFlight = false
+                guard webView.url?.host?.lowercased() == url.host?.lowercased(),
+                      webView.url?.path.lowercased() == url.path.lowercased() else { return }
                 self.finishEducation(.failure(PortalCollectionFailure.retryable(.serverUnavailable)))
             }
         }
@@ -1662,6 +1761,7 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
         educationTimeoutTask?.cancel()
         educationTimeoutTask = nil
         educationEvaluationInFlight = false
+        educationCollectionStage = nil
         guard let continuation = educationContinuation else { return }
         educationContinuation = nil
         continuation.resume(with: result)
@@ -3120,19 +3220,58 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
             return markers.filter((marker) => normalized.includes(marker.toLowerCase()));
           };
           const textOf = (doc) => doc && doc.body ? doc.body.innerText : '';
+          const text = (value) => String(value == null ? '' : value).replace(/\\s+/g, ' ').trim();
+          const visible = (element) => {
+            try {
+              const style = getComputedStyle(element);
+              return style.display !== 'none' && style.visibility !== 'hidden' &&
+                element.getClientRects().length > 0;
+            } catch (_) { return false; }
+          };
+          const documents = [];
+          const collectDocuments = (currentWindow) => {
+            try {
+              const currentDocument = currentWindow.document;
+              if (!currentDocument || documents.includes(currentDocument)) return;
+              documents.push(currentDocument);
+              [...currentDocument.querySelectorAll('iframe')].forEach((frame) => {
+                try {
+                  if (frame.contentWindow && frame.contentDocument) collectDocuments(frame.contentWindow);
+                } catch (_) {}
+              });
+            } catch (_) {}
+          };
+          collectDocuments(window);
           const sameOriginFrameMarkers = [];
           let inaccessibleFrameCount = 0;
+          documents.slice(1).forEach((doc) => sameOriginFrameMarkers.push(inspect(textOf(doc))));
           for (let index = 0; index < window.frames.length; index += 1) {
             try {
-              sameOriginFrameMarkers.push(inspect(textOf(window.frames[index].document)));
+              void window.frames[index].document;
             } catch (_) {
               inaccessibleFrameCount += 1;
             }
           }
+          const body = text(documents.map(textOf).join(' '));
+          const host = location.hostname.toLowerCase();
+          const loginDocument = documents.find((doc) => {
+            const documentText = text(textOf(doc));
+            const visiblePassword = [...doc.querySelectorAll('input[type="password"]')].some(visible);
+            const visibleInput = [...doc.querySelectorAll('input')].some(visible);
+            const authLocation = host !== 'jwxt.nwpu.edu.cn' || /login|auth|cas/i.test(location.pathname);
+            const authContent = /账号密码|密码登录|统一身份认证|统一认证|请输入.{0,12}(?:账号|用户名|学号|密码)/.test(documentText);
+            return visiblePassword && (authLocation || authContent) || visibleInput && authContent;
+          });
+          const protectedStudentPage = host === 'jwxt.nwpu.edu.cn' &&
+            /^\\/student(?:\\/|$)/.test(location.pathname) &&
+            !/\\/(?:sso-?login|login|logout|error|unauthorized|forbidden)(?:\\/|$)/i.test(location.pathname) &&
+            !loginDocument && body.length > 0 &&
+            !/(?:请先登录|登录信息已失效|会话.{0,8}(?:失效|过期)|身份认证已过期)/.test(body);
           return JSON.stringify({
             mainFrameMarkers: inspect(textOf(document)),
             sameOriginFrameMarkers,
-            inaccessibleFrameCount
+            inaccessibleFrameCount,
+            protectedStudentPage
           });
         })()
         """
@@ -3151,12 +3290,13 @@ public final class VisibleAuthenticationViewModel: NSObject, ObservableObject, W
         let mainTodo = result.mainFrameMarkers.contains("我的待办")
         let framePersonalCenter = result.sameOriginFrameMarkers.contains { $0.contains("个人中心") }
         let frameTodo = result.sameOriginFrameMarkers.contains { $0.contains("我的待办") }
+        let protectedStudentPage = result.protectedStudentPage
         let frameRuleMatches = successRules.contains {
             result.sameOriginFrameMatches(rule: $0, url: url)
         }
         return "URL \(diagnosticURLLabel(url)) | 路径规则\(routeMatches ? "命中" : "未命中") | 主规则\(successRuleMatched ? "命中" : "未命中")\n"
             + "主文档 个人中心\(mainPersonalCenter ? "✓" : "×") 待办\(mainTodo ? "✓" : "×") | 同源框架\(result.sameOriginFrameMarkers.count) 个人中心\(framePersonalCenter ? "✓" : "×") 待办\(frameTodo ? "✓" : "×") 规则\(frameRuleMatches ? "命中" : "未命中") | 跨域框架\(result.inaccessibleFrameCount)\n"
-            + "JS完成 | 分支=\(decision.diagnosticLabel) | 转换=\(transitionOutcome)\n"
+            + "JWXT学生页\(protectedStudentPage.map { $0 ? "有效" : "无效" } ?? "未判定") | JS完成 | 分支=\(decision.diagnosticLabel) | 转换=\(transitionOutcome)\n"
             + "回调页面=\(callbackURLMatchesCurrent ? "当前" : "已变化") | VM=\(authenticationStateLabel(state)) / 机器=\(authenticationStateLabel(machine.state)) / 会话=\(authenticationStateLabel(sessionStore.state))"
     }
 

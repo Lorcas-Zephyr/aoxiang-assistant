@@ -979,3 +979,27 @@
 - The implementation gap is now matched to Android's tracker and retry policy. The
   iPad still needs one live check to confirm the portal uses the same UIS-to-campus
   navigation sequence and that auto-collection proceeds afterward.
+
+## 2026-10-27 follow-up from iPad diagnostic
+
+- Re-read Android `openPortal`, `UnifiedAuthTracker`, and `auto_collect.js` with
+  CodeGraph. Confirmed iOS's logged-in page is rejected because its JWXT rule only
+  permits `/student/home`, and education collection bypasses the campus portal by
+  loading the grade-sheet address directly.
+- The screenshot's personal-center and todo markers identify a likely valid signed-in
+  JWXT page; the diagnostic still reports `needsUserAttention` because the success
+  route does not match.
+- Corrected the diagnosis against Android's current code: `openPortal()` starts at
+  `/student/sso-login`; `auto_collect.js` recognizes protected `/student/...` pages
+  and moves from `/student/home` to the selected grade/schedule page. The earlier
+  portal-button wording was not an accurate description of Android's implementation.
+- Added regression coverage for protected non-home JWXT pages, rejection of SSO/login
+  routes, campus-only SSO navigation, and the home-to-grade route. Red compile checks
+  exposed stale test seam names; updated tests now pass.
+- iOS now uses the Android SSO entry, checks the protected page before opening grades,
+  and polls at one-second intervals for up to 180 seconds. Authentication can recover
+  from the persisted `authenticationExpired` state after a successful login.
+- Version is `1.0.5 (10)` across the host app, Widget, Xcode project, IPA workflow,
+  builder defaults, and configuration tests.
+- Windows verification: Python 130, AoxiangCore 99, AoxiangApp 77, and
+  `git diff --check` pass. The macOS IPA Action and live iPad behavior remain pending.

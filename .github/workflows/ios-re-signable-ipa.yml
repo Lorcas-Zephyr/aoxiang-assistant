@@ -62,8 +62,8 @@ jobs:
           IOS_APP_BUNDLE_IDENTIFIER: ${{ inputs.app_bundle_identifier }}
           IOS_WIDGET_BUNDLE_IDENTIFIER: ${{ inputs.widget_bundle_identifier }}
           IOS_APP_GROUP_IDENTIFIER: ${{ inputs.app_group_identifier }}
-          IOS_EXPECTED_MARKETING_VERSION: "1.0.4"
-          IOS_EXPECTED_BUILD_VERSION: "9"
+          IOS_EXPECTED_MARKETING_VERSION: "1.0.5"
+          IOS_EXPECTED_BUILD_VERSION: "10"
         run: bash scripts/build_ios_re_signable_ipa.sh
 
       - name: Verify IPA bundle layouts

@@ -929,3 +929,25 @@
 - Commit `ca65150` passed macOS Action `40392772168`, including Xcode device archive,
   Widget-layout verification, and upload of `AoxiangAssistant-ipa-variants-30`
   (7,646,476 bytes). The IPA build script enforces archive version `1.0.4 (9)`.
+
+## 2026-10-27 JWXT portal-entry regression
+
+- The supplied iPad diagnostic is positive evidence of a logged-in JWXT page:
+  its main document contains `个人中心` and `我的待办`. The rejection comes from
+  iOS requiring exactly `/student/home` before it accepts authentication.
+- Android's current `auto_collect.js` treats non-login `/student/...` pages as
+  authenticated when they have content and no visible login form or expired-session
+  text. Android `openPortal()` starts collection at
+  `https://jwxt.nwpu.edu.cn/student/sso-login`; its script then follows the authenticated
+  student page and opens the requested grade/schedule route from `/student/home`.
+- iOS `collectEducationData()` previously opened the grade-sheet address directly,
+  skipping Android's SSO entry. The correction now starts from the same SSO URL,
+  polls for up to 180 seconds at one-second intervals, and checks the protected student
+  page before routing to or reading the grade sheet.
+- The existing portal UI still starts at eCampus; the data collector follows Android's
+  JWXT SSO entry. No simulated `教务系统` DOM click was added.
+- The electricity URLs, token hand-off, parser, and visible collection behavior are
+  unchanged.
+- Regression seams: `AuthenticationSuccessRule` and its probe decision for login
+  recognition; `VisibleCollectionNavigationPolicy` for the SSO and home-to-grade
+  navigation sequence. Live iPad verification remains external to Windows tests.

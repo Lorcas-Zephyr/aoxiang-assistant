@@ -1047,3 +1047,32 @@ until the device reports which stage failed.
 - Do not modify the electricity URL, token hand-off, or response parser in this pass.
 - Treat Windows tests and IPA archive as code/build evidence only; live iPad behavior
   remains unverified until the device result is observed.
+
+## 2026-10-27 JWXT portal-entry regression
+
+- [x] Compare the screenshot diagnostics with Android's JWXT login and landing rules.
+- [x] Add regression tests for Android's protected JWXT pages, its SSO entry,
+  allowed campus authentication hops, and the `/student/home` to grade-sheet route.
+- [x] Implement the Android-compatible JWXT authenticated-page rule, enter through
+  `/student/sso-login`, and wait/poll for the authenticated landing page.
+- [x] Increment the app and Widget to `1.0.5 (10)` and align Xcode, IPA workflow,
+  build-script defaults, and version assertions.
+- [x] Run Python 130, AoxiangCore 99, AoxiangApp 77, Swift parse, and
+  `git diff --check`; sync CodeGraph.
+- [ ] Push the reviewed commit and verify the macOS IPA Action archive, Widget
+  layout, version metadata, and uploaded artifact.
+- [ ] Record the remaining live iPad acceptance check without claiming it passed.
+
+### Diagnosis
+
+- Screenshot: logged-in JWXT page contains `个人中心` and `我的待办`, while the
+  authentication probe reports the route rule and decision as unmatched.
+- Android accepts non-login `/student/...` pages with content, after excluding
+  login forms, explicit auth/error routes, and expired-session text. iOS only
+  accepted `/student/home`.
+- Android `openPortal()` starts education collection at
+  `https://jwxt.nwpu.edu.cn/student/sso-login`; `auto_collect.js` waits for the
+  authenticated JWXT student page, then opens the target route from `/student/home`.
+  iOS previously loaded the grade-sheet URL directly and skipped that SSO entry.
+- The existing Android entry is the behavior to copy. Do not add a DOM search or
+  simulated click for the portal's `教务系统` button.

@@ -168,6 +168,8 @@ public struct AuthenticationStateMachine {
             case .collectionNotReady: next = .authenticated
             default: next = .needsLogin
             }
+        case (.needsUserAttention(reason: .authenticationExpired), .authenticationSucceeded):
+            next = .authenticated
         case (.needsUserAttention(_), .retryableFailure(let failure)): next = .retryableFailure(failure)
 
         default: next = nil
