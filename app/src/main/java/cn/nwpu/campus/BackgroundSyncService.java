@@ -24,6 +24,7 @@ import android.os.PowerManager;
 import android.security.keystore.KeyGenParameterSpec;
 import android.security.keystore.KeyProperties;
 import android.util.Base64;
+import android.util.Log;
 import android.view.View;
 import android.view.ViewGroup;
 import android.webkit.CookieManager;
@@ -51,6 +52,7 @@ import javax.crypto.SecretKey;
 import javax.crypto.spec.GCMParameterSpec;
 
 public class BackgroundSyncService extends Service {
+    private static final String TAG = "AoxiangAssistant";
     private static final String EDUCATION_SSO = "https://jwxt.nwpu.edu.cn/student/sso-login";
     private static final String STUDENT_PORTRAIT =
             "https://jwxt.nwpu.edu.cn/student/for-std/student-portrait";
@@ -84,6 +86,7 @@ public class BackgroundSyncService extends Service {
     private String target;
     private Runnable collectTask;
     private boolean running;
+    private boolean tokenScheduleAttempted;
     private PowerManager.WakeLock wakeLock;
 
     @Override public void onCreate() {
@@ -158,6 +161,40 @@ public class BackgroundSyncService extends Service {
 
     @SuppressLint("SetJavaScriptEnabled")
     private void beginCollection() {
+        if ("schedule".equals(target) && !tokenScheduleAttempted
+                && AxxtSession.hasUsableToken(this, store)) {
+            tokenScheduleAttempted = true;
+            ScheduleModels.Semester localSemester = null;
+            List<ScheduleModels.Semester> savedSemesters = ScheduleStorage.loadSemesters(store);
+            String selectedId = ScheduleStorage.loadSelectedSemester(store);
+            for (ScheduleModels.Semester semester : savedSemesters) {
+                if (semester.id.equals(selectedId)) {
+                    localSemester = semester;
+                    break;
+                }
+            }
+            final ScheduleModels.Semester selectedSemester = localSemester;
+            new Thread(() -> {
+                AxxtSession.ScheduleResult result = AxxtSession.fetchSchedule(
+                        this, store, selectedSemester);
+                handler.post(() -> {
+                    if (!running) return;
+                    if (result.success()) {
+                        saveSchedule(result.payload);
+                    } else {
+                        Log.w(TAG, "Background long session schedule failed, falling back: "
+                                + result.error);
+                        beginCollection();
+                    }
+                });
+            }, "AoxiangAxxtSchedule").start();
+            return;
+        }
+        beginWebViewCollection();
+    }
+
+    @SuppressLint("SetJavaScriptEnabled")
+    private void beginWebViewCollection() {
         unifiedAuthTracker.reset();
         String[] credentials = readCredentials();
         if (credentials[0].isEmpty() || credentials[1].isEmpty()) {
@@ -223,8 +260,9 @@ public class BackgroundSyncService extends Service {
         web.onResume();
         web.resumeTimers();
         startCollector(credentials);
-        web.loadUrl("bus".equals(target) ? BUS_SSO
-                : "electricity".equals(target) ? ELECTRICITY_SSO : EDUCATION_SSO);
+        String serviceUrl = "bus".equals(target) ? BUS_SSO
+                : "electricity".equals(target) ? ELECTRICITY_SSO : EDUCATION_SSO;
+        web.loadUrl(AxxtSession.authenticatedServiceUrl(this, store, serviceUrl));
     }
 
     /**
@@ -281,6 +319,7 @@ public class BackgroundSyncService extends Service {
                         .replace("__USERNAME__", JSONObject.quote(credentials[0]))
                         .replace("__PASSWORD__", JSONObject.quote(credentials[1]))
                         .replace("__SMS_CODE__", JSONObject.quote(""))
+                        .replace("__AXXT_TOKEN__", JSONObject.quote(AxxtSession.readToken(BackgroundSyncService.this, store)))
                         .replace("__CAN_AUTOFILL__", Boolean.toString(!credentialsSubmitted[0]))
                         .replace("__CAN_FILL_SMS__", "false")
                         .replace("__HEADLESS__", "true");
@@ -381,6 +420,7 @@ public class BackgroundSyncService extends Service {
                 if (!apiScript.isEmpty()) {
                     String apiSource = apiScript.replace("__MODE__", target)
                             .replace("__BUS_NO__", JSONObject.quote(credentials[0]))
+                            .replace("__AXXT_TOKEN__", JSONObject.quote(AxxtSession.readToken(BackgroundSyncService.this, store)))
                             .replace("__ALLOW_NAV__", Boolean.toString(
                                     System.currentTimeMillis() >= navigationCooldownUntil[0]));
                     web.evaluateJavascript(apiSource, apiResult -> {

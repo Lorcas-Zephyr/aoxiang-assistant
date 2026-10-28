@@ -7,10 +7,19 @@
   const canFillSms = __CAN_FILL_SMS__;
   const unifiedAuthExited = __AUTH_EXITED__;
   const headless = __HEADLESS__;
+  const sharedToken = __AXXT_TOKEN__;
   const collectionMode = mode === "grades" || mode === "schedule" ||
     mode === "electricity" || mode === "bus";
 
   const text = (value) => String(value == null ? "" : value).replace(/\s+/g, " ").trim();
+  const fetchWithSharedToken = (url, options) => {
+    const request = Object.assign({}, options || {});
+    const target = new URL(url, location.href);
+    if (sharedToken && /(?:^|\.)nwpu\.edu\.cn$/i.test(target.hostname)) {
+      request.headers = Object.assign({}, request.headers || {}, { "x-cas-token": sharedToken });
+    }
+    return fetch(target.href, request);
+  };
   const visible = (element) => {
     try {
       if (headless) {
@@ -1034,7 +1043,7 @@
     if (printDataUrl && (!state || state.key !== printDataKey)) {
       state = { key: printDataKey, loading: true };
       window[stateKey] = state;
-      fetch(printDataUrl, { credentials: "same-origin" })
+      fetchWithSharedToken(printDataUrl, { credentials: "same-origin" })
         .then((response) => {
           if (!response.ok) throw new Error(`HTTP ${response.status}`);
           return response.json();

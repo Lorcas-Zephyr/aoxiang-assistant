@@ -30,6 +30,7 @@ import android.security.keystore.KeyProperties;
 import android.text.InputType;
 import android.text.TextUtils;
 import android.util.Base64;
+import android.util.Log;
 import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.MotionEvent;
@@ -92,6 +93,7 @@ import javax.crypto.SecretKey;
 import javax.crypto.spec.GCMParameterSpec;
 
 public class MainActivity extends Activity {
+    private static final String TAG = "AoxiangAssistant";
     private static final String EDUCATION_SSO = "https://jwxt.nwpu.edu.cn/student/sso-login";
     private static final String STUDENT_PORTRAIT =
             "https://jwxt.nwpu.edu.cn/student/for-std/student-portrait";
@@ -209,6 +211,9 @@ public class MainActivity extends Activity {
     private final List<String> initialSyncFailures = new ArrayList<>();
     private String automationTarget = "";
     private String pendingSmsCode = "";
+    private AxxtSession.LoginStart pendingAxxtLogin;
+    private boolean axxtLoginRunning;
+    private int axxtLoginGeneration;
     private String autoCollectScript = "";
     private String apiCollectScript = "";
     private String themeColor = ScheduleModels.DEFAULT_THEME_COLOR;
@@ -1146,6 +1151,21 @@ public class MainActivity extends Activity {
         addHorizontalGap(actions, 8);
         actions.addView(signOut, new LinearLayout.LayoutParams(0, dp(42), 1));
         account.addView(actions);
+        LinearLayout sessionRow = new LinearLayout(this);
+        sessionRow.setGravity(Gravity.CENTER_VERTICAL);
+        addGap(account, 10);
+        String sessionSummary = AxxtSession.hasUsableToken(this, store)
+                ? "长期会话有效，各项更新可复用统一登录" : "建立后可在 30 天内复用统一会话";
+        TextView sessionText = label(sessionSummary, 12, mutedColor());
+        sessionRow.addView(sessionText, new LinearLayout.LayoutParams(0, dp(42), 1));
+        Button sessionButton = action(
+                AxxtSession.hasUsableToken(this, store) ? "刷新会话" : "建立长期会话", true);
+        // Keep this action reachable while signed out so the user gets the
+        // explicit sign-in guidance from beginAxxtSessionLogin().
+        sessionButton.setEnabled(!axxtLoginRunning);
+        sessionButton.setOnClickListener(v -> beginAxxtSessionLogin(sessionText, sessionButton));
+        sessionRow.addView(sessionButton, new LinearLayout.LayoutParams(dp(118), dp(42)));
+        account.addView(sessionRow);
         parent.addView(account);
     }
 
@@ -2581,11 +2601,14 @@ public class MainActivity extends Activity {
         code.setInputType(InputType.TYPE_CLASS_NUMBER);
         code.setSingleLine(true);
         styleDialogInput(code);
+        LinearLayout form = new LinearLayout(this);
+        form.setOrientation(LinearLayout.VERTICAL);
+        form.addView(code, new LinearLayout.LayoutParams(-1, dp(58)));
         loginDialog = new Dialog(this);
         Dialog dialog = loginDialog;
         showLoginActionPanel(dialog, "安全验证", "输入短信验证码",
                 invalid ? "验证码错误或已失效，请重新输入" : "验证码已由校方认证系统发送，请输入后继续。",
-                code, "验证", () -> {
+                form, "验证", () -> {
                 String value = code.getText().toString().trim();
                 if (value.length() < 4) {
                     Toast.makeText(this, "请输入有效验证码", Toast.LENGTH_SHORT).show();
@@ -2675,8 +2698,12 @@ public class MainActivity extends Activity {
         return true;
     }
 
-    @SuppressLint("SetJavaScriptEnabled")
     private void openPortal(String target, boolean automatic) {
+        openPortal(target, automatic, true);
+    }
+
+    @SuppressLint("SetJavaScriptEnabled")
+    private void openPortal(String target, boolean automatic, boolean allowTokenSchedule) {
         if (!"bootstrap".equals(target) && !hasSavedCredentials()) {
             if (!automatic) showCredentialsDialog(false, validAutomationTarget(target), false, false);
             return;
@@ -2688,6 +2715,11 @@ public class MainActivity extends Activity {
         automaticRun = automatic;
         if (automatic) showAutomaticUpdateNotification("正在更新" + automationLabel(target));
         unifiedAuthTracker.reset();
+        if (allowTokenSchedule && automatic && !activityVisible && "schedule".equals(target)
+                && AxxtSession.hasUsableToken(this, store)) {
+            startTokenScheduleCollection(automatic);
+            return;
+        }
         boolean hideBrowser = !"bootstrap".equals(target);
         boolean showBrowser = !hideBrowser || !automatic && showCollectionWeb(target);
 
@@ -2814,8 +2846,87 @@ public class MainActivity extends Activity {
             automationHost.bringToFront();
         }
         startAutomation(web, status);
-        web.loadUrl("bus".equals(target) ? BUS_SSO
-                : "electricity".equals(target) ? ELECTRICITY_SSO : EDUCATION_SSO);
+        String serviceUrl = "bus".equals(target) ? BUS_SSO
+                : "electricity".equals(target) ? ELECTRICITY_SSO : EDUCATION_SSO;
+        web.loadUrl(AxxtSession.authenticatedServiceUrl(this, store, serviceUrl));
+    }
+
+    private void startTokenScheduleCollection(boolean automatic) {
+        final int generation = ++automationGeneration;
+        final TextView progressStatus = automatic ? null : showTokenScheduleProgress();
+        final ScheduleModels.Semester localSemester = selectedSemester();
+        new Thread(() -> {
+            AxxtSession.ScheduleResult result = AxxtSession.fetchSchedule(
+                    this, store, localSemester, (completed, total) -> runOnUiThread(() -> {
+                        if (generation == automationGeneration && progressStatus != null) {
+                            progressStatus.setText("已读取 " + completed + "/" + total + " 周课程");
+                        }
+                    }));
+            runOnUiThread(() -> {
+                if (generation != automationGeneration) return;
+                if (result.success()) {
+                    handleCollectedSchedule(result.payload);
+                    return;
+                }
+                Log.w(TAG, "Long session schedule failed, falling back: " + result.error);
+                openPortal("schedule", automatic, false);
+            });
+        }, "AoxiangAxxtSchedule").start();
+    }
+
+    private TextView showTokenScheduleProgress() {
+        FrameLayout overlay = new FrameLayout(this);
+        overlay.setBackgroundColor(backgroundColor());
+        overlay.setClickable(true);
+        overlay.setFocusable(true);
+
+        LinearLayout shell = new LinearLayout(this);
+        shell.setOrientation(LinearLayout.VERTICAL);
+        shell.setBackgroundColor(backgroundColor());
+
+        LinearLayout bar = new LinearLayout(this);
+        bar.setGravity(Gravity.CENTER_VERTICAL);
+        bar.setPadding(dp(12), 0, dp(12), 0);
+        TextView back = label("‹", 32, textColor());
+        back.setGravity(Gravity.CENTER);
+        back.setOnClickListener(v -> {
+            cancelAutomation();
+            showTab(currentTab);
+        });
+        bar.addView(back, new LinearLayout.LayoutParams(dp(40), dp(52)));
+        TextView heading = label("导入课表", 16, textColor());
+        heading.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        bar.addView(heading, new LinearLayout.LayoutParams(0, dp(52), 1));
+        shell.addView(bar);
+
+        LinearLayout center = new LinearLayout(this);
+        center.setOrientation(LinearLayout.VERTICAL);
+        center.setGravity(Gravity.CENTER);
+        center.setPadding(dp(20), dp(20), dp(20), dp(20));
+        ProgressBar spinner = new ProgressBar(this);
+        center.addView(spinner, new LinearLayout.LayoutParams(dp(42), dp(42)));
+        addGap(center, 16);
+        LinearLayout card = card(surfaceColor());
+        card.setPadding(dp(18), dp(18), dp(18), dp(18));
+        TextView title = label("正在通过长期会话导入课表", 16, textColor());
+        title.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        card.addView(title);
+        addGap(card, 8);
+        TextView status = label("正在并行读取课程，通常几秒即可完成…", 11, mutedColor());
+        card.addView(status);
+        center.addView(card, new LinearLayout.LayoutParams(-1, -2));
+        shell.addView(center, new LinearLayout.LayoutParams(-1, 0, 1));
+        overlay.addView(shell, new FrameLayout.LayoutParams(-1, -1));
+
+        automationHost.removeAllViews();
+        automationHost.setLayoutParams(new FrameLayout.LayoutParams(-1, -1));
+        automationHost.setBackgroundColor(backgroundColor());
+        automationHost.setClickable(true);
+        automationHost.setFocusable(true);
+        automationHost.addView(overlay, new FrameLayout.LayoutParams(-1, -1));
+        automationHost.setVisibility(View.VISIBLE);
+        automationHost.bringToFront();
+        return status;
     }
 
     private void startAutomation(WebView web, TextView status) {
@@ -2869,6 +2980,7 @@ public class MainActivity extends Activity {
                 script = script.replace("__USERNAME__", JSONObject.quote(credentials[0]))
                         .replace("__PASSWORD__", JSONObject.quote(credentials[1]))
                         .replace("__SMS_CODE__", JSONObject.quote(pendingSmsCode))
+                        .replace("__AXXT_TOKEN__", JSONObject.quote(AxxtSession.readToken(MainActivity.this, store)))
                         .replace("__CAN_AUTOFILL__", Boolean.toString(!"bootstrap".equals(target)
                                 && !credentialsSubmitted[0] && !credentials[0].isEmpty() && !credentials[1].isEmpty()))
                         .replace("__CAN_FILL_SMS__", Boolean.toString(!smsSubmitted[0] && !pendingSmsCode.isEmpty()))
@@ -3106,6 +3218,7 @@ public class MainActivity extends Activity {
                     String apiSource = apiCollectScript
                             .replace("__MODE__", target)
                             .replace("__BUS_NO__", JSONObject.quote(busIdentity()))
+                        .replace("__AXXT_TOKEN__", JSONObject.quote(AxxtSession.readToken(MainActivity.this, store)))
                             .replace("__ALLOW_NAV__", Boolean.toString(
                                     System.currentTimeMillis() >= navigationCooldownUntil[0]));
                     web.evaluateJavascript(apiSource, apiResult -> {
@@ -4067,6 +4180,10 @@ public class MainActivity extends Activity {
     }
 
     private void signOut() {
+        axxtLoginGeneration++;
+        axxtLoginRunning = false;
+        pendingAxxtLogin = null;
+        pendingSmsCode = "";
         cancelInitialSync();
         cancelScheduledUpdates();
         cancelAutomation();
@@ -4081,6 +4198,7 @@ public class MainActivity extends Activity {
         scheduleWeekOffset = 0;
         scheduleMonthAnchor = LocalDate.now();
         Arrays.fill(tabScrollPositions, 0);
+        AxxtSession.clearToken(this, store);
         store.edit()
                 .remove("login_credentials")
                 .remove("credentials_verified")
@@ -4120,6 +4238,82 @@ public class MainActivity extends Activity {
         showTab(TAB_SETTINGS);
         Toast.makeText(this, "已退出登录并清除成绩、课表、电费和校车数据",
                 Toast.LENGTH_SHORT).show();
+    }
+
+    private void beginAxxtSessionLogin(TextView status, Button button) {
+        if (axxtLoginRunning) return;
+        String[] credentials = readCredentials();
+        if (credentials[0].isEmpty() || credentials[1].isEmpty()) {
+            Toast.makeText(this, "请先登录账号", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        axxtLoginRunning = true;
+        final int generation = ++axxtLoginGeneration;
+        button.setEnabled(false);
+        status.setText("正在建立长期会话…");
+        new Thread(() -> {
+            AxxtSession.LoginResult result = AxxtSession.startPasswordLogin(
+                    credentials[0], credentials[1]);
+            runOnUiThread(() -> {
+                if (generation != axxtLoginGeneration) return;
+                axxtLoginRunning = false;
+                button.setEnabled(true);
+                if (result.success()) {
+                    try {
+                        AxxtSession.saveToken(this, store, result.token);
+                        status.setText("长期会话有效，各项更新可复用统一登录");
+                        button.setText("刷新会话");
+                        Toast.makeText(this, "长期会话已建立", Toast.LENGTH_SHORT).show();
+                    } catch (Exception error) {
+                        status.setText("长期会话保存失败，请重试");
+                        Toast.makeText(this, "长期会话保存失败", Toast.LENGTH_LONG).show();
+                    }
+                    return;
+                }
+                if (result.needsMfa()) {
+                    pendingAxxtLogin = result.pending;
+                    status.setText("已发送短信验证码");
+                    showSmsDialog(false, () -> finishAxxtSessionLogin(status, button));
+                    return;
+                }
+                status.setText("建立失败：" + result.error);
+                Toast.makeText(this, result.error, Toast.LENGTH_LONG).show();
+            });
+        }, "AoxiangAxxtLogin").start();
+    }
+
+    private void finishAxxtSessionLogin(TextView status, Button button) {
+        String[] credentials = readCredentials();
+        String code = pendingSmsCode;
+        AxxtSession.LoginStart pending = pendingAxxtLogin;
+        pendingAxxtLogin = null;
+        pendingSmsCode = "";
+        axxtLoginRunning = true;
+        final int generation = ++axxtLoginGeneration;
+        button.setEnabled(false);
+        status.setText("正在验证短信…");
+        new Thread(() -> {
+            AxxtSession.LoginResult result = AxxtSession.finishPasswordLogin(
+                    credentials[0], credentials[1], pending, code);
+            runOnUiThread(() -> {
+                if (generation != axxtLoginGeneration) return;
+                axxtLoginRunning = false;
+                button.setEnabled(true);
+                if (result.success()) {
+                    try {
+                        AxxtSession.saveToken(this, store, result.token);
+                        status.setText("长期会话有效，各项更新可复用统一登录");
+                        button.setText("刷新会话");
+                        Toast.makeText(this, "长期会话已建立", Toast.LENGTH_SHORT).show();
+                    } catch (Exception error) {
+                        status.setText("长期会话保存失败，请重试");
+                    }
+                } else {
+                    status.setText("建立失败：" + result.error);
+                    Toast.makeText(this, result.error, Toast.LENGTH_LONG).show();
+                }
+            });
+        }, "AoxiangAxxtMfa").start();
     }
 
     private void switchAccount() {

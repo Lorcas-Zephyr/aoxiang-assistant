@@ -2,6 +2,9 @@
   const allowNavigation = __ALLOW_NAV__;
   // 校车系统用 localStorage.NO 作为身份参数，首次进入时由原生层注入。
   const BUS_NO = __BUS_NO__;
+  // The long-lived NWPU App session is shared by every first-party API call.
+  // It is only attached to NWPU hosts; third-party resources never receive it.
+  const SHARED_TOKEN = __AXXT_TOKEN__;
   const host = location.hostname;
   const path = location.pathname;
   const stateKey = "__aoxiangAssistantApiState_" + mode;
@@ -19,11 +22,18 @@
     const controller = typeof AbortController === "function" ? new AbortController() : null;
     const timer = controller ? setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS) : null;
     try {
-      return await fetch(url, Object.assign({}, options || {}, {
+      const request = Object.assign({}, options || {}, {
         credentials: "include",
         cache: "no-store",
         signal: controller ? controller.signal : undefined
-      }));
+      });
+      const target = new URL(url, location.href);
+      if (SHARED_TOKEN && /(?:^|\.)nwpu\.edu\.cn$/i.test(target.hostname)) {
+        request.headers = Object.assign({}, request.headers || {}, {
+          "x-cas-token": SHARED_TOKEN
+        });
+      }
+      return await fetch(target.href, request);
     } finally {
       if (timer) clearTimeout(timer);
     }
