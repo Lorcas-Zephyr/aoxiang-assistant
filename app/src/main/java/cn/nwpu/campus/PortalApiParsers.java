@@ -42,6 +42,8 @@ final class PortalApiParsers {
                     putNullable(row, grade, "gp");
                     row.put(grade.isNull("gaGrade") ? "" : grade.optString("gaGrade"));
                     row.put(grade.isNull("gradeDetail") ? "" : grade.optString("gradeDetail"));
+                    // 第 6 格携带教务内部课程 ID，用于匹配教学班排名。
+                    row.put(course == null ? "" : course.optString("id"));
                     rows.put(row);
                 }
             }
@@ -138,8 +140,9 @@ final class PortalApiParsers {
                 : firstNonEmpty(semester.optString("nameZh"), semester.optString("name"),
                 semester.optString("code"), "当前学期");
         String startDate = semester == null ? "" : semester.optString("startDate");
-        String endDate = effectiveEndDate(startDate, activities);
-        if (endDate.isEmpty() && semester != null) endDate = semester.optString("endDate");
+        // 结束日期以教务下发为准（口径包含考试周）；缺失时按最后一项排课推算。
+        String endDate = semester == null ? "" : semester.optString("endDate");
+        if (endDate.isEmpty()) endDate = effectiveEndDate(startDate, activities);
 
         JSONObject semesterItem = new JSONObject();
         put(semesterItem, "name", semesterName);
@@ -175,6 +178,32 @@ final class PortalApiParsers {
         put(payload, "semesters", semesters);
         put(payload, "courses", courses);
         return payload;
+    }
+
+
+    /**
+     * 解析 getMyGradesByProgram 响应的教学班排名：courseItemMap 以教务内部
+     * 课程 ID 为键，值中的 stdLessonRank 与 stdCount 组成 "名次/人数" 文本。
+     * 响应缺失或没有 courseItemMap 时返回 null，由调用方保留旧数据。
+     */
+    static JSONObject classRanks(Object response) {
+        JSONObject object = response instanceof JSONObject ? (JSONObject) response : null;
+        JSONObject courseItemMap = object == null ? null : object.optJSONObject("courseItemMap");
+        if (courseItemMap == null) return null;
+        JSONArray ids = courseItemMap.names();
+        if (ids == null) return null;
+        JSONObject out = new JSONObject();
+        for (int i = 0; i < ids.length(); i++) {
+            String courseId = ids.optString(i);
+            JSONObject item = courseItemMap.optJSONObject(courseId);
+            if (courseId.isEmpty() || item == null) continue;
+            if (item.isNull("stdLessonRank") || item.isNull("stdCount")) continue;
+            int rank = item.optInt("stdLessonRank", 0);
+            int count = item.optInt("stdCount", 0);
+            if (rank < 1 || count < 1) continue;
+            put(out, courseId, rank + "/" + count);
+        }
+        return out;
     }
 
     static double electricityBalance(JSONObject response) {

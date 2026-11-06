@@ -164,18 +164,22 @@ public final class ScheduleImport {
         } catch (Exception ignored) {
             start = ScheduleUtils.mondayOnOrBefore(LocalDate.of(year, month, month == 2 ? 24 : 1));
         }
-        LocalDate end = calculateLastCourseDate(start, courses);
-        LocalDate minimumEnd = start.plusWeeks(2).minusDays(1);
-        if (end != null && end.isBefore(minimumEnd)) end = minimumEnd;
-        if (end == null) {
-            try {
-                end = raw.endDate == null || raw.endDate.trim().isEmpty()
-                        ? start.plusWeeks(fallbackWeekCount).minusDays(1)
-                        : LocalDate.parse(raw.endDate.trim());
-            } catch (Exception ignored) {
-                end = start.plusWeeks(fallbackWeekCount).minusDays(1);
-            }
+        // 学期结束日期以教务下发的 endDate 为准（口径包含考试周，必然覆盖
+        // 全部考试日期）；教务缺失时才退回按最后一门课推算。
+        LocalDate end = null;
+        try {
+            end = raw.endDate == null || raw.endDate.trim().isEmpty()
+                    ? null : LocalDate.parse(raw.endDate.trim());
+        } catch (Exception ignored) {
+            end = null;
         }
+        if (end == null) {
+            end = calculateLastCourseDate(start, courses);
+            if (end == null) end = start.plusWeeks(fallbackWeekCount).minusDays(1);
+        }
+        // 教务口径异常偏短时保底，学期至少保留两周。
+        LocalDate minimumEnd = start.plusWeeks(2).minusDays(1);
+        if (end.isBefore(minimumEnd)) end = minimumEnd;
         int weekCount = ScheduleUtils.weekCountForRange(start, end);
         return new ScheduleModels.Semester(
                 "semester-" + UUID.randomUUID(),
