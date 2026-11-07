@@ -5,6 +5,7 @@ import org.json.JSONObject;
 
 import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
@@ -132,6 +133,10 @@ final class PortalApiParsers {
         JSONArray courses = new JSONArray();
         JSONObject table = printData == null ? null : printData.optJSONObject("studentTableVm");
         JSONArray activities = table == null ? null : table.optJSONArray("activities");
+        if (activities == null && printData != null) {
+            // 兼容无 studentTableVm 包裹的响应变体：activities 直接在顶层。
+            activities = printData.optJSONArray("activities");
+        }
         if (activities == null) activities = new JSONArray();
 
         String semesterId = semester == null ? "current"
@@ -151,6 +156,8 @@ final class PortalApiParsers {
         if (!endDate.isEmpty()) put(semesterItem, "endDate", endDate);
         semesters.put(semesterItem);
 
+        // 教务可能对同一门课重复下发完全相同的排课条目，按解析结果整体去重。
+        Set<String> seenActivities = new HashSet<>();
         for (int i = 0; i < activities.length(); i++) {
             JSONObject activity = activities.optJSONObject(i);
             if (activity == null) continue;
@@ -173,6 +180,10 @@ final class PortalApiParsers {
                     + DAY_LABELS[weekday] + " " + startUnit + "-" + endUnit + "节");
             putOptional(course, "location", location);
             put(course, "dataSemester", semesterId);
+            String dedupeKey = name + "|" + course.optString("code")
+                    + "|" + course.optString("scheduleText")
+                    + "|" + course.optString("location") + "|" + course.optString("teacher");
+            if (!seenActivities.add(dedupeKey)) continue;
             courses.put(course);
         }
         put(payload, "semesters", semesters);
