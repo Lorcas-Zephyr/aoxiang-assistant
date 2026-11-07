@@ -119,6 +119,8 @@ public class MainActivity extends Activity {
     private static final String DONATION_PROMPT_SHOWN = "donation_prompt_shown_v1";
     private static final int REQUEST_EXPORT_JSON = 11;
     private static final int REQUEST_IMPORT_JSON = 12;
+    private static final int REQUEST_SCAN_QR = 13;
+    private static final int REQUEST_CAMERA_PERMISSION = 14;
     private static final int REQUEST_EXACT_ALARM = 21;
     private static final int REQUEST_BATTERY_OPTIMIZATION = 22;
     private static final int REQUEST_AUTOSTART_SETTINGS = 23;
@@ -381,6 +383,12 @@ public class MainActivity extends Activity {
             if (store.getInt(BACKGROUND_PERMISSION_FLOW_STEP, 0) > 0) {
                 root.postDelayed(this::continueBackgroundPermissionFlow, 250L);
             }
+        } else if (requestCode == REQUEST_CAMERA_PERMISSION) {
+            if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                startQrImport();
+            } else {
+                Toast.makeText(this, "未授予相机权限，无法扫码导入", Toast.LENGTH_LONG).show();
+            }
         }
     }
 
@@ -545,6 +553,12 @@ public class MainActivity extends Activity {
                 || requestCode == REQUEST_AUTOSTART_SETTINGS) {
             refreshAutomaticUpdatePanelIfVisible();
             if (requestCode == REQUEST_EXACT_ALARM) syncBackgroundService();
+            return;
+        }
+        if (requestCode == REQUEST_SCAN_QR) {
+            if (resultCode == RESULT_OK && data != null) {
+                applyBackupText(data.getStringExtra("qr_text"));
+            }
             return;
         }
         if (resultCode != RESULT_OK || data == null || data.getData() == null) return;
@@ -1471,12 +1485,34 @@ public class MainActivity extends Activity {
         Button export = action("导出课表数据", false);
         export.setOnClickListener(v -> exportBackup());
         Button importData = action("导入课表数据", false);
-        importData.setOnClickListener(v -> requestImportBackup());
+        importData.setOnClickListener(v -> showImportOptions());
         dataActions.addView(export, new LinearLayout.LayoutParams(0, dp(42), 1));
         addHorizontalGap(dataActions, 8);
         dataActions.addView(importData, new LinearLayout.LayoutParams(0, dp(42), 1));
         dataCard.addView(dataActions);
         parent.addView(dataCard);
+    }
+
+    /** 导入入口提供文件与扫码两种方式。 */
+    private void showImportOptions() {
+        String[] options = {"从文件导入", "扫描二维码导入"};
+        new AlertDialog.Builder(this)
+                .setTitle("导入课表数据")
+                .setItems(options, (dialog, which) -> {
+                    if (which == 0) requestImportBackup();
+                    else startQrImport();
+                })
+                .show();
+    }
+
+    private void startQrImport() {
+        if (checkSelfPermission(android.Manifest.permission.CAMERA)
+                != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(new String[]{android.Manifest.permission.CAMERA},
+                    REQUEST_CAMERA_PERMISSION);
+            return;
+        }
+        startActivityForResult(new Intent(this, QrScanActivity.class), REQUEST_SCAN_QR);
     }
 
     private void addAboutSettings(LinearLayout parent) {
@@ -4118,7 +4154,47 @@ public class MainActivity extends Activity {
             StringBuilder builder = new StringBuilder();
             String line;
             while ((line = reader.readLine()) != null) builder.append(line).append('\n');
-            JSONObject parsed = new JSONObject(builder.toString());
+            applyBackupJson(new JSONObject(builder.toString()));
+        } catch (Exception e) {
+            Toast.makeText(this, "导入失败", Toast.LENGTH_LONG).show();
+        }
+    }
+
+    /**
+     * 解析扫码得到的内容并导入。约定内容为 {@code aoxiang-schedule:v1:<base64(gzip(备份JSON))>}，
+     * 同时兼容未经压缩的备份 JSON 明文，便于外部工具生成。
+     */
+    private void applyBackupText(String raw) {
+        String text = raw == null ? "" : raw.trim();
+        try {
+            if (text.startsWith("aoxiang-schedule:")) {
+                String payload = text.substring(text.indexOf(':') + 1);
+                if (payload.startsWith("v1:")) payload = payload.substring(3);
+                byte[] jsonBytes = inflateGzip(Base64.decode(payload, Base64.NO_WRAP));
+                if (jsonBytes == null) throw new IllegalStateException();
+                text = new String(jsonBytes, StandardCharsets.UTF_8);
+            }
+            applyBackupJson(new JSONObject(text));
+        } catch (Exception e) {
+            Toast.makeText(this, "无法识别的课表二维码", Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private byte[] inflateGzip(byte[] compressed) {
+        try (java.util.zip.GZIPInputStream input = new java.util.zip.GZIPInputStream(
+                new java.io.ByteArrayInputStream(compressed));
+             java.io.ByteArrayOutputStream output = new java.io.ByteArrayOutputStream()) {
+            byte[] buffer = new byte[4096];
+            int read;
+            while ((read = input.read(buffer)) != -1) output.write(buffer, 0, read);
+            return output.toByteArray();
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private void applyBackupJson(JSONObject parsed) {
+        try {
             JSONArray courseArray = parsed.optJSONArray("courses");
             JSONObject settings = parsed.optJSONObject("settings");
             if (courseArray == null || settings == null) throw new IllegalStateException();
@@ -5552,7 +5628,7 @@ public class MainActivity extends Activity {
         examCard.setLayoutParams(cardParams);
 
         View accent = new View(this);
-        accent.setBackground(bg(ExamStorage.EXAM_COLOR, 3));
+        accent.setBackground(bg(Color.parseColor(ExamStorage.EXAM_COLOR), 3));
         examCard.addView(accent, new LinearLayout.LayoutParams(dp(4), dp(46)));
         addHorizontalGap(examCard, 10);
 

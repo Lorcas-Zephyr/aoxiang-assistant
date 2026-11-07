@@ -29,6 +29,7 @@ android { namespace "cn.nwpu.campus"; compileSdk 35
 }
 
 dependencies {
+    implementation "com.google.zxing:core:3.5.3"
     testImplementation "junit:junit:4.13.2"
     testImplementation "org.json:json:20240303"
 }
