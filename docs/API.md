@@ -126,6 +126,15 @@ Accept: application/json
 
 此接口只提供首页和成绩页显示的 GPA。应用中的加权平均分仍由本地课程成绩和学分计算，不读取学生画像中的平均分。
 
+### 获取教学班排名
+
+```http
+GET https://jwxt.nwpu.edu.cn/student/for-std/student-portrait/getMyGradesByProgram?studentAssoc={studentId}
+Accept: application/json
+```
+
+随成绩采集一并读取，不单独消耗一次后台会话。响应中 `courseItemMap` 以教务内部课程 ID 为键，值包含 `stdLessonRank`（名次）和 `stdCount`（教学班人数），归一化为 `名次/人数` 文本后保存到 `grade_class_ranks`。成绩明细行在元信息中显示 `排名 x/y`；教务系统将同一分数视为同一名次，实际名次可能不高于显示值。接口失败时保留上次排名数据，成绩更新不受影响。
+
 ## 课表
 
 ### 获取学期列表
@@ -190,6 +199,30 @@ Accept: application/json
 2. 若当前日期不在任何学期内，选择最近的下一个学期；不存在下一个学期时选择最后一个学期。
 3. 读取课表后，以最后一项排课的周次和星期计算实际结束日期，且学期至少保留两周。
 4. 只有当前日期超过实际结束日期时才继续读取下一学期。
+
+## 考试安排
+
+考试数据随课表采集一并读取，不单独消耗一次后台会话。采集脚本在取得课表打印数据后，以与成绩、课表页面相同的"页面即 API"方式读取考试信息页面：
+
+```http
+GET https://jwxt.nwpu.edu.cn/student/for-std/exam-arrange/info/{studentId}
+```
+
+路径中的 `studentId` 为教务系统内部学生 ID，课表采集流程中已经取得。页面为服务端渲染的 HTML 表格，采集脚本在 WebView 内用 `DOMParser` 解析 `#exams` 表格并输出归一化行，`schedule_api_raw` 附带 `examRows` 字段：
+
+| 字段 | 来源 |
+| --- | --- |
+| `name` | 第二列加粗课程名 |
+| `type` | 第二列标签文本（如"期末"） |
+| `date` / `startTime` / `endTime` | 第一列 `.time` 文本 `yyyy-MM-dd HH:mm~HH:mm` 按波浪号拆分 |
+| `location` | 第一列时间行之后的 span 依次拼接（校区、楼栋、教室） |
+| `finished` | 行 class `finished` / `unfinished` |
+
+座位号由页面脚本根据 `studentExamList` 与座位图另行渲染，原始 HTML 中不可得，当前为空。请求失败时 `examRows` 为 `null`，应用保留上次考试数据；成功但无考试时为空数组，覆盖为空列表。
+
+归一化行保存到 `schedule_exams`，展示时按日期转换为单时间槽虚拟课程，复用课表周视图、月历、今日卡片和课表小组件的现有渲染管线；首页"考试信息"模块单独列出全部考试；课表页提供"显示考试安排"开关（`schedule_show_exams`，默认开启）。
+
+显示边界与课表渲染规则一致：课表导入的学期结束日期取最后一门课，考试常排在其后，因此周视图与月历的可浏览范围会自动放宽到最晚考试所在的周和月份（学期开始前仍为第 0 周，不参与课表内显示）；学期范围外的考试由首页"考试信息"模块兜底展示。
 
 ## 电费
 

@@ -51,6 +51,12 @@ final class ScheduleWidgetData {
         ScheduleModels.Semester semester = semesterForDate(date, semesters);
         if (semester == null) return new DayData(new ArrayList<>(), "假期");
 
+        // 考试以虚拟课程身份进入同一条渲染管线；关闭开关时跳过。
+        if (ExamStorage.showExams(store)) {
+            courses.addAll(ExamStorage.examCoursesOnDate(
+                    ExamStorage.load(store), date, semester));
+        }
+
         int week = ScheduleUtils.weekNumberForDate(date, semester);
         int day = date.getDayOfWeek().getValue();
         List<Item> items = new ArrayList<>();

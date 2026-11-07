@@ -174,13 +174,14 @@ public class BackgroundSyncService extends Service {
                 }
             }
             final ScheduleModels.Semester selectedSemester = localSemester;
-            new Thread(() -> {
+                new Thread(() -> {
                 AxxtSession.ScheduleResult result = AxxtSession.fetchSchedule(
                         this, store, selectedSemester);
                 handler.post(() -> {
                     if (!running) return;
                     if (result.success()) {
-                        saveSchedule(result.payload);
+                        // 长会话直连只覆盖课表，考试数据由 WebView 采集链路补充。
+                        saveSchedule(result.payload, null, "");
                     } else {
                         Log.w(TAG, "Background long session schedule failed, falling back: "
                                 + result.error);
@@ -289,6 +290,7 @@ public class BackgroundSyncService extends Service {
         final long[] credentialsSubmittedAt = {0L};
         final boolean[] credentialsSubmitted = {false};
         final JSONArray[] collectedGradeRows = {null};
+        final Object[] collectedRankResponse = {null};
         final long busApiReadyAt = "bus".equals(target)
                 ? System.currentTimeMillis() + 5000L : 0L;
         collectTask = new Runnable() {
@@ -297,7 +299,7 @@ public class BackgroundSyncService extends Service {
                 unifiedAuthTracker.record(web.getUrl());
                 if (collectedGradeRows[0] != null && portraitStartedAt[0] > 0L
                         && System.currentTimeMillis() - portraitStartedAt[0] >= PORTRAIT_TIMEOUT_MS) {
-                    saveGrades(collectedGradeRows[0], Double.NaN);
+                    saveGrades(collectedGradeRows[0], Double.NaN, collectedRankResponse[0]);
                     return;
                 }
                 if (++attempts[0] > 180) {
@@ -363,11 +365,12 @@ public class BackgroundSyncService extends Service {
                             double gpa = PortalApiParsers.gpa(payload.optJSONObject("gpaResponse"));
                             if (rows.length() > 0) {
                                 if (!Double.isNaN(gpa)) {
-                                    saveGrades(rows, gpa);
+                                    saveGrades(rows, gpa, payload.opt("rankResponse"));
                                 } else {
                                     // Keep the API grade rows and use the portrait page as the
                                     // fallback source when getMyGpa is empty for this account.
                                     collectedGradeRows[0] = rows;
+                                    collectedRankResponse[0] = payload.opt("rankResponse");
                                     portraitStartedAt[0] = System.currentTimeMillis();
                                     navigationCooldownUntil[0] = System.currentTimeMillis() + 2000L;
                                     web.loadUrl(STUDENT_PORTRAIT);
@@ -376,8 +379,11 @@ public class BackgroundSyncService extends Service {
                                 return;
                             }
                         } else if ("schedule_api_raw".equals(phase) && "schedule".equals(target)) {
+                            JSONObject semester = payload.optJSONObject("semester");
                             saveSchedule(PortalApiParsers.schedulePayload(
-                                    payload.optJSONObject("semester"), payload.optJSONObject("printData")));
+                                    semester, payload.optJSONObject("printData")),
+                                    payload.optJSONArray("examRows"),
+                                    semester == null ? "" : semester.optString("id"));
                             return;
                         } else if ("electricity_api_raw".equals(phase) && "electricity".equals(target)) {
                             double balance = PortalApiParsers.electricityBalance(payload.optJSONObject("response"));
@@ -404,11 +410,12 @@ public class BackgroundSyncService extends Service {
                                 && collectedGradeRows[0] != null) {
                             double gpa = payload.optDouble("gpa", Double.NaN);
                             if (!Double.isNaN(gpa)) {
-                                saveGrades(collectedGradeRows[0], gpa);
+                                saveGrades(collectedGradeRows[0], gpa, collectedRankResponse[0]);
                                 return;
                             }
                         } else if ("schedule_data".equals(phase) && "schedule".equals(target)) {
-                            saveSchedule(payload.optJSONObject("payload"));
+                            // 页面回退采集不包含考试数据，保留已有考试安排。
+                            saveSchedule(payload.optJSONObject("payload"), null, "");
                             return;
                         } else if ("electricity_data".equals(phase) && "electricity".equals(target)) {
                             saveElectricity(payload.optDouble("balance", Double.NaN));
@@ -445,7 +452,7 @@ public class BackgroundSyncService extends Service {
         handler.postDelayed(collectTask, 700L);
     }
 
-    private void saveGrades(JSONArray rows, double gpa) {
+    private void saveGrades(JSONArray rows, double gpa, Object rankResponse) {
         if (rows == null) {
             finishAttempt(false);
             return;
@@ -457,6 +464,8 @@ public class BackgroundSyncService extends Service {
             records.add(GradeRecord.from(row));
         }
         records = GradeRecord.keepHighest(records);
+        JSONObject rankMap = PortalApiParsers.classRanks(rankResponse);
+        if (rankMap != null) GradeRankStorage.save(store, rankMap);
         JSONArray updated = new JSONArray();
         for (GradeRecord record : records) updated.put(record.json());
         if (updated.length() == 0) {
@@ -478,7 +487,7 @@ public class BackgroundSyncService extends Service {
         finishAttempt(true);
     }
 
-    private void saveSchedule(JSONObject payload) {
+    private void saveSchedule(JSONObject payload, JSONArray examRows, String examSemesterId) {
         if (payload == null) {
             finishAttempt(false);
             return;
@@ -559,7 +568,18 @@ public class BackgroundSyncService extends Service {
             }
             markCredentialsVerified();
         }
+        applyExamUpdate(examRows, examSemesterId);
         finishAttempt(importedCount > 0 || importedEmptySchedule);
+    }
+
+    /**
+     * 保存考试安排。行数组缺失（本次未取得页面）时保留旧数据；为空数组时
+     * 覆盖为空列表，表示当前没有考试安排。
+     */
+    private void applyExamUpdate(JSONArray examRows, String semesterId) {
+        if (examRows == null) return;
+        ExamStorage.saveRows(store, examRows, semesterId);
+        ScheduleWidgetUpdater.updateAll(this);
     }
 
     private void normalizeSemesterDates(ScheduleModels.Semester semester) {
