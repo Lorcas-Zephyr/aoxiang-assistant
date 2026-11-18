@@ -330,6 +330,7 @@ public class BackgroundSyncService extends Service {
                         String raw = new JSONArray("[" + result + "]").getString(0);
                         JSONObject payload = new JSONObject(raw);
                         String phase = payload.optString("phase");
+                        // 锁定后不要再走普通重试流程，后台任务到此为止。
                         if ("account_locked".equals(phase)) {
                             handleAccountLocked();
                             return;
@@ -805,6 +806,10 @@ public class BackgroundSyncService extends Service {
         if (manager != null) manager.notify(1006, builder.build());
     }
 
+    /**
+     * 锁定后把状态落盘：关掉自动更新、把凭据标记为未验证，
+     * 发一条通知再停服务。用户要先去官方渠道解锁，才能重新登录。
+     */
     private void handleAccountLocked() {
         store.edit()
                 .putBoolean("credentials_verified", false)

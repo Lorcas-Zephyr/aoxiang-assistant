@@ -59,9 +59,9 @@
   const host = location.hostname;
   const sessionError = /登录信息已失效|登录状态已失效|会话.{0,8}(?:失效|过期)|身份认证已过期/.test(body);
 
-  // Account-lock guard. Only an explicit lock message may stop credential
-  // handling; help links such as "账号被锁定怎么办"/"如何解锁" are filtered out
-  // so SSO help text never blocks normal automatic login.
+  // 账号锁定保护。只认明确的锁定提示；
+  // “账号被锁定怎么办”“如何解锁”这类帮助文案要排除，
+  // 不能因为页面有帮助链接就停掉正常登录。
   const lockPattern = /用户账号锁定|(?:账号|账户)(?:已被|已)锁定|(?:您的|该)(?:账号|账户)被锁定|account has been locked|too many failed login attempts/i;
   const lockHelpPattern = /(?:锁定|被锁)[^。\n]{0,8}(?:[?？]|怎么|如何|办|原因|帮助|说明)|如何解锁|怎么解锁|解锁(?:方法|流程|方式|说明)/;
   const isLockText = (value) => {
@@ -90,6 +90,8 @@
       sessionStorage.removeItem(key);
     } catch (ignored) {}
   };
+  // 锁定状态在本次会话里保留一段时间，避免同一个页面反复
+  // 触发自动填充或提交。
   const accountLocked = () => {
     writeSessionNumber(LOCKED_UNTIL_KEY, Date.now() + ACCOUNT_LOCKED_TTL_MS);
     return JSON.stringify({
@@ -99,6 +101,7 @@
     });
   };
   const lockRemembered = () => readSessionNumber(LOCKED_UNTIL_KEY) > Date.now();
+  // 普通失败也稍微缓一下，避免 SSO 页面还在刷新就再次提交。
   const authRetryCoolingDown = () => readSessionNumber(AUTH_RETRY_AFTER_KEY) > Date.now();
   const rememberAuthFailure = () => writeSessionNumber(AUTH_RETRY_AFTER_KEY,
     Date.now() + AUTH_RETRY_COOLDOWN_MS);
@@ -113,9 +116,8 @@
     return JSON.stringify({ phase: "credentials_valid", rows: [] });
   }
 
-  // A real lock page normally replaces the password form. Only scan the whole
-  // page in that case; pages that still show a login form are re-checked in the
-  // login branch, which is also where autofill/submit could happen.
+  // 真正的锁定页通常不再显示密码框。只有这种情况才扫整页；
+  // 如果密码框还在，留到登录分支里再判断，那里才会自动填充/提交。
   if (!hasPasswordField && isLockText(body)) {
     return accountLocked();
   }
@@ -212,8 +214,8 @@
     const feedback = text([...loginDocument.querySelectorAll(
       '[role="alert"], [aria-live], .error, .error-message, .el-message__content, .ant-message-notice-content, [class*="error" i]'
     )].filter(visible).map((element) => element.innerText || element.textContent || element.value).join(" "));
-    // The SSO page can keep the password form and show the lock message in an
-    // alert. Bail out before any tab click or autofill in that case.
+    // SSO 可能保留密码框，只在提示条里显示锁定信息。
+    // 这种情况要在点标签/自动填充之前直接退出。
     if (isLockText([loginBody, feedback].join(" "))) {
       return accountLocked();
     }
@@ -264,12 +266,11 @@
       if (authLocked) {
         return accountLocked();
       }
-      // A rejected attempt starts a short cooldown: even if the caller reset the
-      // canAutofill flag, never resubmit the same credentials immediately.
+      // 登录失败后短暂冷却。即使调用方重置了 canAutofill，
+      // 也不要马上重复提交同一份凭据。
       if (authCoolingDown) {
-        // Report a benign page phase instead of a credential phase so the caller
-        // keeps polling (and does not reopen the credential dialog) until the
-        // cooldown expires. No values are written and nothing is submitted.
+        // 冷却期间返回普通页面状态，不要报成凭据错误，
+        // 否则调用方会反复弹登录框。这里不写值，也不提交。
         return JSON.stringify({ phase: "page", rows: [] });
       }
       setValue(usernameInput, username);

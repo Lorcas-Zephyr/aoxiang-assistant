@@ -16,9 +16,9 @@
     return value;
   };
 
-  // Account-lock guard: a locked portal account must never be re-driven by the
-  // API collector. Help text such as "账号被锁定怎么办"/"如何解锁" is filtered out
-  // so the SSO help link cannot disable collection.
+  // 账号锁定保护：锁定后不再驱动接口采集。
+  // “账号被锁定怎么办”“如何解锁”这类帮助文案要排除，
+  // 不能因为帮助链接就停掉采集。
   const lockPattern = /用户账号锁定|(?:账号|账户)(?:已被|已)锁定|(?:您的|该)(?:账号|账户)被锁定|account has been locked|too many failed login attempts/i;
   const lockHelpPattern = /(?:锁定|被锁)[^。\n]{0,8}(?:[?？]|怎么|如何|办|原因|帮助|说明)|如何解锁|怎么解锁|解锁(?:方法|流程|方式|说明)/;
   const isLockText = (value) => {
@@ -44,8 +44,8 @@
 
   const FETCH_TIMEOUT_MS = 12000;
 
-  // A page that visibly reports the lock must stop the collector before it
-  // navigates or calls any portal API again.
+  // 页面已经明确提示锁定时，先停采集，不要再跳转或请求接口；
+  // 继续跳转只会收到更多锁定响应，也会增加失败登录次数。
   if (isLockText(pageText)) {
     return accountLockedResult();
   }
