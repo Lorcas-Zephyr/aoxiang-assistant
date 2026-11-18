@@ -83,6 +83,8 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.Locale;
 import java.util.Set;
 import java.time.LocalDateTime;
@@ -239,6 +241,8 @@ public class MainActivity extends Activity {
     private int busIntervalValue;
     private String busIntervalUnit = UNIT_MINUTES;
     private BusModels.Snapshot busSnapshot = new BusModels.Snapshot();
+    private boolean netFeeHttpFetching;
+    private long netFeeHttpLast;
 
     private Runnable automationTask;
     private Runnable scheduledUpdateTask;
@@ -350,6 +354,7 @@ public class MainActivity extends Activity {
         super.onResume();
         if (!silentBoot && root != null) root.postDelayed(this::openRequiredInteractiveLogin, 250L);
         refreshAutomaticUpdatePanelIfVisible();
+        refreshNetworkFeeFromSession();
         checkBusDepartureReminders();
         if (root != null && backgroundPermissionActivityPending) {
             backgroundPermissionActivityPending = false;
@@ -745,6 +750,8 @@ public class MainActivity extends Activity {
         secondMetrics.addView(metric("剩余电费", Double.isNaN(electricityBalance) ? "--" : scoreDf.format(electricityBalance), "度"), new LinearLayout.LayoutParams(0, dp(70), 1));
         summary.addView(secondMetrics);
         l.addView(summary);
+        // 网费是个人数据，放在成绩汇总下面。
+        addNetworkFeeCard(l);
 
         LinearLayout busHeader = sectionHeader("校车出行");
         Button busUpdate = syncButton("校车", "更新校车数据");
@@ -770,6 +777,96 @@ public class MainActivity extends Activity {
             for (CourseMeeting meeting : todayMeetings) l.addView(schedulePreviewRow(meeting, LocalDate.now()));
         }
 
+    }
+
+    /** 打开网络自助页。 */
+    private void openNetworkFee() {
+        startActivity(new Intent(this, NetworkFeeActivity.class));
+    }
+
+    /** 用户登录过网络自助后，用 WebView 的 Cookie 顺手刷新余额，最多五分钟一次。 */
+    private void refreshNetworkFeeFromSession() {
+        if (netFeeHttpFetching) return;
+        long now = System.currentTimeMillis();
+        if (now - netFeeHttpLast < 5 * 60_000L) return;
+        String cookie = CookieManager.getInstance().getCookie("https://zizhu.nwpu.edu.cn:8900");
+        if (cookie == null || cookie.isEmpty()) return;
+        netFeeHttpFetching = true;
+        new Thread(() -> {
+            HttpURLConnection connection = null;
+            try {
+                URL url = new URL("https://zizhu.nwpu.edu.cn:8900/home");
+                connection = (HttpURLConnection) url.openConnection();
+                connection.setConnectTimeout(12000);
+                connection.setReadTimeout(15000);
+                connection.setRequestProperty("Cookie", cookie);
+                connection.setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 12)");
+                connection.setRequestProperty("Accept", "text/html,application/xhtml+xml");
+                StringBuilder html = new StringBuilder();
+                try (BufferedReader reader = new BufferedReader(
+                        new InputStreamReader(connection.getInputStream(), StandardCharsets.UTF_8))) {
+                    String line;
+                    while ((line = reader.readLine()) != null) html.append(line).append('\n');
+                }
+                Matcher matcher = Pattern.compile(
+                        "(?:账户余额|账户金额|可用余额|剩余金额|余额)[^0-9\\-]{0,16}(-?\\d+(?:\\.\\d+)?)")
+                        .matcher(html.toString());
+                if (matcher.find()) {
+                    String value = matcher.group(1);
+                    if (value != null && !value.trim().isEmpty()) {
+                        store.edit().putString("net_fee_balance", value.trim())
+                                .putLong("net_fee_updated", System.currentTimeMillis()).apply();
+                        runOnUiThread(() -> {
+                            if (currentTab == TAB_HOME) showTab(TAB_HOME, true);
+                        });
+                    }
+                }
+            } catch (Exception ignored) {
+            } finally {
+                netFeeHttpFetching = false;
+                netFeeHttpLast = System.currentTimeMillis();
+                if (connection != null) connection.disconnect();
+            }
+        }, "NetworkFeeBalance").start();
+    }
+
+    /** 首页网费卡片：有余额就显示，没有就提示去登录。 */
+    private void addNetworkFeeCard(LinearLayout parent) {
+        LinearLayout header = sectionHeader("校园网费");
+        Button open = syncButton("刷新", "打开网络自助");
+        open.setOnClickListener(v -> openNetworkFee());
+        header.addView(open, new LinearLayout.LayoutParams(dp(64), dp(36)));
+        parent.addView(header);
+        LinearLayout card = card(panelColor());
+        card.setPadding(dp(14), dp(12), dp(14), dp(12));
+        String balance = store.getString("net_fee_balance", "");
+        long updated = store.getLong("net_fee_updated", 0L);
+        if (balance == null || balance.trim().isEmpty()) {
+            TextView title = label("网络自助", 14, textColor());
+            title.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+            card.addView(title);
+            TextView desc = label("登录一次网络自助后，余额会自动同步到这里；也可以点下面按钮查看套餐和上网明细。",
+                    11, mutedColor());
+            desc.setPadding(0, dp(4), 0, dp(10));
+            card.addView(desc);
+        } else {
+            TextView balanceLabel = label("网费余额", 11, mutedColor());
+            card.addView(balanceLabel);
+            TextView balanceValue = label("¥ " + balance.trim(), 30, primaryColor());
+            balanceValue.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+            card.addView(balanceValue);
+            if (updated > 0L) {
+                String time = new java.text.SimpleDateFormat("M月d日 HH:mm", Locale.CHINA)
+                        .format(new java.util.Date(updated));
+                card.addView(label("更新于 " + time, 10, mutedColor()));
+            }
+        }
+        addGap(card, 8);
+        Button button = action(balance == null || balance.trim().isEmpty()
+                ? "登录网络自助" : "更新余额", false);
+        button.setOnClickListener(v -> openNetworkFee());
+        card.addView(button, new LinearLayout.LayoutParams(-1, dp(40)));
+        parent.addView(card);
     }
 
     private void schedulePage() {
@@ -956,6 +1053,14 @@ public class MainActivity extends Activity {
         content.addView(scroll);
 
         l.addView(pageHeader("管理", "课程、学期与数据工具"));
+
+        // 网费在单独页面里，这里只放入口。
+        l.addView(section("校园网费"));
+        LinearLayout customCard = card(panelColor());
+        customCard.setPadding(dp(14), 0, dp(8), 0);
+        addActionNavigation(customCard, "校园网费", "余额、套餐和上网明细",
+                R.drawable.ic_sync, this::openNetworkFee, false);
+        l.addView(customCard);
 
         l.addView(section("课程数据"));
         LinearLayout syncCard = card(panelColor());
