@@ -750,6 +750,7 @@ public class MainActivity extends Activity {
         secondMetrics.addView(metric("剩余电费", Double.isNaN(electricityBalance) ? "--" : scoreDf.format(electricityBalance), "度"), new LinearLayout.LayoutParams(0, dp(70), 1));
         summary.addView(secondMetrics);
         l.addView(summary);
+        // 网费是个人数据，放在成绩汇总下面。
         addNetworkFeeCard(l);
 
         LinearLayout busHeader = sectionHeader("校车出行");
@@ -778,10 +779,12 @@ public class MainActivity extends Activity {
 
     }
 
+    /** 打开网络自助页。 */
     private void openNetworkFee() {
         startActivity(new Intent(this, NetworkFeeActivity.class));
     }
 
+    /** 用户登录过网络自助后，用 WebView 的 Cookie 顺手刷新余额，最多五分钟一次。 */
     private void refreshNetworkFeeFromSession() {
         if (netFeeHttpFetching) return;
         long now = System.currentTimeMillis();
@@ -827,6 +830,7 @@ public class MainActivity extends Activity {
         }, "NetworkFeeBalance").start();
     }
 
+    /** 首页网费卡片：有余额就显示，没有就提示去登录。 */
     private void addNetworkFeeCard(LinearLayout parent) {
         LinearLayout header = sectionHeader("校园网费");
         Button open = syncButton("刷新", "打开网络自助");
@@ -1050,6 +1054,7 @@ public class MainActivity extends Activity {
 
         l.addView(pageHeader("管理", "课程、学期与数据工具"));
 
+        // 网费在单独页面里，这里只放入口。
         l.addView(section("校园网费"));
         LinearLayout customCard = card(panelColor());
         customCard.setPadding(dp(14), 0, dp(8), 0);

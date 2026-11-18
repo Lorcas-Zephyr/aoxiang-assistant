@@ -29,14 +29,17 @@ import org.json.JSONArray;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-/** In-app NWPU network self-service page: balance, package and usage details. */
+/** 校园网自助页。登录后从页面里抓余额存到本地，首页卡片直接读；不处理账号密码，Cookie 由 WebView 自己管。 */
 public class NetworkFeeActivity extends Activity {
+    // 自助首页和提取脚本。余额面板可能在 iframe 里，所以脚本要遍历子 frame。
     private static final String URL = "https://zizhu.nwpu.edu.cn:8900/home";
     private static final String BALANCE_JS =
             "(function(){var t=document.body?document.body.innerText:'';" +
             "for(var i=0;i<window.frames.length;i++){try{var d=window.frames[i].document;" +
             "if(d&&d.body)t+='\\n'+d.body.innerText;}catch(e){}}return t;})()";
     private final Handler handler = new Handler(Looper.getMainLooper());
+
+    // 页面是异步加载的，第一次 onPageFinished 不一定有余额，最多重试几次。
     private final Runnable captureTask = new Runnable() {
         @Override public void run() {
             captureBalance();
@@ -47,6 +50,8 @@ public class NetworkFeeActivity extends Activity {
     private SharedPreferences prefs;
     private int captureAttempts;
     private String lastCaptured = "";
+
+    // ---- 页面 ----
 
     @Override
     protected void onCreate(Bundle state) {
@@ -157,6 +162,7 @@ public class NetworkFeeActivity extends Activity {
         web.loadUrl(URL);
     }
 
+    /** 先让 WebView 处理返回键，方便在自助站里返回。 */
     @Override
     public void onBackPressed() {
         if (web != null && web.canGoBack()) {
@@ -166,6 +172,9 @@ public class NetworkFeeActivity extends Activity {
         }
     }
 
+    // ---- 余额抓取 ----
+
+    /** 执行提取脚本，拿到可信余额后落盘；值没变就不写。captureTask 会反复调用。 */
     private void captureBalance() {
         if (web == null) return;
         web.evaluateJavascript(BALANCE_JS, result -> {
