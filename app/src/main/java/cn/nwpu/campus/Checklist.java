@@ -12,7 +12,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 
-/** A checklist with a deadline, optional reminder, and editable items. */
+/** 一张清单：若干条目、一个截止时间，可选提前提醒。截止时间按本地时间存。 */
 public final class Checklist {
     public static final int REMINDER_NONE = -1;
     public static final String DEFAULT_COLOR = "#2F80ED";
@@ -20,13 +20,20 @@ public final class Checklist {
     private static final DateTimeFormatter DEADLINE_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm", Locale.CHINA);
     private static final DateTimeFormatter DISPLAY_FORMAT = DateTimeFormatter.ofPattern("M月d日 E HH:mm", Locale.CHINA);
 
+    // 基本信息
     public String id;
     public String title;
     public String color;
+
+    // 截止时间和提醒；reminderMinutes = -1 表示不提醒。
     public String deadline;
     public int reminderMinutes;
+
+    // 创建/更新时间，只用来排序，不直接显示。
     public long createdAt;
     public long updatedAt;
+
+    /** 条目，顺序就是显示顺序；完成状态记在条目上。 */
     public List<Item> items = new ArrayList<>();
 
     private String cachedDeadlineValue;
@@ -54,16 +61,19 @@ public final class Checklist {
         }
     }
 
+    /** 已完成的条数。 */
     public int doneCount() {
         int count = 0;
         for (Item item : items) if (item != null && item.done) count++;
         return count;
     }
 
+    /** 还没做的条数。 */
     public int pendingCount() {
         return Math.max(0, items.size() - doneCount());
     }
 
+    /** 有条目且全部完成才返回 true。 */
     public boolean allDone() {
         if (items.isEmpty()) return false;
         for (Item item : items) {
@@ -72,6 +82,7 @@ public final class Checklist {
         return true;
     }
 
+    /** 完成比例，0~1，首页进度条用。 */
     public float progress() {
         if (items.isEmpty()) return 0f;
         return Math.max(0f, Math.min(1f, doneCount() / (float) items.size()));
@@ -89,6 +100,7 @@ public final class Checklist {
         }
     }
 
+    /** 截止时间的毫秒值，按截止时间/时区缓存。 */
     public long deadlineMillis() {
         ZoneId zone = ZoneId.systemDefault();
         String value = deadline == null ? "" : deadline;
@@ -118,6 +130,7 @@ public final class Checklist {
         return "提前" + reminderMinutes + "分钟";
     }
 
+    /** 详细页倒计时，比如“剩余 2 天 3 小时”。 */
     public String countdownText(long now) {
         if (allDone()) return "已完成";
         long deadlineAt = deadlineMillis();
@@ -128,6 +141,7 @@ public final class Checklist {
         return "剩余 " + formatDuration(diff);
     }
 
+    /** 首页卡片用的短倒计时。 */
     public String compactCountdownText(long now) {
         if (allDone()) return "已完成";
         long diff = deadlineMillis() - now;
@@ -147,6 +161,7 @@ public final class Checklist {
         return String.format(Locale.CHINA, "%02d:%02d:%02d", hours, minutes, seconds);
     }
 
+    /** 存成 JSON。 */
     public JSONObject json() {
         JSONObject object = new JSONObject();
         try {
@@ -171,6 +186,7 @@ public final class Checklist {
         return object;
     }
 
+    /** 从 JSON 读回。 */
     public static Checklist from(JSONObject object) {
         if (object == null) return null;
         String id = object.optString("id", "");

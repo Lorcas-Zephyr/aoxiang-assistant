@@ -11,7 +11,7 @@ import android.os.Build;
 
 import java.util.List;
 
-/** Schedules checklist reminder alarms and owns their notification channel. */
+/** 清单提醒的定时和通知渠道。每张清单只保留一个闹钟，重排会覆盖旧的。 */
 public final class ChecklistReminderScheduler {
     public static final String CHANNEL_ID = "checklist_reminders";
     public static final String ACTION_REMIND = "cn.nwpu.campus.CHECKLIST_REMIND";
@@ -19,6 +19,7 @@ public final class ChecklistReminderScheduler {
 
     private ChecklistReminderScheduler() {}
 
+    /** 创建通知渠道，API 26 以下不用管。 */
     public static void ensureChannel(Context context) {
         if (Build.VERSION.SDK_INT >= 26) {
             NotificationManager manager = context.getSystemService(NotificationManager.class);
@@ -31,6 +32,7 @@ public final class ChecklistReminderScheduler {
         }
     }
 
+    /** 开机或更新后，重新登记还没到点的提醒。 */
     public static void rescheduleAll(Context context) {
         List<Checklist> values = ChecklistStore.load(
                 context.getSharedPreferences("campus_private", Context.MODE_PRIVATE));
@@ -39,6 +41,7 @@ public final class ChecklistReminderScheduler {
         }
     }
 
+    /** 给一张清单排下一次提醒；不提醒或已完成就取消。 */
     public static void schedule(Context context, Checklist checklist) {
         if (context == null || checklist == null) return;
         cancel(context, checklist.id);

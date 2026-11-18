@@ -10,7 +10,7 @@ import android.os.Build;
 
 import java.util.List;
 
-/** Posts the actual system notification for a checklist reminder. */
+/** 收到提醒后发通知。定时由 Scheduler 管，这里再查一次清单，避免给已删除/已完成的清单发通知。 */
 public class ChecklistReminderReceiver extends BroadcastReceiver {
     @Override
     public void onReceive(Context context, Intent intent) {

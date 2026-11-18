@@ -11,13 +11,14 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
 
-/** Storage and reminder bookkeeping for checklists. */
+/** 清单的本地存取和提醒标记。清单存一个 JSON 数组，已提醒标记单独存 key。 */
 public final class ChecklistStore {
     public static final String KEY_CHECKLISTS = "checklists_v1";
     private static final String REMINDER_PREFIX = "checklist_reminded_";
 
     private ChecklistStore() {}
 
+    /** 读取全部清单；没有数据或 JSON 损坏时返回空列表。 */
     public static List<Checklist> load(SharedPreferences store) {
         List<Checklist> values = new ArrayList<>();
         try {
@@ -33,6 +34,7 @@ public final class ChecklistStore {
         return values;
     }
 
+    /** 覆盖保存全部清单。 */
     public static void save(SharedPreferences store, List<Checklist> values) {
         try {
             store.edit().putString(KEY_CHECKLISTS, toJson(values).toString()).apply();
@@ -60,6 +62,7 @@ public final class ChecklistStore {
         return values;
     }
 
+    /** 按 id 找清单，找不到返回 null。 */
     public static Checklist find(List<Checklist> values, String id) {
         if (values == null || id == null) return null;
         for (Checklist value : values) {
@@ -68,6 +71,7 @@ public final class ChecklistStore {
         return null;
     }
 
+    /** 新增或更新一张清单，其它清单不动。 */
     public static void upsert(SharedPreferences store, Checklist checklist) {
         if (checklist == null) return;
         List<Checklist> values = load(store);
@@ -84,6 +88,7 @@ public final class ChecklistStore {
         save(store, values);
     }
 
+    /** 删除清单，同时清掉提醒标记。 */
     public static void delete(SharedPreferences store, String id) {
         List<Checklist> values = load(store);
         for (int i = values.size() - 1; i >= 0; i--) {
@@ -97,6 +102,7 @@ public final class ChecklistStore {
         editor.apply();
     }
 
+    /** 未完成、快截止的排前面；全部完成的排最后。 */
     public static void sortForDisplay(List<Checklist> values, long now) {
         Collections.sort(values, new Comparator<Checklist>() {
             @Override

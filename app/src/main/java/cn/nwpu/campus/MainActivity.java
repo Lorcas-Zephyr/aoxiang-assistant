@@ -784,9 +784,11 @@ public class MainActivity extends Activity {
             for (CourseMeeting meeting : todayMeetings) l.addView(schedulePreviewRow(meeting, LocalDate.now()));
         }
 
+        // 清单是本地数据，放在今日课程后面。
         addHomeChecklists(l);
     }
 
+    /** 从编辑页回来时重新读取本地数据。 */
     private void refreshCustomData() {
         checklists = ChecklistStore.load(store);
         if (root != null && currentTab == TAB_HOME && !silentBoot) {
@@ -794,6 +796,7 @@ public class MainActivity extends Activity {
         }
     }
 
+    /** 打开清单页。 */
     private void openChecklists() {
         startActivity(new Intent(this, ChecklistActivity.class));
     }
@@ -1085,6 +1088,7 @@ public class MainActivity extends Activity {
 
         l.addView(pageHeader("管理", "课程、学期与数据工具"));
 
+        // 本地工具单独放，不混在教务数据里。
         l.addView(section("清单"));
         LinearLayout customCard = card(panelColor());
         customCard.setPadding(dp(14), 0, dp(8), 0);
