@@ -9,6 +9,8 @@ import android.os.Build;
 public class BootReceiver extends BroadcastReceiver {
     @Override public void onReceive(Context context, Intent received) {
         String action = received.getAction();
+        ChecklistReminderScheduler.ensureChannel(context);
+        ChecklistReminderScheduler.rescheduleAll(context);
         if (!Intent.ACTION_BOOT_COMPLETED.equals(action)
                 && !Intent.ACTION_MY_PACKAGE_REPLACED.equals(action)
                 && !Intent.ACTION_TIME_CHANGED.equals(action)
