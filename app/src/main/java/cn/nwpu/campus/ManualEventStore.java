@@ -12,12 +12,13 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
 
-/** JSON storage and date-range helpers for {@link ManualEvent}. */
+/** 手动日程的本地存取和日期计算。只读写 SharedPreferences，不碰网络。 */
 public final class ManualEventStore {
     public static final String KEY_EVENTS = "manual_events_v1";
 
     private ManualEventStore() {}
 
+    /** 读取全部日程；没有数据或 JSON 损坏时返回空列表。 */
     public static List<ManualEvent> load(SharedPreferences store) {
         List<ManualEvent> events = new ArrayList<>();
         try {
@@ -33,6 +34,7 @@ public final class ManualEventStore {
         return events;
     }
 
+    /** 覆盖保存全部日程。 */
     public static void save(SharedPreferences store, List<ManualEvent> events) {
         try {
             JSONArray array = new JSONArray();
@@ -67,6 +69,7 @@ public final class ManualEventStore {
         return events;
     }
 
+    /** 取某一天会发生的日程，按开始时间排序。 */
     public static List<ManualEvent> onDate(List<ManualEvent> events, LocalDate date) {
         List<ManualEvent> result = new ArrayList<>();
         if (events == null || date == null) return result;
@@ -77,6 +80,7 @@ public final class ManualEventStore {
         return result;
     }
 
+    /** 取日期范围内的日程；每周重复的日程会出现多次。 */
     public static List<ManualEvent> between(List<ManualEvent> events, LocalDate start, LocalDate end) {
         List<ManualEvent> result = new ArrayList<>();
         if (events == null || start == null || end == null) return result;
@@ -95,6 +99,7 @@ public final class ManualEventStore {
         return result;
     }
 
+    /** 按开始时间排序，编辑页和课表共用。 */
     public static void sort(List<ManualEvent> events) {
         if (events == null) return;
         Collections.sort(events, new Comparator<ManualEvent>() {

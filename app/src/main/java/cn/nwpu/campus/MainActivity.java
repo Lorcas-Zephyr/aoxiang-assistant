@@ -773,9 +773,11 @@ public class MainActivity extends Activity {
             for (CourseMeeting meeting : todayMeetings) l.addView(schedulePreviewRow(meeting, LocalDate.now()));
         }
 
+        // 手动日程放在今日课程后面，先保证课表信息。
         addHomeManualEvents(l);
     }
 
+    /** 从编辑页回来时重新读取本地数据。 */
     private void refreshCustomData() {
         manualEvents = ManualEventStore.load(store);
         if (root != null && currentTab == TAB_HOME && !silentBoot) {
@@ -783,6 +785,7 @@ public class MainActivity extends Activity {
         }
     }
 
+    /** 打开手动日程页。 */
     private void openManualEvents() {
         startActivity(new Intent(this, ManualEventActivity.class));
     }
@@ -1041,6 +1044,7 @@ public class MainActivity extends Activity {
         tools.addView(switchRow);
         l.addView(tools);
 
+        // 本周日程先列一遍，具体时段再叠到下面的课表格子里。
         addWeekManualEvents(l, semester);
 
         addGap(l, 12);
@@ -1111,6 +1115,7 @@ public class MainActivity extends Activity {
 
         l.addView(pageHeader("管理", "课程、学期与数据工具"));
 
+        // 本地工具单独放，不混在教务数据里。
         l.addView(section("日程与清单"));
         LinearLayout customCard = card(panelColor());
         customCard.setPadding(dp(14), 0, dp(8), 0);
@@ -1748,6 +1753,7 @@ public class MainActivity extends Activity {
             }
             FrameLayout dayFrame = new FrameLayout(this);
             dayFrame.addView(dayColumn, new FrameLayout.LayoutParams(-1, -2));
+            // 把当天的日程叠在课程格子上。
             addManualEventOverlays(dayFrame, weekStart.plusDays(day - 1), semester, sectionHeight);
             body.addView(dayFrame, new LinearLayout.LayoutParams(0, -2, 1));
         }
