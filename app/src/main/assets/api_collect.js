@@ -16,7 +16,39 @@
     return value;
   };
 
+  // Account-lock guard: a locked portal account must never be re-driven by the
+  // API collector. Help text such as "账号被锁定怎么办"/"如何解锁" is filtered out
+  // so the SSO help link cannot disable collection.
+  const lockPattern = /用户账号锁定|(?:账号|账户)(?:已被|已)锁定|(?:您的|该)(?:账号|账户)被锁定|account has been locked|too many failed login attempts/i;
+  const lockHelpPattern = /(?:锁定|被锁)[^。\n]{0,8}(?:[?？]|怎么|如何|办|原因|帮助|说明)|如何解锁|怎么解锁|解锁(?:方法|流程|方式|说明)/;
+  const isLockText = (value) => {
+    const compact = String(value == null ? "" : value).replace(/\s+/g, " ").trim();
+    return !!compact && lockPattern.test(compact) && !lockHelpPattern.test(compact);
+  };
+  const pageText = (() => {
+    try {
+      return String(document.body ? document.body.innerText : "");
+    } catch (ignored) {
+      return "";
+    }
+  })();
+  const ACCOUNT_LOCKED_PHASE = "account_locked";
+  const accountLockedResult = () => result(ACCOUNT_LOCKED_PHASE, {
+    message: "账号已被锁定，请先完成统一认证解锁后再采集"
+  });
+  const accountLockedError = () => {
+    const error = new Error("账号已被锁定");
+    error.accountLocked = true;
+    return error;
+  };
+
   const FETCH_TIMEOUT_MS = 12000;
+
+  // A page that visibly reports the lock must stop the collector before it
+  // navigates or calls any portal API again.
+  if (isLockText(pageText)) {
+    return accountLockedResult();
+  }
 
   const fetchResponse = async (url, options) => {
     const controller = typeof AbortController === "function" ? new AbortController() : null;
@@ -41,16 +73,20 @@
 
   const fetchText = async (url) => {
     const response = await fetchResponse(url);
+    const content = await response.text();
+    if (isLockText(content)) throw accountLockedError();
     if (!response.ok) throw new Error("HTTP " + response.status + " " + url);
-    return response.text();
+    return content;
   };
 
   const fetchJson = async (url) => {
     const response = await fetchResponse(url, {
       headers: { Accept: "application/json" }
     });
+    const content = await response.text();
+    if (isLockText(content)) throw accountLockedError();
     if (!response.ok) throw new Error("HTTP " + response.status + " " + url);
-    return response.json();
+    return JSON.parse(content);
   };
 
   const decodeJavascriptString = (value) => {
@@ -246,6 +282,7 @@
   const launch = (collector) => {
     const current = state();
     if (current && current.status === "done") return JSON.stringify(current.result);
+    if (current && current.status === "locked") return accountLockedResult();
     if (current && current.status === "error") {
       return result("target_error", { target: mode, message: current.message || "接口读取失败" });
     }
@@ -255,6 +292,11 @@
       next.status = "done";
       next.result = value;
     }).catch((error) => {
+      if (error && error.accountLocked) {
+        next.status = "locked";
+        next.message = "账号已被锁定";
+        return;
+      }
       next.status = "error";
       next.message = String(error && error.message || error || "接口读取失败");
     });
