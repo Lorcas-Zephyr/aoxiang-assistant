@@ -2992,6 +2992,14 @@ public class MainActivity extends Activity {
                         String raw = new JSONArray("[" + result + "]").getString(0);
                         JSONObject payload = new JSONObject(raw);
                         String phase = payload.optString("phase");
+                        // 账号锁定不是普通的登录失败，不能再继续试密码；
+                        // 先停掉自动更新，再提示用户去解锁。
+                        if ("account_locked".equals(phase)) {
+                            pauseAutomaticUpdatesForAccountLock();
+                            cancelAutomation();
+                            showAccountLockedDialog();
+                            return;
+                        }
                         if ("credentials_pending".equals(phase)) {
                             if (AuthenticationPolicy.shouldWaitForCredentialRedirect(
                                     phase, credentialsSubmittedAt[0], System.currentTimeMillis())) {
@@ -4655,6 +4663,39 @@ public class MainActivity extends Activity {
                 .setAutoCancel(true)
                 .setContentIntent(pending);
         getSystemService(NotificationManager.class).notify(1003, builder.build());
+    }
+
+    /**
+     * SSO 提示账号锁定后，停掉所有自动更新。
+     * 手动页面还能用，但清掉“已验证”标记，下次登录重新走认证。
+     */
+    private void pauseAutomaticUpdatesForAccountLock() {
+        autoGradeEnabled = false;
+        autoScheduleEnabled = false;
+        autoElectricityEnabled = false;
+        autoBusEnabled = false;
+        store.edit()
+                .putBoolean("auto_grade_enabled", false)
+                .putBoolean("auto_schedule_enabled", false)
+                .putBoolean("auto_electricity_enabled", false)
+                .putBoolean("auto_bus_enabled", false)
+                .putBoolean("credentials_verified", false)
+                .apply();
+        cancelScheduledUpdates();
+        syncBackgroundService();
+        sendAuthenticationNotification("账号已被锁定，自动更新已暂停");
+    }
+
+    /** 在前台时提示用户账号已被锁定。 */
+    private void showAccountLockedDialog() {
+        if (!activityVisible || isFinishing()) return;
+        new AlertDialog.Builder(this)
+                .setTitle("账号已被锁定")
+                .setMessage("学校统一认证提示账号锁定。为避免继续触发锁定，成绩、课表、电费和校车自动更新已暂停。\n\n"
+                        + "请先停止本应用，等待至少 6 分钟，再用学校官方 App 登录一次；不要连续重试。"
+                        + "如果仍然锁定，请通过翱翔门户找回密码或联系学校信息化中心。")
+                .setPositiveButton("知道了", null)
+                .show();
     }
 
     private void sendAuthenticationNotification(String message) {
