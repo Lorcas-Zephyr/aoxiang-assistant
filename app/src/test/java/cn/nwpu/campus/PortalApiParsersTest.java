@@ -66,7 +66,8 @@ public class PortalApiParsersTest {
         assertEquals("2~3,11周 星期一 1-2节", course.getString("scheduleText"));
         assertEquals("长安校区 教西 B3-101", course.getString("location"));
         assertEquals("李彩香、赵海霞", course.getString("teacher"));
-        assertEquals("2026-11-09",
+        // 学期结束日期以教务下发为准（含考试周），不按最后一节课推算。
+        assertEquals("2027-01-17",
                 payload.getJSONArray("semesters").getJSONObject(0).getString("endDate"));
     }
 

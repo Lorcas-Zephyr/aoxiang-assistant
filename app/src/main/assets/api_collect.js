@@ -183,10 +183,19 @@
       gpaResponse = await fetchJson(
         "/student/for-std/student-portrait/getMyGpa?studentAssoc=" + encodeURIComponent(studentId));
     } catch (ignored) {}
+    // 教学班排名来自"按培养方案聚合成绩"接口的 courseItemMap；失败只影响
+    // 排名显示，不影响成绩更新。
+    let rankResponse = null;
+    try {
+      rankResponse = await fetchJson(
+        "/student/for-std/student-portrait/getMyGradesByProgram?studentAssoc=" +
+        encodeURIComponent(studentId));
+    } catch (ignored) {}
     return {
       phase: "grade_api_raw",
       gradeResponses,
       gpaResponse,
+      rankResponse,
       complete: failedSemesters === 0,
       failedSemesterCount: failedSemesters
     };
@@ -211,11 +220,69 @@
       printData = await fetchJson(
         "/student/for-std/course-table/semester/" + encodeURIComponent(semester.id) +
         "/print-data/" + encodeURIComponent(studentId));
-      const effectiveEnd = lastActivityDate(semester, printData);
+      // 是否翻到下一学期以教务 endDate 为准（含考试周）；缺失时才按最后一
+      // 项排课推算，避免考试周期间被误判为学期已结束。
+      const effectiveEnd = dateValue(semester && semester.endDate)
+        || lastActivityDate(semester, printData);
       if (!effectiveEnd || today <= effectiveEnd || index >= choice.sorted.length - 1) break;
       index++;
     }
-    return { phase: "schedule_api_raw", semester, printData };
+    // 考试安排与课表同源，搭车一次读取；失败只影响考试数据，不影响课表更新。
+    // 数据来自考试信息页面（HTML 表格，与成绩/课表页面的采集方式一致），
+    // URL 为 /student/for-std/exam-arrange/info/{studentId}。请求失败时保持
+    // null，原生层据此保留旧数据；成功但无考试时为空数组。
+    let examRows = null;
+    try {
+      examRows = collectExamRows(await fetchText(
+        "/student/for-std/exam-arrange/info/" + encodeURIComponent(studentId)));
+    } catch (ignored) {}
+    return { phase: "schedule_api_raw", semester, printData, examRows };
+  };
+
+  // 解析考试信息页面 #exams 表格：每行的 .time 为 "yyyy-MM-dd HH:mm~HH:mm"，
+  // 第一个 td 内其余 span 是校区/楼栋/教室，第二个 td 是课程名与考试类型标签，
+  // 行 class finished/unfinished 标记是否已结束。座位号由页面脚本另行渲染，
+  // 原始 HTML 中不可得，保持为空。
+  const collectExamRows = (html) => {
+    const doc = new DOMParser().parseFromString(String(html || ""), "text/html");
+    const rows = [];
+    doc.querySelectorAll("#exams tbody tr").forEach((tr) => {
+      const timeEl = tr.querySelector(".time");
+      if (!timeEl) return;
+      const match = String(timeEl.textContent || "").trim()
+        .match(/(\d{4}-\d{2}-\d{2})\s+(\d{1,2}:\d{2})\s*~\s*(\d{1,2}:\d{2})/);
+      if (!match) return;
+      let location = "";
+      const firstCell = timeEl.parentElement;
+      if (firstCell) {
+        const parts = [];
+        firstCell.querySelectorAll("div:not(.time) span").forEach((span) => {
+          const text = String(span.textContent || "").trim();
+          if (text) parts.push(text);
+        });
+        location = parts.join(" ");
+      }
+      let name = "";
+      let type = "";
+      const nameCell = tr.querySelector("td:nth-child(2)");
+      if (nameCell) {
+        name = String(nameCell.querySelector("span")
+          && nameCell.querySelector("span").textContent || "").trim();
+        type = String(nameCell.querySelector(".tag-span")
+          && nameCell.querySelector(".tag-span").textContent || "").trim();
+      }
+      if (!name) return;
+      rows.push({
+        name,
+        date: match[1],
+        startTime: match[2],
+        endTime: match[3],
+        location,
+        type,
+        finished: tr.classList.contains("finished")
+      });
+    });
+    return rows;
   };
 
   const electricityApiResponse = (rootVue) => {

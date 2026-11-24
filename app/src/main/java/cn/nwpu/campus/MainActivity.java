@@ -119,6 +119,8 @@ public class MainActivity extends Activity {
     private static final String DONATION_PROMPT_SHOWN = "donation_prompt_shown_v1";
     private static final int REQUEST_EXPORT_JSON = 11;
     private static final int REQUEST_IMPORT_JSON = 12;
+    private static final int REQUEST_SCAN_QR = 13;
+    private static final int REQUEST_CAMERA_PERMISSION = 14;
     private static final int REQUEST_EXACT_ALARM = 21;
     private static final int REQUEST_BATTERY_OPTIMIZATION = 22;
     private static final int REQUEST_AUTOSTART_SETTINGS = 23;
@@ -381,6 +383,12 @@ public class MainActivity extends Activity {
             if (store.getInt(BACKGROUND_PERMISSION_FLOW_STEP, 0) > 0) {
                 root.postDelayed(this::continueBackgroundPermissionFlow, 250L);
             }
+        } else if (requestCode == REQUEST_CAMERA_PERMISSION) {
+            if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                startQrImport();
+            } else {
+                Toast.makeText(this, "未授予相机权限，无法扫码导入", Toast.LENGTH_LONG).show();
+            }
         }
     }
 
@@ -545,6 +553,12 @@ public class MainActivity extends Activity {
                 || requestCode == REQUEST_AUTOSTART_SETTINGS) {
             refreshAutomaticUpdatePanelIfVisible();
             if (requestCode == REQUEST_EXACT_ALARM) syncBackgroundService();
+            return;
+        }
+        if (requestCode == REQUEST_SCAN_QR) {
+            if (resultCode == RESULT_OK && data != null) {
+                applyBackupText(data.getStringExtra("qr_text"));
+            }
             return;
         }
         if (resultCode != RESULT_OK || data == null || data.getData() == null) return;
@@ -754,9 +768,12 @@ public class MainActivity extends Activity {
         l.addView(busCard());
 
         ScheduleModels.Semester todaySemester = selectedSemester();
-        List<CourseMeeting> todayMeetings = todaySemester == null
-                ? new ArrayList<>()
-                : courseMeetingsForDate(coursesForSemester(todaySemester.id), todaySemester, LocalDate.now());
+        List<CourseMeeting> todayMeetings = new ArrayList<>();
+        if (todaySemester != null) {
+            List<ScheduleModels.Course> todayCourses = coursesForSemester(todaySemester.id);
+            appendExamCourses(todayCourses, todaySemester, LocalDate.now(), 1);
+            todayMeetings = courseMeetingsForDate(todayCourses, todaySemester, LocalDate.now());
+        }
         LinearLayout todayHeader = sectionHeader("今日课程");
         if (!todayMeetings.isEmpty()) {
             TextView count = label(todayMeetings.size() + " 门", 11, mutedColor());
@@ -768,6 +785,22 @@ public class MainActivity extends Activity {
             l.addView(emptyHint("今天没有课程"));
         } else {
             for (CourseMeeting meeting : todayMeetings) l.addView(schedulePreviewRow(meeting, LocalDate.now()));
+        }
+
+        // 考试信息：先全部展示，便于核对采集结果；显示逻辑后续再收敛。
+        List<ScheduleModels.Exam> exams = ExamStorage.showExams(store)
+                ? ExamStorage.sorted(ExamStorage.load(store)) : new ArrayList<>();
+        LinearLayout examHeader = sectionHeader("考试信息");
+        if (!exams.isEmpty()) {
+            TextView examCount = label(exams.size() + " 场", 11, mutedColor());
+            examCount.setGravity(Gravity.CENTER_VERTICAL | Gravity.END);
+            examHeader.addView(examCount, new LinearLayout.LayoutParams(dp(48), dp(54)));
+        }
+        l.addView(examHeader);
+        if (exams.isEmpty()) {
+            l.addView(emptyHint("暂无考试安排"));
+        } else {
+            for (ScheduleModels.Exam exam : exams) l.addView(examRow(exam));
         }
 
     }
@@ -887,6 +920,13 @@ public class MainActivity extends Activity {
         addHorizontalGap(switchRow, 8);
         switchRow.addView(next, new LinearLayout.LayoutParams(dp(40), dp(38)));
         tools.addView(switchRow);
+        addGap(tools, 8);
+        Switch examSwitch = settingSwitch("显示考试安排", ExamStorage.showExams(store));
+        examSwitch.setOnCheckedChangeListener((button, checked) -> {
+            store.edit().putBoolean(ExamStorage.SHOW_EXAMS_KEY, checked).apply();
+            replaceScheduleContent(selectedSemester());
+        });
+        tools.addView(examSwitch);
         l.addView(tools);
 
         addGap(l, 12);
@@ -1445,12 +1485,34 @@ public class MainActivity extends Activity {
         Button export = action("导出课表数据", false);
         export.setOnClickListener(v -> exportBackup());
         Button importData = action("导入课表数据", false);
-        importData.setOnClickListener(v -> requestImportBackup());
+        importData.setOnClickListener(v -> showImportOptions());
         dataActions.addView(export, new LinearLayout.LayoutParams(0, dp(42), 1));
         addHorizontalGap(dataActions, 8);
         dataActions.addView(importData, new LinearLayout.LayoutParams(0, dp(42), 1));
         dataCard.addView(dataActions);
         parent.addView(dataCard);
+    }
+
+    /** 导入入口提供文件与扫码两种方式。 */
+    private void showImportOptions() {
+        String[] options = {"从文件导入", "扫描二维码导入"};
+        new AlertDialog.Builder(this)
+                .setTitle("导入课表数据")
+                .setItems(options, (dialog, which) -> {
+                    if (which == 0) requestImportBackup();
+                    else startQrImport();
+                })
+                .show();
+    }
+
+    private void startQrImport() {
+        if (checkSelfPermission(android.Manifest.permission.CAMERA)
+                != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(new String[]{android.Manifest.permission.CAMERA},
+                    REQUEST_CAMERA_PERMISSION);
+            return;
+        }
+        startActivityForResult(new Intent(this, QrScanActivity.class), REQUEST_SCAN_QR);
     }
 
     private void addAboutSettings(LinearLayout parent) {
@@ -1547,6 +1609,11 @@ public class MainActivity extends Activity {
         board.addView(head);
 
         List<ScheduleModels.Course> weekCourses = coursesForWeek(semester, week);
+        // 考试插在课程前：同一节次冲突时优先显示考试。
+        List<ScheduleModels.Course> withExams = new ArrayList<>();
+        appendExamCourses(withExams, semester, weekStart, 7);
+        withExams.addAll(weekCourses);
+        weekCourses = withExams;
         if (scheduleShowAllCourses) {
             board.addView(buildAllCoursesWeekBody(semester, sectionHeight));
             wrap.addView(board, new LinearLayout.LayoutParams(-1, -2));
@@ -1881,6 +1948,7 @@ public class MainActivity extends Activity {
                 day.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
                 cell.addView(day);
                 List<ScheduleModels.Course> daily = coursesForDate(date, semester);
+                appendExamCourses(daily, semester, date, 1);
                 if (!daily.isEmpty()) {
                     LinearLayout dots = new LinearLayout(this);
                     dots.setOrientation(LinearLayout.HORIZONTAL);
@@ -2047,7 +2115,7 @@ public class MainActivity extends Activity {
         if (!monthView && scheduleShowAllCourses) return false;
         if (!monthView) {
             int week = currentScheduleWeek(semester);
-            return direction > 0 ? week < Math.max(1, semester.weekCount) : week > 1;
+            return direction > 0 ? week < effectiveWeekCount(semester) : week > 1;
         }
         LocalDate currentMonth = normalizedScheduleMonthStart(semester);
         LocalDate firstMonth = semesterFirstMonth(semester);
@@ -2072,19 +2140,22 @@ public class MainActivity extends Activity {
     }
 
     private LocalDate semesterLastMonth(ScheduleModels.Semester semester) {
-        return LocalDate.parse(semester.startDate)
-                .plusWeeks(Math.max(1, semester.weekCount) - 1L)
-                .plusDays(6)
-                .withDayOfMonth(1);
+        LocalDate last = LocalDate.parse(semester.startDate)
+                .plusWeeks(effectiveWeekCount(semester) - 1L)
+                .plusDays(6);
+        return last.withDayOfMonth(1);
     }
 
     private void showDailyCoursesDialog(ScheduleModels.Semester semester, LocalDate date) {
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
         box.setPadding(dp(20), dp(12), dp(20), dp(12));
-        List<CourseMeeting> meetings = semester == null
-                ? new ArrayList<>()
-                : courseMeetingsForDate(coursesForSemester(semester.id), semester, date);
+        List<CourseMeeting> meetings = new ArrayList<>();
+        if (semester != null) {
+            List<ScheduleModels.Course> dayCourses = coursesForSemester(semester.id);
+            appendExamCourses(dayCourses, semester, date, 1);
+            meetings = courseMeetingsForDate(dayCourses, semester, date);
+        }
         if (meetings.isEmpty()) {
             box.addView(label("没有课程", 14, mutedColor()));
         } else {
@@ -2354,6 +2425,10 @@ public class MainActivity extends Activity {
     }
 
     private void showCourseMeetingDetailDialog(ScheduleModels.Course course, ScheduleModels.TimeSlot slot) {
+        if (ExamStorage.isExamCourse(course)) {
+            showExamDetailDialog(course);
+            return;
+        }
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
         String location = slot != null && slot.location != null ? slot.location : course.location;
@@ -2361,6 +2436,34 @@ public class MainActivity extends Activity {
         box.addView(detailRow("地点", location == null ? "--" : location));
         box.addView(detailRow("教师", teacher == null ? "--" : teacher));
         showCoursePanel("本节课", course.name, box, dp(380));
+    }
+
+    /** 展示考试详情；详情内容来自虚拟课程 notes 中的考试 JSON。 */
+    private void showExamDetailDialog(ScheduleModels.Course course) {
+        ScheduleModels.Exam exam = ExamStorage.examFromCourse(course);
+        if (exam == null) {
+            LinearLayout box = new LinearLayout(this);
+            box.setOrientation(LinearLayout.VERTICAL);
+            box.addView(detailRow("时间", "--"));
+            showCoursePanel("考试详情", course.name, box, dp(380));
+            return;
+        }
+        showExamDetailDialog(exam);
+    }
+
+    private void showExamDetailDialog(ScheduleModels.Exam exam) {
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        String time = exam.date;
+        if (!exam.startTime.isEmpty()) {
+            time += " " + exam.startTime
+                    + (exam.endTime.isEmpty() ? "" : "-" + exam.endTime);
+        }
+        box.addView(detailRow("时间", time));
+        if (!exam.type.isEmpty()) box.addView(detailRow("类型", exam.type));
+        box.addView(detailRow("地点", exam.location.isEmpty() ? "--" : exam.location));
+        if (!exam.seat.isEmpty()) box.addView(detailRow("座位", exam.seat));
+        showCoursePanel("考试详情", exam.name, box, dp(380));
     }
 
     private void showCoursePanel(String eyebrowText, String heading, View details, int preferredHeight) {
@@ -2937,6 +3040,7 @@ public class MainActivity extends Activity {
         final long[] navigationCooldownUntil = {0};
         final long[] credentialsSubmittedAt = {0};
         final JSONArray[] collectedGradeRows = {null};
+        final Object[] collectedRankResponse = {null};
         final boolean[] credentialsSubmitted = {false};
         final boolean[] smsSubmitted = {false};
         final String target = automationTarget;
@@ -2950,7 +3054,8 @@ public class MainActivity extends Activity {
                 unifiedAuthTracker.record(web.getUrl());
                 if (collectedGradeRows[0] != null && portraitStartedAt[0] > 0L
                         && System.currentTimeMillis() - portraitStartedAt[0] >= PORTRAIT_TIMEOUT_MS) {
-                    handleCollectedGrades(collectedGradeRows[0], portraitGpa, false);
+                    handleCollectedGrades(collectedGradeRows[0], portraitGpa, false,
+                            collectedRankResponse[0]);
                     return;
                 }
                 if (++attempts[0] > 180) {
@@ -3127,12 +3232,13 @@ public class MainActivity extends Activity {
                             double apiGpa = PortalApiParsers.gpa(payload.optJSONObject("gpaResponse"));
                             if (rows.length() > 0) {
                                 if (!Double.isNaN(apiGpa)) {
-                                    handleCollectedGrades(rows, apiGpa, true);
+                                    handleCollectedGrades(rows, apiGpa, true, payload.opt("rankResponse"));
                                 } else {
                                     // Some accounts return the grade rows but leave getMyGpa empty.
                                     // Continue through the student portrait DOM/API fallback instead
                                     // of completing the update with a missing GPA.
                                     collectedGradeRows[0] = rows;
+                                    collectedRankResponse[0] = payload.opt("rankResponse");
                                     portraitStartedAt[0] = System.currentTimeMillis();
                                     navigationCooldownUntil[0] = System.currentTimeMillis() + 2000L;
                                     status.setText("正在读取学生画像 GPA…");
@@ -3146,6 +3252,9 @@ public class MainActivity extends Activity {
                         } else if ("schedule_api_raw".equals(phase) && "schedule".equals(target)) {
                             JSONObject schedulePayload = PortalApiParsers.schedulePayload(
                                     payload.optJSONObject("semester"), payload.optJSONObject("printData"));
+                            applyExamUpdate(payload.optJSONArray("examRows"),
+                                    payload.optJSONObject("semester") == null ? ""
+                                            : payload.optJSONObject("semester").optString("id"));
                             handleCollectedSchedule(schedulePayload);
                             return;
                         } else if ("electricity_api_raw".equals(phase) && "electricity".equals(target)) {
@@ -3193,7 +3302,8 @@ public class MainActivity extends Activity {
                                 && collectedGradeRows[0] != null) {
                             double gpa = payload.optDouble("gpa", Double.NaN);
                             if (!Double.isNaN(gpa)) {
-                                handleCollectedGrades(collectedGradeRows[0], gpa, true);
+                                handleCollectedGrades(collectedGradeRows[0], gpa, true,
+                                        collectedRankResponse[0]);
                                 return;
                             }
                         } else if ("schedule_data".equals(phase) && "schedule".equals(target)) {
@@ -3245,7 +3355,8 @@ public class MainActivity extends Activity {
         automationHandler.postDelayed(automationTask, 700);
     }
 
-    private void handleCollectedGrades(JSONArray array, double gpa, boolean gpaUpdated) {
+    private void handleCollectedGrades(JSONArray array, double gpa, boolean gpaUpdated,
+                                       Object rankResponse) {
         if (array == null) return;
         List<GradeRecord> out = new ArrayList<>();
         for (int i = 0; i < array.length(); i++) {
@@ -3254,6 +3365,8 @@ public class MainActivity extends Activity {
         }
         out = GradeRecord.keepHighest(out);
         if (out.isEmpty()) return;
+        JSONObject rankMap = PortalApiParsers.classRanks(rankResponse);
+        if (rankMap != null) GradeRankStorage.save(store, rankMap);
         List<String> changedCourses = UpdateDiff.changedNames(
                 gradeDiffItems(grades), gradeDiffItems(out));
         boolean wasAutomatic = automaticRun;
@@ -4041,7 +4154,47 @@ public class MainActivity extends Activity {
             StringBuilder builder = new StringBuilder();
             String line;
             while ((line = reader.readLine()) != null) builder.append(line).append('\n');
-            JSONObject parsed = new JSONObject(builder.toString());
+            applyBackupJson(new JSONObject(builder.toString()));
+        } catch (Exception e) {
+            Toast.makeText(this, "导入失败", Toast.LENGTH_LONG).show();
+        }
+    }
+
+    /**
+     * 解析扫码得到的内容并导入。约定内容为 {@code aoxiang-schedule:v1:<base64(gzip(备份JSON))>}，
+     * 同时兼容未经压缩的备份 JSON 明文，便于外部工具生成。
+     */
+    private void applyBackupText(String raw) {
+        String text = raw == null ? "" : raw.trim();
+        try {
+            if (text.startsWith("aoxiang-schedule:")) {
+                String payload = text.substring(text.indexOf(':') + 1);
+                if (payload.startsWith("v1:")) payload = payload.substring(3);
+                byte[] jsonBytes = inflateGzip(Base64.decode(payload, Base64.NO_WRAP));
+                if (jsonBytes == null) throw new IllegalStateException();
+                text = new String(jsonBytes, StandardCharsets.UTF_8);
+            }
+            applyBackupJson(new JSONObject(text));
+        } catch (Exception e) {
+            Toast.makeText(this, "无法识别的课表二维码", Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private byte[] inflateGzip(byte[] compressed) {
+        try (java.util.zip.GZIPInputStream input = new java.util.zip.GZIPInputStream(
+                new java.io.ByteArrayInputStream(compressed));
+             java.io.ByteArrayOutputStream output = new java.io.ByteArrayOutputStream()) {
+            byte[] buffer = new byte[4096];
+            int read;
+            while ((read = input.read(buffer)) != -1) output.write(buffer, 0, read);
+            return output.toByteArray();
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private void applyBackupJson(JSONObject parsed) {
+        try {
             JSONArray courseArray = parsed.optJSONArray("courses");
             JSONObject settings = parsed.optJSONObject("settings");
             if (courseArray == null || settings == null) throw new IllegalStateException();
@@ -5423,7 +5576,10 @@ public class MainActivity extends Activity {
         name.setMaxLines(2);
         name.setEllipsize(TextUtils.TruncateAt.END);
         left.addView(name);
-        TextView category = label(grade.category + " · " + grade.credits + " 学分", 11, mutedColor());
+        String rankText = GradeRankStorage.rankText(store, grade.courseId);
+        String meta = grade.category + " · " + grade.credits + " 学分"
+                + (rankText.isEmpty() ? "" : " · 排名 " + rankText);
+        TextView category = label(meta, 11, mutedColor());
         category.setSingleLine(true);
         category.setEllipsize(TextUtils.TruncateAt.END);
         left.addView(category);
@@ -5459,6 +5615,48 @@ public class MainActivity extends Activity {
         line.setBackgroundColor(lineColor());
         wrap.addView(line, new LinearLayout.LayoutParams(-1, dp(1)));
         return wrap;
+    }
+
+    /** 首页考试信息行：样式与今日课程卡片一致，考试用固定红色强调条区分。 */
+    private LinearLayout examRow(ScheduleModels.Exam exam) {
+        LinearLayout examCard = card(panelColor());
+        examCard.setOrientation(LinearLayout.HORIZONTAL);
+        examCard.setGravity(Gravity.CENTER_VERTICAL);
+        examCard.setPadding(dp(10), dp(10), dp(12), dp(10));
+        LinearLayout.LayoutParams cardParams = new LinearLayout.LayoutParams(-1, -2);
+        cardParams.bottomMargin = dp(7);
+        examCard.setLayoutParams(cardParams);
+
+        View accent = new View(this);
+        accent.setBackground(bg(Color.parseColor(ExamStorage.EXAM_COLOR), 3));
+        examCard.addView(accent, new LinearLayout.LayoutParams(dp(4), dp(46)));
+        addHorizontalGap(examCard, 10);
+
+        LinearLayout details = new LinearLayout(this);
+        details.setOrientation(LinearLayout.VERTICAL);
+        TextView name = label(exam.name, 15, textColor());
+        name.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        name.setMaxLines(2);
+        name.setEllipsize(TextUtils.TruncateAt.END);
+        details.addView(name);
+        String meta = exam.date;
+        if (!exam.startTime.isEmpty()) {
+            meta += " " + exam.startTime + (exam.endTime.isEmpty() ? "" : "-" + exam.endTime);
+        }
+        if (!exam.type.isEmpty()) meta += " · " + exam.type;
+        TextView metaText = label(meta, 11, mutedColor());
+        metaText.setSingleLine(true);
+        metaText.setEllipsize(TextUtils.TruncateAt.END);
+        details.addView(metaText);
+        if (!exam.location.isEmpty()) {
+            TextView locationLine = label(exam.location, 11, mutedColor());
+            locationLine.setSingleLine(true);
+            locationLine.setEllipsize(TextUtils.TruncateAt.END);
+            details.addView(locationLine);
+        }
+        examCard.addView(details, new LinearLayout.LayoutParams(0, -2, 1));
+        examCard.setOnClickListener(v -> showExamDetailDialog(exam));
+        return examCard;
     }
 
     private LinearLayout schedulePreviewRow(CourseMeeting meeting, LocalDate date) {
@@ -5810,6 +6008,27 @@ public class MainActivity extends Activity {
         return out;
     }
 
+    /** 保存随课表采集到的考试安排；行数组缺失（本次未取得页面）时保留旧数据。 */
+    private void applyExamUpdate(org.json.JSONArray examRows, String semesterId) {
+        if (examRows == null) return;
+        ExamStorage.saveRows(store, examRows, semesterId);
+    }
+
+    /**
+     * 把 startDate 起连续 days 天的考试转换为虚拟课程并追加到列表，
+     * 复用课程渲染管线；设置关闭时不注入。
+     */
+    private void appendExamCourses(List<ScheduleModels.Course> target,
+                                   ScheduleModels.Semester semester,
+                                   LocalDate startDate, int days) {
+        if (semester == null || !ExamStorage.showExams(store)) return;
+        List<ScheduleModels.Exam> exams = ExamStorage.load(store);
+        for (int i = 0; i < days; i++) {
+            LocalDate date = startDate.plusDays(i);
+            target.addAll(ExamStorage.examCoursesOnDate(exams, date, semester));
+        }
+    }
+
     private List<ScheduleModels.Course> sortedCourses(List<ScheduleModels.Course> input) {
         List<ScheduleModels.Course> out = new ArrayList<>(input);
         out.sort(Comparator.comparingInt((ScheduleModels.Course course) -> firstDay(course))
@@ -5890,16 +6109,27 @@ public class MainActivity extends Activity {
 
     private int currentScheduleWeek(ScheduleModels.Semester semester) {
         int baseWeek = baseScheduleWeek(semester);
-        int weekCount = Math.max(1, semester.weekCount);
+        int weekCount = effectiveWeekCount(semester);
         int selectedWeek = Math.max(1, Math.min(weekCount, baseWeek + scheduleWeekOffset));
         scheduleWeekOffset = selectedWeek - baseWeek;
         return selectedWeek;
     }
 
     private int baseScheduleWeek(ScheduleModels.Semester semester) {
-        int weekCount = Math.max(1, semester.weekCount);
+        int weekCount = effectiveWeekCount(semester);
         int current = ScheduleUtils.weekNumberForDate(LocalDate.now(), semester);
         return Math.max(1, Math.min(weekCount, current == 0 ? 1 : current));
+    }
+
+    /**
+     * 课表导入的学期结束日期取最后一门课，考试常排在它之后；把可浏览的
+     * 周次上限放宽到最晚考试所在周，保证考试周可达。
+     */
+    private int effectiveWeekCount(ScheduleModels.Semester semester) {
+        int weekCount = Math.max(1, semester.weekCount);
+        if (!ExamStorage.showExams(store)) return weekCount;
+        int examWeek = ExamStorage.maxExamWeek(ExamStorage.load(store), semester);
+        return Math.max(weekCount, examWeek);
     }
 
     private LocalDate weekStartForCurrentSelection(ScheduleModels.Semester semester) {

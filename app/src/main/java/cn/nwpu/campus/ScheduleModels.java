@@ -361,6 +361,58 @@ public final class ScheduleModels {
 
     }
 
+    /** 教务系统读取的考试安排；字段缺失时保持空字符串。 */
+    public static class Exam {
+        public String name;
+        public String type;
+        public String date;
+        public String startTime;
+        public String endTime;
+        public String location;
+        public String seat;
+        public String semesterId;
+
+        public Exam(String name, String type, String date, String startTime, String endTime,
+                    String location, String seat, String semesterId) {
+            this.name = name == null ? "" : name;
+            this.type = type == null ? "" : type;
+            this.date = date == null ? "" : date;
+            this.startTime = startTime == null ? "" : startTime;
+            this.endTime = endTime == null ? "" : endTime;
+            this.location = location == null ? "" : location;
+            this.seat = seat == null ? "" : seat;
+            this.semesterId = semesterId == null ? "" : semesterId;
+        }
+
+        public JSONObject json() {
+            JSONObject o = new JSONObject();
+            try {
+                o.put("name", name);
+                o.put("type", type);
+                o.put("date", date);
+                o.put("startTime", startTime);
+                o.put("endTime", endTime);
+                o.put("location", location);
+                o.put("seat", seat);
+                o.put("semesterId", semesterId);
+            } catch (Exception ignored) {}
+            return o;
+        }
+
+        public static Exam from(JSONObject o) {
+            return new Exam(
+                    o.optString("name", ""),
+                    o.optString("type", ""),
+                    o.optString("date", ""),
+                    o.optString("startTime", ""),
+                    o.optString("endTime", ""),
+                    o.optString("location", ""),
+                    o.optString("seat", ""),
+                    o.optString("semesterId", "")
+            );
+        }
+    }
+
     public static List<SectionTime> buildDefaultSectionTimes(int count) {
         List<SectionTime> times = new ArrayList<>();
         String[][] standard = {

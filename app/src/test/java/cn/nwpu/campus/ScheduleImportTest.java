@@ -39,7 +39,7 @@ public class ScheduleImportTest {
         assertEquals("2026-12-27", semester.endDate);
     }
 
-    @Test public void importedSemesterEndsOnTheLastScheduledCourse() {
+    @Test public void importedSemesterUsesJwxtEndDateOverLastCourse() {
         ScheduleModels.Course course = new ScheduleModels.Course(
                 "course", "测试课程", "semester",
                 Collections.singletonList(new ScheduleModels.TimeSlot(
@@ -49,8 +49,9 @@ public class ScheduleImportTest {
                 new ScheduleImport.RawSemester("2026-2027秋", "362", "2026-08-31", "2027-01-17"),
                 Collections.singletonList(course));
 
-        assertEquals(16, semester.weekCount);
-        assertEquals("2026-12-19", semester.endDate);
+        // 教务 endDate 优先（口径包含考试周），即使最后一门课结束得更早。
+        assertEquals(20, semester.weekCount);
+        assertEquals("2027-01-17", semester.endDate);
     }
 
     @Test public void importedSemesterLastsAtLeastTwoWeeks() {

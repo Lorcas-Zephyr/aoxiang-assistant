@@ -16,6 +16,8 @@ final class GradeRecord {
     double credits;
     Double point;
     Double score;
+    /** 教务系统内部课程 ID，用于匹配教学班排名；旧数据与页面采集为空。 */
+    String courseId = "";
 
     GradeRecord(String course, double credits, Double point, Double score, String category, String detail) {
         this.course = course;
@@ -53,13 +55,14 @@ final class GradeRecord {
                     .put("point", point == null ? JSONObject.NULL : point)
                     .put("score", score == null ? JSONObject.NULL : score)
                     .put("category", category)
-                    .put("detail", detail);
+                    .put("detail", detail)
+                    .put("courseId", courseId);
         } catch (Exception ignored) {}
         return object;
     }
 
     static GradeRecord from(JSONObject object) {
-        return new GradeRecord(
+        GradeRecord record = new GradeRecord(
                 object.optString("course"),
                 object.optDouble("credits", 0),
                 object.isNull("point") ? null : object.optDouble("point"),
@@ -67,6 +70,8 @@ final class GradeRecord {
                 object.optString("category", "课程"),
                 cleanDetail(object.optString("detail", ""))
         );
+        record.courseId = object.optString("courseId", "");
+        return record;
     }
 
     static GradeRecord from(JSONArray cells) {
@@ -74,9 +79,12 @@ final class GradeRecord {
         double credits = parse(cells.optString(1));
         double point = parse(cells.optString(2));
         double score = parse(cells.optString(3));
-        return new GradeRecord(course, Double.isNaN(credits) ? 0 : credits,
+        GradeRecord record = new GradeRecord(course, Double.isNaN(credits) ? 0 : credits,
                 Double.isNaN(point) ? null : point, Double.isNaN(score) ? null : score,
                 "课程", cleanDetail(cells.optString(4)));
+        // 第 6 格为课程 ID；页面采集的旧行没有该格。
+        record.courseId = cells.optString(5);
+        return record;
     }
 
     static List<GradeRecord> keepHighest(List<GradeRecord> records) {
