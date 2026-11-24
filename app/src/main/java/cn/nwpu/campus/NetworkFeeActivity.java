@@ -25,7 +25,7 @@ import android.widget.Toast;
 
 import org.json.JSONArray;
 
-/** 校园网自助页。登录后从页面里抓余额存到本地，首页卡片直接读；不处理账号密码，Cookie 由 WebView 自己管。 */
+/** 优先用已保存的独立网费会话同步；需要验证码时显示校方登录页。 */
 public class NetworkFeeActivity extends Activity {
     // 自助首页和提取脚本。余额面板可能在 iframe 里，所以脚本要遍历子 frame。
     private static final String URL = NetworkFeeSync.HOME;
@@ -47,6 +47,8 @@ public class NetworkFeeActivity extends Activity {
     private int captureAttempts;
     private boolean completed;
     private boolean capturing;
+    private boolean destroyed;
+    private long sessionGeneration;
 
     // ---- 页面 ----
 
@@ -54,6 +56,7 @@ public class NetworkFeeActivity extends Activity {
     protected void onCreate(Bundle state) {
         super.onCreate(state);
         prefs = getSharedPreferences("campus_private", MODE_PRIVATE);
+        sessionGeneration = NetworkFeeSession.generation(prefs);
         boolean dark = ScheduleStorage.loadDarkMode(
                 getSharedPreferences("campus_private", MODE_PRIVATE));
         int background = dark ? Color.parseColor("#111827") : Color.parseColor("#F5F7FA");
@@ -144,7 +147,7 @@ public class NetworkFeeActivity extends Activity {
         root.addView(webHost, new LinearLayout.LayoutParams(-1, 0, 1));
 
         TextView hint = new TextView(this);
-        hint.setText("首次使用请用校园网账号登录；登录状态会保存在本机。");
+        hint.setText("使用校园网账号登录；会话会加密保存，失效后请重新完成验证码登录。");
         hint.setTextSize(10);
         hint.setTextColor(muted);
         hint.setGravity(Gravity.CENTER);
@@ -168,7 +171,34 @@ public class NetworkFeeActivity extends Activity {
             else flags |= View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR;
             root.setSystemUiVisibility(flags);
         }
-        web.loadUrl(URL);
+        if (prefs.getBoolean(NetworkFeeSync.KEY_READY, false)) {
+            web.setVisibility(View.INVISIBLE);
+            TextView loading = new TextView(this);
+            loading.setText("正在更新网费…");
+            loading.setTextColor(muted);
+            loading.setTextSize(14);
+            loading.setGravity(Gravity.CENTER);
+            webHost.addView(loading, new FrameLayout.LayoutParams(-1, -1));
+            new Thread(() -> {
+                NetworkFeeSync.Result result = NetworkFeeSync.fetch(prefs);
+                handler.post(() -> {
+                    if (destroyed || isFinishing()) return;
+                    if (result.success()) {
+                        completeSync(result.balance);
+                    } else {
+                        webHost.removeView(loading);
+                        web.setVisibility(View.VISIBLE);
+                        if (result.loginRequired) {
+                            hint.setText("网费登录已过期，请完成验证码登录；成功后自动同步并返回。");
+                        }
+                        web.loadUrl(URL);
+                    }
+                });
+            }, "NetworkFeeManualSync").start();
+        } else {
+            NetworkFeeSession.restore(prefs, false);
+            web.loadUrl(URL);
+        }
     }
 
     private boolean isCampusUrl(String value) {
@@ -197,7 +227,8 @@ public class NetworkFeeActivity extends Activity {
 
     /** 读取到可信余额即保存并返回；余额未变化也视为同步成功。 */
     private void captureBalance() {
-        if (web == null || completed || capturing || isFinishing()) return;
+        if (web == null || completed || capturing || isFinishing()
+                || !isBalancePage(web.getUrl())) return;
         capturing = true;
         web.evaluateJavascript(BALANCE_JS, result -> {
             capturing = false;
@@ -206,16 +237,34 @@ public class NetworkFeeActivity extends Activity {
                 String text = new JSONArray("[" + result + "]").getString(0);
                 String value = NetworkFeeSync.parseBalance(text);
                 if (value == null) return;
-                completed = true;
-                handler.removeCallbacks(captureTask);
-                NetworkFeeSync.save(this, prefs, value);
-                BackgroundSyncScheduler.schedule(this);
-                Toast.makeText(this, "网费余额已同步：" + value + " 元",
-                        Toast.LENGTH_SHORT).show();
-                finish();
+                completeSync(value);
             } catch (Exception ignored) {
             }
         });
+    }
+
+    private boolean isBalancePage(String value) {
+        try {
+            Uri uri = Uri.parse(value == null ? "" : value);
+            return "https".equalsIgnoreCase(uri.getScheme())
+                    && "zizhu.nwpu.edu.cn".equalsIgnoreCase(uri.getHost())
+                    && uri.getPort() == 8900 && "/home".equals(uri.getPath());
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
+    private void completeSync(String value) {
+        if (sessionGeneration != NetworkFeeSession.generation(prefs)) {
+            finish();
+            return;
+        }
+        completed = true;
+        handler.removeCallbacks(captureTask);
+        NetworkFeeSync.save(this, prefs, value);
+        BackgroundSyncScheduler.schedule(this);
+        Toast.makeText(this, "网费余额已同步：" + value + " 元", Toast.LENGTH_SHORT).show();
+        finish();
     }
 
     @Override
@@ -227,6 +276,7 @@ public class NetworkFeeActivity extends Activity {
 
     @Override
     protected void onDestroy() {
+        destroyed = true;
         handler.removeCallbacks(captureTask);
         if (web != null) {
             web.stopLoading();

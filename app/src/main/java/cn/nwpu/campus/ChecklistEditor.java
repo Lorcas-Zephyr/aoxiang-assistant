@@ -70,7 +70,7 @@ final class ChecklistEditor {
         TextView heading = ui.label(isEdit ? "编辑清单" : "新建清单", 21, ui.textColor());
         heading.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
         shell.addView(heading);
-        TextView subtitle = ui.label("设置截止时间，首页会显示实时倒计时。", 11, ui.mutedColor());
+        TextView subtitle = ui.label("设置截止时间，事项页会显示实时倒计时。", 11, ui.mutedColor());
         subtitle.setPadding(0, ui.dp(3), 0, ui.dp(10));
         shell.addView(subtitle);
 

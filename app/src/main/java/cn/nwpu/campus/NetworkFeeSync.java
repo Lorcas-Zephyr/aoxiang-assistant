@@ -45,7 +45,17 @@ final class NetworkFeeSync {
                 && url.getPort() == 8900;
     }
 
-    static Result fetch() {
+    static synchronized Result fetch(SharedPreferences store) {
+        long generation = NetworkFeeSession.generation(store);
+        NetworkFeeSession.restore(store, false);
+        Result result = fetchCurrentSession();
+        if (result.loginRequired && NetworkFeeSession.restore(store, true)) {
+            result = fetchCurrentSession();
+        }
+        return generation == NetworkFeeSession.generation(store) ? result : Result.failed();
+    }
+
+    private static Result fetchCurrentSession() {
         try {
             CookieManager cookies = CookieManager.getInstance();
             URL url = new URL(HOME);
@@ -102,6 +112,7 @@ final class NetworkFeeSync {
     }
 
     static void save(Context context, SharedPreferences store, String balance) {
+        NetworkFeeSession.save(store);
         long now = System.currentTimeMillis();
         store.edit().putString(KEY_BALANCE, balance).putLong(KEY_UPDATED, now)
                 .putBoolean(KEY_READY, true).putLong("auto_last_" + TARGET, now).apply();

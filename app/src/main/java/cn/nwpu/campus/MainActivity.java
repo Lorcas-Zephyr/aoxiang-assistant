@@ -139,6 +139,11 @@ public class MainActivity extends Activity {
     private static final int TAB_GRADES = 2;
     private static final int TAB_MANAGE = 3;
     private static final int TAB_SETTINGS = 4;
+    private static final int TAB_MATTERS = 5;
+    private static final int TAB_COUNT = 6;
+    // Keep existing saved tab IDs and notification destinations stable.
+    private static final int[] NAV_TABS = {TAB_HOME, TAB_SCHEDULE, TAB_GRADES,
+            TAB_MATTERS, TAB_MANAGE, TAB_SETTINGS};
     private static final String UNIT_MINUTES = "分钟";
     private static final String UNIT_HOURS = "小时";
     private static final String UNIT_DAYS = "天";
@@ -199,7 +204,7 @@ public class MainActivity extends Activity {
     private int scheduleIntervalValue;
     private int electricityIntervalValue;
     private int currentTab;
-    private final int[] tabScrollPositions = new int[5];
+    private final int[] tabScrollPositions = new int[TAB_COUNT];
     private int automationGeneration;
     private int scheduleWeekOffset;
     private View scheduleContentView;
@@ -502,7 +507,8 @@ public class MainActivity extends Activity {
 
         boolean visible = currentTab == TAB_HOME
                 || (gradesChanged && currentTab == TAB_GRADES)
-                || (scheduleChanged && (currentTab == TAB_SCHEDULE || currentTab == TAB_MANAGE));
+                || (scheduleChanged && (currentTab == TAB_SCHEDULE || currentTab == TAB_MANAGE
+                    || currentTab == TAB_MATTERS));
         if (visible && root != null) showTab(currentTab);
     }
 
@@ -617,7 +623,7 @@ public class MainActivity extends Activity {
     }
 
     private int validTab(int tab) {
-        return tab >= TAB_HOME && tab <= TAB_SETTINGS ? tab : TAB_HOME;
+        return tab >= TAB_HOME && tab < TAB_COUNT ? tab : TAB_HOME;
     }
 
     private void buildShell() {
@@ -638,11 +644,11 @@ public class MainActivity extends Activity {
         bottom.setElevation(dp(5));
         mainShell.addView(bottom, new LinearLayout.LayoutParams(-1, dp(62)));
 
-        String[] labels = {"首页", "课表", "成绩", "管理", "设置"};
+        String[] labels = {"首页", "课表", "成绩", "事项", "管理", "设置"};
         int[] icons = {R.drawable.ic_nav_home, R.drawable.ic_nav_schedule, R.drawable.ic_nav_grades,
-                R.drawable.ic_nav_manage, R.drawable.ic_nav_settings};
+                R.drawable.ic_nav_matters, R.drawable.ic_nav_manage, R.drawable.ic_nav_settings};
         for (int i = 0; i < labels.length; i++) {
-            final int tab = i;
+            final int tab = NAV_TABS[i];
             LinearLayout item = new LinearLayout(this);
             item.setOrientation(LinearLayout.VERTICAL);
             item.setGravity(Gravity.CENTER);
@@ -696,9 +702,12 @@ public class MainActivity extends Activity {
 
     private void showTab(int tab, boolean forceShellRebuild) {
         int previousTab = currentTab;
-        if (currentPage != null && currentTab >= TAB_HOME && currentTab <= TAB_SETTINGS) {
+        if (currentPage != null && currentTab >= TAB_HOME && currentTab < TAB_COUNT) {
             tabScrollPositions[currentTab] = currentPage.getScrollY();
         }
+        root.removeCallbacks(checklistTicker);
+        checklistCountdownModels.clear();
+        checklistCountdownViews.clear();
         boolean reuseShell = !forceShellRebuild && previousTab == tab && mainShell != null
                 && content != null && mainShell.getParent() == root;
         List<View> previousPages = new ArrayList<>();
@@ -716,6 +725,9 @@ public class MainActivity extends Activity {
                 break;
             case TAB_GRADES:
                 gradesPage();
+                break;
+            case TAB_MATTERS:
+                mattersPage();
                 break;
             case TAB_MANAGE:
                 managePage();
@@ -772,11 +784,15 @@ public class MainActivity extends Activity {
         LinearLayout overviewHeader = sectionHeader("数据概览");
         Button gradeUpdate = syncButton("成绩", "更新成绩");
         gradeUpdate.setOnClickListener(v -> openPortal("grades", false));
-        overviewHeader.addView(gradeUpdate, new LinearLayout.LayoutParams(dp(82), dp(36)));
-        addHorizontalGap(overviewHeader, 8);
+        overviewHeader.addView(gradeUpdate, new LinearLayout.LayoutParams(dp(70), dp(36)));
+        addHorizontalGap(overviewHeader, 6);
         Button electricityUpdate = syncButton("电费", "更新电费");
         electricityUpdate.setOnClickListener(v -> openPortal("electricity", false));
-        overviewHeader.addView(electricityUpdate, new LinearLayout.LayoutParams(dp(82), dp(36)));
+        overviewHeader.addView(electricityUpdate, new LinearLayout.LayoutParams(dp(70), dp(36)));
+        addHorizontalGap(overviewHeader, 6);
+        Button networkFeeUpdate = syncButton("网费", "更新网费");
+        networkFeeUpdate.setOnClickListener(v -> openNetworkFee());
+        overviewHeader.addView(networkFeeUpdate, new LinearLayout.LayoutParams(dp(70), dp(36)));
         l.addView(overviewHeader);
 
         LinearLayout summary = card(panelColor());
@@ -789,13 +805,35 @@ public class MainActivity extends Activity {
         divider.setBackgroundColor(lineColor());
         summary.addView(divider, new LinearLayout.LayoutParams(-1, dp(1)));
         LinearLayout secondMetrics = new LinearLayout(this);
-        secondMetrics.addView(metric("课程", String.valueOf(grades.size()), "门"), new LinearLayout.LayoutParams(0, dp(70), 1));
+        String networkBalance = store.getString(NetworkFeeSync.KEY_BALANCE, "");
+        secondMetrics.addView(metric("网费余额", networkBalance == null || networkBalance.trim().isEmpty()
+                ? "--" : networkBalance.trim(), "元"), new LinearLayout.LayoutParams(0, dp(70), 1));
         secondMetrics.addView(metricDivider());
         secondMetrics.addView(metric("剩余电费", Double.isNaN(electricityBalance) ? "--" : scoreDf.format(electricityBalance), "度"), new LinearLayout.LayoutParams(0, dp(70), 1));
         summary.addView(secondMetrics);
         l.addView(summary);
-        // 网费是个人数据，放在成绩汇总下面。
-        addNetworkFeeCard(l);
+
+        ScheduleModels.Semester todaySemester = selectedSemester();
+        LocalDate today = LocalDate.now();
+        List<CourseMeeting> todayMeetings = new ArrayList<>();
+        if (todaySemester != null) {
+            List<ScheduleModels.Course> todayCourses = coursesForSemester(todaySemester.id);
+            todayCourses.addAll(ExamStorage.examCoursesOnDate(
+                    ExamStorage.load(store), today, todaySemester));
+            todayMeetings = courseMeetingsForDate(todayCourses, todaySemester, today);
+        }
+        LinearLayout todayHeader = sectionHeader("今日课程和考试");
+        if (!todayMeetings.isEmpty()) {
+            TextView count = label(todayMeetings.size() + " 项", 11, mutedColor());
+            count.setGravity(Gravity.CENTER_VERTICAL | Gravity.END);
+            todayHeader.addView(count, new LinearLayout.LayoutParams(dp(48), dp(54)));
+        }
+        l.addView(todayHeader);
+        if (todayMeetings.isEmpty()) {
+            l.addView(emptyHint("今天没有课程和考试"));
+        } else {
+            for (CourseMeeting meeting : todayMeetings) l.addView(schedulePreviewRow(meeting, today));
+        }
 
         LinearLayout busHeader = sectionHeader("校车出行");
         Button busUpdate = syncButton("校车", "更新校车数据");
@@ -803,40 +841,22 @@ public class MainActivity extends Activity {
         busHeader.addView(busUpdate, new LinearLayout.LayoutParams(dp(82), dp(36)));
         l.addView(busHeader);
         l.addView(busCard());
+    }
 
-        ScheduleModels.Semester todaySemester = selectedSemester();
-        List<CourseMeeting> todayMeetings = new ArrayList<>();
-        if (todaySemester != null) {
-            List<ScheduleModels.Course> todayCourses = coursesForSemester(todaySemester.id);
-            appendExamCourses(todayCourses, todaySemester, LocalDate.now(), 1);
-            todayMeetings = courseMeetingsForDate(todayCourses, todaySemester, LocalDate.now());
-        }
-        LinearLayout todayHeader = sectionHeader("今日课程");
-        if (!todayMeetings.isEmpty()) {
-            TextView count = label(todayMeetings.size() + " 门", 11, mutedColor());
-            count.setGravity(Gravity.CENTER_VERTICAL | Gravity.END);
-            todayHeader.addView(count, new LinearLayout.LayoutParams(dp(48), dp(54)));
-        }
-        l.addView(todayHeader);
-        if (todayMeetings.isEmpty()) {
-            l.addView(emptyHint("今天没有课程"));
-        } else {
-            for (CourseMeeting meeting : todayMeetings) l.addView(schedulePreviewRow(meeting, LocalDate.now()));
-        }
+    private void mattersPage() {
+        ScrollView scroll = page();
+        LinearLayout l = column();
+        scroll.addView(l);
+        content.addView(scroll);
+        l.addView(pageHeader("事项", "考试、日程与清单"));
 
-        List<ScheduleModels.Exam> exams = ExamStorage.showExams(store)
-                ? ExamStorage.sorted(ExamStorage.load(store)) : new ArrayList<>();
+        List<ScheduleModels.Exam> exams = ExamStorage.sorted(ExamStorage.load(store));
         LocalDateTime now = LocalDateTime.now();
         exams.removeIf(exam -> ExamStorage.isFinished(exam, now));
         LinearLayout examHeader = sectionHeader("考试信息");
         Button showAllExams = syncButton("全部", "查看全部考试");
         showAllExams.setOnClickListener(v ->
                 startActivity(new Intent(this, ExamListActivity.class)));
-        if (!exams.isEmpty()) {
-            TextView examCount = label(exams.size() + " 场", 11, mutedColor());
-            examCount.setGravity(Gravity.CENTER_VERTICAL | Gravity.END);
-            examHeader.addView(examCount, new LinearLayout.LayoutParams(dp(48), dp(54)));
-        }
         examHeader.addView(showAllExams, new LinearLayout.LayoutParams(dp(64), dp(36)));
         l.addView(examHeader);
         if (exams.isEmpty()) {
@@ -844,10 +864,8 @@ public class MainActivity extends Activity {
         } else {
             for (ScheduleModels.Exam exam : exams) l.addView(examRow(exam));
         }
-        // 手动日程放在今日课程后面，先保证课表信息。
-        addHomeManualEvents(l);
-        // 清单是本地数据，放在今日课程后面。
-        addHomeChecklists(l);
+        addMattersManualEvents(l);
+        addMattersChecklists(l);
     }
 
     /** 从编辑页回来时重新读取本地数据。 */
@@ -855,7 +873,7 @@ public class MainActivity extends Activity {
         manualEvents = ManualEventStore.load(store);
         checklists = ChecklistStore.load(store);
         if (root != null && !silentBoot
-                && (currentTab == TAB_HOME || currentTab == TAB_SCHEDULE)) {
+                && (currentTab == TAB_MATTERS || currentTab == TAB_SCHEDULE)) {
             showTab(currentTab);
         }
     }
@@ -865,7 +883,7 @@ public class MainActivity extends Activity {
         startActivity(new Intent(this, ManualEventActivity.class));
     }
 
-    private void addHomeManualEvents(LinearLayout parent) {
+    private void addMattersManualEvents(LinearLayout parent) {
         List<ManualEvent> todayEvents = ManualEventStore.onDate(manualEvents, LocalDate.now());
         LinearLayout header = sectionHeader("今日日程");
         Button all = syncButton("全部", "管理手动日程");
@@ -890,7 +908,7 @@ public class MainActivity extends Activity {
         startActivity(new Intent(this, ChecklistActivity.class));
     }
 
-    private void addHomeChecklists(LinearLayout parent) {
+    private void addMattersChecklists(LinearLayout parent) {
         checklists = ChecklistStore.load(store);
         LinearLayout header = sectionHeader("清单倒计时");
         Button all = syncButton("全部", "管理清单");
@@ -1034,42 +1052,6 @@ public class MainActivity extends Activity {
         }
     }
 
-    private void addWeekManualEvents(LinearLayout parent, ScheduleModels.Semester semester) {
-        int week = currentScheduleWeek(semester);
-        LocalDate weekStart = weekStartForSelection(semester, week);
-        LinearLayout header = sectionHeader("本周日程");
-        Button all = syncButton("全部", "管理手动日程");
-        all.setOnClickListener(v -> openManualEvents());
-        header.addView(all, new LinearLayout.LayoutParams(dp(64), dp(36)));
-        parent.addView(header);
-        boolean any = false;
-        for (int offset = 0; offset < 7; offset++) {
-            LocalDate date = weekStart.plusDays(offset);
-            List<ManualEvent> events = ManualEventStore.onDate(manualEvents, date);
-            for (ManualEvent event : events) {
-                any = true;
-                LinearLayout row = card(panelColor());
-                row.setPadding(dp(14), dp(8), dp(12), dp(8));
-                LinearLayout line = new LinearLayout(this);
-                line.setGravity(Gravity.CENTER_VERTICAL);
-                TextView day = label(ManualEvent.formatDateLabel(date), 11, primaryColor());
-                line.addView(day, new LinearLayout.LayoutParams(0, -2, 1));
-                TextView time = label(event.timeRange(), 11, mutedColor());
-                line.addView(time);
-                row.addView(line);
-                TextView title = label(event.title, 13, textColor());
-                title.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
-                row.addView(title);
-                if (event.note != null && !event.note.trim().isEmpty()) {
-                    row.addView(label(event.note.trim(), 10, mutedColor()));
-                }
-                row.setOnClickListener(v -> openManualEvents());
-                parent.addView(row);
-            }
-        }
-        if (!any) parent.addView(emptyHint("本周没有手动日程"));
-    }
-
     private void addChecklistHomeCard(LinearLayout parent, Checklist checklist) {
         LinearLayout card = card(panelColor());
         card.setPadding(dp(14), dp(12), dp(14), dp(12));
@@ -1163,7 +1145,7 @@ public class MainActivity extends Activity {
                 < intervalMillis(NetworkFeeSync.TARGET)) return;
         netFeeHttpFetching = true;
         new Thread(() -> {
-            NetworkFeeSync.Result result = NetworkFeeSync.fetch();
+            NetworkFeeSync.Result result = NetworkFeeSync.fetch(store);
             runOnUiThread(() -> {
                 netFeeHttpFetching = false;
                 if (!store.getBoolean(NetworkFeeSync.KEY_READY, false)) return;
@@ -1180,45 +1162,6 @@ public class MainActivity extends Activity {
         }, "NetworkFeeBalance").start();
     }
 
-    /** 首页网费卡片：有余额就显示，没有就提示去登录。 */
-    private void addNetworkFeeCard(LinearLayout parent) {
-        LinearLayout header = sectionHeader("校园网费");
-        Button open = syncButton("刷新", "打开网络自助");
-        open.setOnClickListener(v -> openNetworkFee());
-        header.addView(open, new LinearLayout.LayoutParams(dp(64), dp(36)));
-        parent.addView(header);
-        LinearLayout card = card(panelColor());
-        card.setPadding(dp(14), dp(12), dp(14), dp(12));
-        String balance = store.getString("net_fee_balance", "");
-        long updated = store.getLong("net_fee_updated", 0L);
-        if (balance == null || balance.trim().isEmpty()) {
-            TextView title = label("网络自助", 14, textColor());
-            title.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
-            card.addView(title);
-            TextView desc = label("登录一次网络自助后，余额会自动同步到这里；也可以点下面按钮查看套餐和上网明细。",
-                    11, mutedColor());
-            desc.setPadding(0, dp(4), 0, dp(10));
-            card.addView(desc);
-        } else {
-            TextView balanceLabel = label("网费余额", 11, mutedColor());
-            card.addView(balanceLabel);
-            TextView balanceValue = label("¥ " + balance.trim(), 30, primaryColor());
-            balanceValue.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
-            card.addView(balanceValue);
-            if (updated > 0L) {
-                String time = new java.text.SimpleDateFormat("M月d日 HH:mm", Locale.CHINA)
-                        .format(new java.util.Date(updated));
-                card.addView(label("更新于 " + time, 10, mutedColor()));
-            }
-        }
-        addGap(card, 8);
-        Button button = action(balance == null || balance.trim().isEmpty()
-                ? "登录网络自助" : "更新余额", false);
-        button.setOnClickListener(v -> openNetworkFee());
-        card.addView(button, new LinearLayout.LayoutParams(-1, dp(40)));
-        parent.addView(card);
-    }
-
     private void schedulePage() {
         scheduleContentView = null;
         scheduleViewport = null;
@@ -1232,10 +1175,6 @@ public class MainActivity extends Activity {
 
         LinearLayout header = pageHeader("课表", "一周课程总览");
         header.setPadding(dp(8), 0, dp(8), dp(12));
-        Button manualEventsButton = syncButton("日程", "管理手动日程");
-        manualEventsButton.setOnClickListener(v -> openManualEvents());
-        header.addView(manualEventsButton, new LinearLayout.LayoutParams(dp(64), dp(36)));
-        addHorizontalGap(header, 8);
         ImageView updateSchedule = iconButton(R.drawable.ic_sync, "手动更新课表");
         updateSchedule.setOnClickListener(v -> openPortal("schedule", false));
         header.addView(updateSchedule, new LinearLayout.LayoutParams(dp(40), dp(40)));
@@ -1347,8 +1286,6 @@ public class MainActivity extends Activity {
         tools.addView(examSwitch);
         l.addView(tools);
 
-        // 本周日程先列一遍，具体时段再叠到下面的课表格子里。
-        addWeekManualEvents(l, semester);
 
         addGap(l, 12);
         scheduleViewport = new FrameLayout(this);
@@ -1418,14 +1355,9 @@ public class MainActivity extends Activity {
 
         l.addView(pageHeader("管理", "课程、学期与数据工具"));
 
-        // 本地工具与校园网费入口集中展示，不混在教务数据里。
-        l.addView(section("本地工具与校园网费"));
+        l.addView(section("校园网费"));
         LinearLayout customCard = card(panelColor());
         customCard.setPadding(dp(14), 0, dp(8), 0);
-        addActionNavigation(customCard, "手动日程", "添加一次性、每周重复日程并检查冲突",
-                R.drawable.ic_sync, this::openManualEvents, false);
-        addActionNavigation(customCard, "清单", "多清单、条目勾选、截止倒计时与提醒",
-                R.drawable.ic_nav_manage, this::openChecklists, false);
         addActionNavigation(customCard, "校园网费", "余额、套餐和上网明细",
                 R.drawable.ic_sync, this::openNetworkFee, false);
         l.addView(customCard);
@@ -1874,11 +1806,13 @@ public class MainActivity extends Activity {
         startupRow.setGravity(Gravity.CENTER_VERTICAL);
         TextView startupTitle = label("打开 App 时进入", 14, textColor());
         startupRow.addView(startupTitle, new LinearLayout.LayoutParams(0, dp(52), 1));
-        String[] startupLabels = {"首页", "课表", "成绩", "管理", "设置"};
+        String[] startupLabels = {"首页", "课表", "成绩", "事项", "管理", "设置"};
         Spinner startupPicker = new Spinner(this);
         ArrayAdapter<String> startupAdapter = themedSpinnerAdapter(startupLabels);
         startupPicker.setAdapter(startupAdapter);
-        startupPicker.setSelection(startupTab());
+        for (int index = 0; index < NAV_TABS.length; index++) {
+            if (NAV_TABS[index] == startupTab()) startupPicker.setSelection(index);
+        }
         final boolean[] startupInitialized = {false};
         startupPicker.setOnItemSelectedListener(new android.widget.AdapterView.OnItemSelectedListener() {
             @Override public void onItemSelected(android.widget.AdapterView<?> parent, View view,
@@ -1887,7 +1821,7 @@ public class MainActivity extends Activity {
                     startupInitialized[0] = true;
                     return;
                 }
-                store.edit().putInt(STARTUP_TAB, validTab(position)).apply();
+                store.edit().putInt(STARTUP_TAB, NAV_TABS[position]).apply();
             }
 
             @Override public void onNothingSelected(android.widget.AdapterView<?> parent) {}
@@ -4362,7 +4296,8 @@ public class MainActivity extends Activity {
         boolean visible = currentTab == TAB_HOME
                 || ("grades".equals(target) && currentTab == TAB_GRADES)
                 || ("schedule".equals(target)
-                    && (currentTab == TAB_SCHEDULE || currentTab == TAB_MANAGE))
+                    && (currentTab == TAB_SCHEDULE || currentTab == TAB_MANAGE
+                        || currentTab == TAB_MATTERS))
                 || ("bus".equals(target) && currentTab == TAB_HOME);
         if (visible) showTab(currentTab);
     }
@@ -4442,7 +4377,7 @@ public class MainActivity extends Activity {
         initialSyncInProgress = false;
         scheduleAllAutomaticUpdates(30_000L);
         syncBackgroundService();
-        if (currentTab >= TAB_HOME && currentTab <= TAB_MANAGE) showTab(currentTab);
+        if (currentTab != TAB_SETTINGS) showTab(currentTab);
         String message;
         if (initialSyncFailures.isEmpty()) {
             message = initialElectricityDeferred
@@ -4801,6 +4736,7 @@ public class MainActivity extends Activity {
         scheduleMonthAnchor = LocalDate.now();
         Arrays.fill(tabScrollPositions, 0);
         AxxtSession.clearToken(this, store);
+        NetworkFeeSession.clear(store);
         store.edit()
                 .remove("login_credentials")
                 .remove("credentials_verified")
@@ -5848,9 +5784,10 @@ public class MainActivity extends Activity {
         Button button = action(text, false);
         boolean electricity = "电费".equals(text);
         boolean bus = "校车".equals(text);
+        boolean networkFee = "网费".equals(text);
         int accent = electricity ? electricityAccentColor() : bus ? busAccentColor() : primaryColor();
         int iconResource = electricity ? R.drawable.ic_electricity
-                : bus ? R.drawable.ic_bus : R.drawable.ic_grades;
+                : bus ? R.drawable.ic_bus : networkFee ? R.drawable.ic_network : R.drawable.ic_grades;
         android.graphics.drawable.Drawable icon = getDrawable(iconResource);
         if (icon != null) {
             icon = icon.mutate();

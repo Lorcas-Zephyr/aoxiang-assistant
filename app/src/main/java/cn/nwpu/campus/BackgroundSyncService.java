@@ -163,7 +163,7 @@ public class BackgroundSyncService extends Service {
     private void beginCollection() {
         if (NetworkFeeSync.TARGET.equals(target)) {
             new Thread(() -> {
-                NetworkFeeSync.Result result = NetworkFeeSync.fetch();
+                NetworkFeeSync.Result result = NetworkFeeSync.fetch(store);
                 handler.post(() -> {
                     if (!running) return;
                     if (!store.getBoolean(NetworkFeeSync.KEY_READY, false)) {

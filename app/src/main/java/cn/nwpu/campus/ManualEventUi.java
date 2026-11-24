@@ -10,6 +10,7 @@ import android.view.Gravity;
 import android.view.View;
 import android.widget.Button;
 import android.widget.EditText;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
@@ -81,6 +82,16 @@ final class ManualEventUi {
         button.setBackground(border(filled ? primaryColor() : panelColor(),
                 filled ? primaryColor() : lineColor(), 5));
         button.setStateListAnimator(null);
+        return button;
+    }
+
+    ImageView iconButton(int resource, String description) {
+        ImageView button = new ImageView(activity);
+        button.setImageResource(resource);
+        button.setColorFilter(primaryColor());
+        button.setContentDescription(description);
+        button.setPadding(dp(9), dp(9), dp(9), dp(9));
+        button.setBackground(border(panelColor(), lineColor(), 8));
         return button;
     }
 

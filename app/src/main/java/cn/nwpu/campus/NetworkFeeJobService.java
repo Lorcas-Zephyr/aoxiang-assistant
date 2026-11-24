@@ -58,7 +58,7 @@ public final class NetworkFeeJobService extends JobService {
         activeJob = params;
         showProgress();
         new Thread(() -> {
-            NetworkFeeSync.Result result = NetworkFeeSync.fetch();
+            NetworkFeeSync.Result result = NetworkFeeSync.fetch(store);
             handler.post(() -> {
                 if (activeJob != params) return;
                 activeJob = null;

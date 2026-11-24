@@ -7,7 +7,7 @@ if (keystorePropertiesFile.exists()) {
 }
 
 android { namespace "cn.nwpu.campus"; compileSdk 35
-    defaultConfig { applicationId "cn.nwpu.campus"; minSdk 26; targetSdk 35; versionCode 24; versionName "2.5.0" }
+    defaultConfig { applicationId "cn.nwpu.campus"; minSdk 26; targetSdk 35; versionCode 25; versionName "2.6.0" }
 
     signingConfigs {
         release {

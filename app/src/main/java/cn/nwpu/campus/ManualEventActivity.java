@@ -9,6 +9,7 @@ import android.view.Gravity;
 import android.view.View;
 import android.view.Window;
 import android.widget.Button;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
@@ -93,10 +94,9 @@ public class ManualEventActivity extends Activity {
         bar.setGravity(Gravity.CENTER_VERTICAL);
         bar.setPadding(ui.dp(12), ui.dp(10), ui.dp(12), ui.dp(6));
 
-        Button back = ui.action("←", false);
-        back.setContentDescription("返回");
+        ImageView back = ui.iconButton(R.drawable.ic_arrow_back, "返回");
         back.setOnClickListener(v -> finish());
-        bar.addView(back, new LinearLayout.LayoutParams(ui.dp(46), ui.dp(40)));
+        bar.addView(back, new LinearLayout.LayoutParams(ui.dp(40), ui.dp(40)));
 
         TextView title = ui.label("手动日程", 20, ui.textColor());
         title.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
@@ -109,7 +109,7 @@ public class ManualEventActivity extends Activity {
         bar.addView(add, new LinearLayout.LayoutParams(ui.dp(92), ui.dp(40)));
         root.addView(bar);
 
-        TextView hint = ui.label("一次性或每周重复的自定义日程，保存后可在首页和日程页查看。",
+        TextView hint = ui.label("一次性或每周重复的自定义日程，保存后可在事项页和课表查看。",
                 11, ui.mutedColor());
         hint.setPadding(ui.dp(20), 0, ui.dp(20), ui.dp(4));
         root.addView(hint);

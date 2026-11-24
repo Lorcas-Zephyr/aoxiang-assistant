@@ -281,7 +281,7 @@ public class ChecklistActivity extends Activity {
         title.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
         title.setGravity(Gravity.CENTER);
         empty.addView(title);
-        TextView hint = ui.label("把要交的作业、要买的东西或近期目标拆成事项，\n设置截止时间后会在首页倒计时。",
+        TextView hint = ui.label("把要交的作业、要买的东西或近期目标拆成事项，\n设置截止时间后会在事项页倒计时。",
                 12, ui.mutedColor());
         hint.setGravity(Gravity.CENTER);
         hint.setLineSpacing(0, 1.2f);

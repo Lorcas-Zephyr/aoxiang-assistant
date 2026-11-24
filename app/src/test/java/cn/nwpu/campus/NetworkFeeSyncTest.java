@@ -20,4 +20,17 @@ public class NetworkFeeSyncTest {
         assertNull(NetworkFeeSync.parseBalance("账户余额 登录后查看 用户名2025300000"));
         assertNull(NetworkFeeSync.parseBalance("用户名 2025300000 套餐 30GB"));
     }
+
+    @Test public void savesOnlyNetworkSessionCookies() {
+        assertEquals("PHPSESSID_8800=session; _csrf-8800=csrf",
+                NetworkFeeSession.sessionCookie("portal_token=private; PHPSESSID_8800=session; "
+                        + "_csrf-8800=csrf; Domain=.nwpu.edu.cn; tracking=ignored"));
+        assertEquals("", NetworkFeeSession.sessionCookie("_csrf-8800=csrf; portal_token=private"));
+        assertEquals("", NetworkFeeSession.sessionCookie("PHPSESSID_8800=; _csrf-8800=csrf"));
+    }
+
+    @Test public void rejectsInjectedCookieHeaders() {
+        assertEquals("", NetworkFeeSession.sessionCookie("PHPSESSID_8800=session\r\nHost: other.test"));
+        assertEquals("", NetworkFeeSession.sessionCookie(null));
+    }
 }
