@@ -59,8 +59,67 @@
   const host = location.hostname;
   const sessionError = /登录信息已失效|登录状态已失效|会话.{0,8}(?:失效|过期)|身份认证已过期/.test(body);
 
+  // 账号锁定保护。只认明确的锁定提示；
+  // “账号被锁定怎么办”“如何解锁”这类帮助文案要排除，
+  // 不能因为页面有帮助链接就停掉正常登录。
+  const lockPattern = /用户账号锁定|(?:账号|账户)(?:已被|已)锁定|(?:您的|该)(?:账号|账户)被锁定|account has been locked|too many failed login attempts/i;
+  const lockHelpPattern = /(?:锁定|被锁)[^。\n]{0,8}(?:[?？]|怎么|如何|办|原因|帮助|说明)|如何解锁|怎么解锁|解锁(?:方法|流程|方式|说明)/;
+  const isLockText = (value) => {
+    const compact = text(value);
+    return !!compact && lockPattern.test(compact) && !lockHelpPattern.test(compact);
+  };
+  const LOCKED_UNTIL_KEY = "__aoxiangAssistantAccountLockedUntil";
+  const AUTH_RETRY_AFTER_KEY = "__aoxiangAssistantAuthRetryAfter";
+  const ACCOUNT_LOCKED_TTL_MS = 10 * 60 * 1000;
+  const AUTH_RETRY_COOLDOWN_MS = 15 * 1000;
+  const readSessionNumber = (key) => {
+    try {
+      const value = Number.parseFloat(sessionStorage.getItem(key) || "0");
+      return Number.isFinite(value) ? value : 0;
+    } catch (ignored) {
+      return 0;
+    }
+  };
+  const writeSessionNumber = (key, value) => {
+    try {
+      sessionStorage.setItem(key, String(value));
+    } catch (ignored) {}
+  };
+  const removeSessionValue = (key) => {
+    try {
+      sessionStorage.removeItem(key);
+    } catch (ignored) {}
+  };
+  // 锁定状态在本次会话里保留一段时间，避免同一个页面反复
+  // 触发自动填充或提交。
+  const accountLocked = () => {
+    writeSessionNumber(LOCKED_UNTIL_KEY, Date.now() + ACCOUNT_LOCKED_TTL_MS);
+    return JSON.stringify({
+      phase: "account_locked",
+      rows: [],
+      message: "账号已被锁定，请先完成统一认证解锁后再采集"
+    });
+  };
+  const lockRemembered = () => readSessionNumber(LOCKED_UNTIL_KEY) > Date.now();
+  // 普通失败也稍微缓一下，避免 SSO 页面还在刷新就再次提交。
+  const authRetryCoolingDown = () => readSessionNumber(AUTH_RETRY_AFTER_KEY) > Date.now();
+  const rememberAuthFailure = () => writeSessionNumber(AUTH_RETRY_AFTER_KEY,
+    Date.now() + AUTH_RETRY_COOLDOWN_MS);
+  const clearAuthGuard = () => {
+    removeSessionValue(LOCKED_UNTIL_KEY);
+    removeSessionValue(AUTH_RETRY_AFTER_KEY);
+  };
+  const hasPasswordField = documents.some((doc) => doc.querySelector('input[type="password"]'));
+
   if ((mode === "validate" || mode === "bootstrap") && unifiedAuthExited) {
+    clearAuthGuard();
     return JSON.stringify({ phase: "credentials_valid", rows: [] });
+  }
+
+  // 真正的锁定页通常不再显示密码框。只有这种情况才扫整页；
+  // 如果密码框还在，留到登录分支里再判断，那里才会自动填充/提交。
+  if (!hasPasswordField && isLockText(body)) {
+    return accountLocked();
   }
 
   const interactiveVerificationVisible = host === "uis.nwpu.edu.cn" && (
@@ -146,14 +205,25 @@
     !/(?:请先登录|登录信息已失效|会话.{0,8}(?:失效|过期)|身份认证已过期)/.test(body);
 
   if ((mode === "validate" || mode === "bootstrap") && protectedStudentPage) {
+    clearAuthGuard();
     return JSON.stringify({ phase: "credentials_valid", rows: [] });
   }
 
   if (loginDocument && !(mode === "electricity" && host === "yktapp.nwpu.edu.cn")) {
+    const loginBody = text(loginDocument.body ? loginDocument.body.innerText : "");
+    const feedback = text([...loginDocument.querySelectorAll(
+      '[role="alert"], [aria-live], .error, .error-message, .el-message__content, .ant-message-notice-content, [class*="error" i]'
+    )].filter(visible).map((element) => element.innerText || element.textContent || element.value).join(" "));
+    // SSO 可能保留密码框，只在提示条里显示锁定信息。
+    // 这种情况要在点标签/自动填充之前直接退出。
+    if (isLockText([loginBody, feedback].join(" "))) {
+      return accountLocked();
+    }
     if (mode === "bootstrap") {
       return JSON.stringify({ phase: "interactive_login", rows: [] });
     }
-    const loginBody = text(loginDocument.body ? loginDocument.body.innerText : "");
+    const authLocked = lockRemembered();
+    const authCoolingDown = authRetryCoolingDown();
     const passwordTab = [...loginDocument.querySelectorAll("body *")].find((element) =>
       element.children.length === 0 && visible(element) && /^(账号密码|密码登录|User-Password)$/i.test(text(element.innerText)));
     if (passwordTab) clickElement(passwordTab);
@@ -162,17 +232,18 @@
       const descriptor = text([input.name, input.id, input.placeholder, input.type].join(" "));
       return visible(input) && input !== passwordInput && /sms|message|verify|code|验证码|动态码/.test(descriptor);
     });
-    const feedback = text([...loginDocument.querySelectorAll(
-      '[role="alert"], [aria-live], .error, .error-message, .el-message__content, .ant-message-notice-content, [class*="error" i]'
-    )].filter(visible).map((element) => element.innerText || element.textContent || element.value).join(" "));
     const authText = text([loginBody, feedback, passwordInput && passwordInput.validationMessage].join(" "));
     const asksForSms = /短信|手机验证码|动态验证码/.test(loginBody) && smsField;
     if (/(?:验证码|动态码|校验码).{0,8}(?:错误|有误|不正确|无效|已失效|失败)|invalid.{0,8}(?:captcha|verification|sms).{0,8}code/i.test(authText)) {
+      rememberAuthFailure();
       return JSON.stringify({ phase: "sms_error", rows: [] });
     }
     if (asksForSms) {
       if (collectionMode) {
         return JSON.stringify({ phase: "interactive_login", rows: [] });
+      }
+      if (authLocked) {
+        return accountLocked();
       }
       if (canFillSms && smsCode) {
         setValue(smsField, smsCode);
@@ -186,11 +257,22 @@
       (passwordInput.getAttribute("aria-invalid") === "true" || /(?:^|\s)(?:error|invalid)(?:\s|$)/i.test(passwordInput.className || ""));
     if (invalidPasswordField ||
         /(?:账号|账户|用户名|用户|学号).{0,12}(?:或|和|\/)?\s*密码.{0,12}(?:错误|有误|不正确|无效|失败)|密码.{0,12}(?:错误|有误|不正确|无效)|(?:错误|无效)的?(?:账号|账户|用户名|用户|学号|密码)|(?:账号|账户|用户名|用户|学号).{0,8}(?:不存在|未注册)|登录失败|认证失败|凭据.{0,8}(?:错误|有误|无效)|invalid.{0,12}(?:username|account|password|credential)|incorrect.{0,12}(?:username|account|password|credential)|bad credentials|authentication failed|credentials you provided.{0,24}authentic|unable to log you in/i.test(authText)) {
+      rememberAuthFailure();
       return JSON.stringify({ phase: "credentials_error", rows: [] });
     }
     const usernameInput = [...loginDocument.querySelectorAll('input[name="username"], #username, input[type="text"], input[type="tel"], input[type="email"]')]
       .find((input) => visible(input) && input !== passwordInput);
     if (canAutofill && username && password && usernameInput && passwordInput) {
+      if (authLocked) {
+        return accountLocked();
+      }
+      // 登录失败后短暂冷却。即使调用方重置了 canAutofill，
+      // 也不要马上重复提交同一份凭据。
+      if (authCoolingDown) {
+        // 冷却期间返回普通页面状态，不要报成凭据错误，
+        // 否则调用方会反复弹登录框。这里不写值，也不提交。
+        return JSON.stringify({ phase: "page", rows: [] });
+      }
       setValue(usernameInput, username);
       setValue(passwordInput, password);
       const submit = findButton(loginDocument, /登录|login|提交/i);

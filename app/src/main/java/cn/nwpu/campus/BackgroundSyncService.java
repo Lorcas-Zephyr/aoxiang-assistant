@@ -332,6 +332,11 @@ public class BackgroundSyncService extends Service {
                         String raw = new JSONArray("[" + result + "]").getString(0);
                         JSONObject payload = new JSONObject(raw);
                         String phase = payload.optString("phase");
+                        // 锁定后不要再走普通重试流程，后台任务到此为止。
+                        if ("account_locked".equals(phase)) {
+                            handleAccountLocked();
+                            return;
+                        }
                         if ("credentials_pending".equals(phase)) {
                             if (AuthenticationPolicy.shouldWaitForCredentialRedirect(
                                     phase, credentialsSubmittedAt[0], System.currentTimeMillis())) {
@@ -819,6 +824,29 @@ public class BackgroundSyncService extends Service {
                 .setContentIntent(pending);
         NotificationManager manager = getSystemService(NotificationManager.class);
         if (manager != null) manager.notify(1006, builder.build());
+    }
+
+    /**
+     * 锁定后把状态落盘：关掉自动更新、把凭据标记为未验证，
+     * 发一条通知再停服务。用户要先去官方渠道解锁，才能重新登录。
+     */
+    private void handleAccountLocked() {
+        store.edit()
+                .putBoolean("credentials_verified", false)
+                .putBoolean(INTERACTIVE_AUTH_REQUIRED, true)
+                .putString(INTERACTIVE_AUTH_TARGET, target == null ? "validate" : target)
+                .putBoolean("auto_grade_enabled", false)
+                .putBoolean("auto_schedule_enabled", false)
+                .putBoolean("auto_electricity_enabled", false)
+                .putBoolean("auto_bus_enabled", false)
+                .apply();
+        BackgroundSyncScheduler.cancel(this);
+        sendAuthenticationNotification("账号已被锁定，自动更新已暂停，请等待解锁后用官方 App 登录");
+        running = false;
+        destroyWebView();
+        releaseWakeLock();
+        stopForeground(STOP_FOREGROUND_REMOVE);
+        stopSelf();
     }
 
     private void requireInteractiveLogin() {
