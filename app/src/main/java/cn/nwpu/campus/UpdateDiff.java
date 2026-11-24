@@ -8,6 +8,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.TreeSet;
+import java.util.Locale;
 
 final class UpdateDiff {
     static final class Item {
@@ -54,25 +56,87 @@ final class UpdateDiff {
     }
 
     static List<Item> scheduleItems(List<ScheduleModels.Course> courses) {
-        List<Item> items = new ArrayList<>();
-        if (courses == null) return items;
+        Map<String, ScheduleAggregate> grouped = new LinkedHashMap<>();
+        if (courses == null) return new ArrayList<>();
         for (ScheduleModels.Course course : courses) {
-            List<String> slots = new ArrayList<>();
+            if (course == null) continue;
+            String name = normalizeText(course.name);
+            String code = normalizeText(course.code).toUpperCase(Locale.ROOT);
+            String identity = code.isEmpty() ? name : code;
+            String key = clean(course.semesterId) + "|" + identity;
+            if (identity.isEmpty()) continue;
+            ScheduleAggregate aggregate = grouped.computeIfAbsent(key, unused -> new ScheduleAggregate());
+            if (!name.isEmpty()) aggregate.names.add(name);
+            if (!code.isEmpty()) aggregate.codes.add(code);
             if (course.timeSlots != null) {
                 for (ScheduleModels.TimeSlot slot : course.timeSlots) {
-                    slots.add(clean(slot.weekRange) + ":" + slot.repeatRule.name() + ":"
-                            + slot.dayOfWeek + ":" + slot.classSections + ":"
-                            + clean(slot.location) + ":" + clean(slot.teacher));
+                    if (slot == null) continue;
+                    Set<Integer> weeks = effectiveWeeks(slot);
+                    Set<Integer> sections = new TreeSet<>();
+                    if (slot.classSections != null) sections.addAll(slot.classSections);
+                    String location = normalizeText(ScheduleModels.cleanLocationText(
+                            slot.location == null ? course.location : slot.location));
+                    String teacher = canonicalPeople(slot.teacher == null ? course.teacher : slot.teacher).toString();
+                    if (weeks.isEmpty()) {
+                        // Invalid/legacy ranges should still participate in the diff instead of
+                        // silently disappearing from the signature.
+                        aggregate.slots.add("unparsed:" + normalizeText(slot.weekRange) + ":"
+                                + slot.dayOfWeek + ":" + sections + ":" + location + ":" + teacher);
+                        continue;
+                    }
+                    // Compare the actual weekly meetings, not the portal's grouping of them.
+                    // The portal may alternate between one range and several rows, or encode
+                    // odd/even occurrences as either a repeat rule or explicit week numbers.
+                    for (Integer week : weeks) {
+                        for (Integer section : sections) {
+                            aggregate.slots.add(week + ":" + slot.dayOfWeek + ":" + section
+                                    + ":" + location + ":" + teacher);
+                        }
+                    }
                 }
             }
-            Collections.sort(slots);
-            String identity = clean(course.code).isEmpty() ? clean(course.name) : clean(course.code);
-            String key = clean(course.semesterId) + "|" + identity;
-            String signature = clean(course.name) + "|" + clean(course.code) + "|"
-                    + clean(course.location) + "|" + clean(course.teacher) + "|" + slots;
-            items.add(new Item(key, course.name, signature));
+        }
+        List<Item> items = new ArrayList<>();
+        for (Map.Entry<String, ScheduleAggregate> entry : grouped.entrySet()) {
+            ScheduleAggregate value = entry.getValue();
+            String signature = value.names + "|" + value.codes + "|" + value.slots;
+            items.add(new Item(entry.getKey(), join(value.names), signature));
         }
         return items;
+    }
+
+    private static final class ScheduleAggregate {
+        final Set<String> names = new TreeSet<>();
+        final Set<String> codes = new TreeSet<>();
+        final Set<String> slots = new TreeSet<>();
+    }
+
+    private static Set<Integer> effectiveWeeks(ScheduleModels.TimeSlot slot) {
+        Set<Integer> weeks = new TreeSet<>();
+        ScheduleModels.RepeatRule rule = slot.repeatRule == null
+                ? ScheduleModels.RepeatRule.ALL : slot.repeatRule;
+        for (Integer week : ScheduleUtils.parseWeeks(slot.weekRange)) {
+            if (ScheduleUtils.matchesRepeatRule(week, rule)) weeks.add(week);
+        }
+        return weeks;
+    }
+
+    private static Set<String> canonicalPeople(String value) {
+        Set<String> people = new TreeSet<>();
+        if (value == null) return people;
+        for (String part : value.split("[,，、;/；|｜\\s]+")) {
+            String cleaned = normalizeText(part);
+            if (!cleaned.isEmpty()) people.add(cleaned);
+        }
+        return people;
+    }
+
+    private static String join(Set<String> values) {
+        return String.join("、", values);
+    }
+
+    private static String normalizeText(String value) {
+        return value == null ? "" : value.trim().replaceAll("\\s+", " ");
     }
 
     private static Map<String, Item> index(List<Item> items) {
