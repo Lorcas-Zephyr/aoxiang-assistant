@@ -246,6 +246,7 @@ public class MainActivity extends Activity {
     private Runnable scheduledUpdateTask;
 
     private List<GradeRecord> grades = new ArrayList<>();
+    private List<ManualEvent> manualEvents = new ArrayList<>();
     private List<ScheduleModels.Semester> semesters = new ArrayList<>();
     private List<ScheduleModels.Course> courses = new ArrayList<>();
     private LocalDate scheduleMonthAnchor = LocalDate.now();
@@ -273,6 +274,7 @@ public class MainActivity extends Activity {
         portraitGpa = parseStoredDouble(PORTRAIT_GPA, Double.NaN);
         semesters = ScheduleStorage.loadSemesters(store);
         courses = ScheduleStorage.loadCourses(store);
+        manualEvents = ManualEventStore.load(store);
         if (normalizeSemesterSectionTimes() | normalizeSemesterStartDates()) {
             ScheduleStorage.saveSemesters(store, semesters);
         }
@@ -352,6 +354,7 @@ public class MainActivity extends Activity {
         super.onResume();
         if (!silentBoot && root != null) root.postDelayed(this::openRequiredInteractiveLogin, 250L);
         refreshAutomaticUpdatePanelIfVisible();
+        refreshCustomData();
         checkBusDepartureReminders();
         if (root != null && backgroundPermissionActivityPending) {
             backgroundPermissionActivityPending = false;
@@ -802,7 +805,155 @@ public class MainActivity extends Activity {
         } else {
             for (ScheduleModels.Exam exam : exams) l.addView(examRow(exam));
         }
+        // 手动日程放在今日课程后面，先保证课表信息。
+        addHomeManualEvents(l);
+    }
 
+    /** 从编辑页回来时重新读取本地数据。 */
+    private void refreshCustomData() {
+        manualEvents = ManualEventStore.load(store);
+        if (root != null && !silentBoot
+                && (currentTab == TAB_HOME || currentTab == TAB_SCHEDULE)) {
+            showTab(currentTab, true);
+        }
+    }
+
+    /** 打开手动日程页。 */
+    private void openManualEvents() {
+        startActivity(new Intent(this, ManualEventActivity.class));
+    }
+
+    private void addHomeManualEvents(LinearLayout parent) {
+        List<ManualEvent> todayEvents = ManualEventStore.onDate(manualEvents, LocalDate.now());
+        LinearLayout header = sectionHeader("今日日程");
+        Button all = syncButton("全部", "管理手动日程");
+        all.setOnClickListener(v -> openManualEvents());
+        header.addView(all, new LinearLayout.LayoutParams(dp(64), dp(36)));
+        parent.addView(header);
+        if (todayEvents.isEmpty()) {
+            LinearLayout empty = card(panelColor());
+            empty.addView(label("今天没有日程", 13, mutedColor()));
+            addGap(empty, 8);
+            Button add = action("添加日程", false);
+            add.setOnClickListener(v -> openManualEvents());
+            empty.addView(add, new LinearLayout.LayoutParams(-1, dp(40)));
+            parent.addView(empty);
+            return;
+        }
+        for (ManualEvent event : todayEvents) parent.addView(manualEventHomeRow(event));
+    }
+
+    private View manualEventHomeRow(ManualEvent event) {
+        LinearLayout row = card(panelColor());
+        row.setPadding(dp(14), dp(10), dp(12), dp(10));
+        LinearLayout titleRow = new LinearLayout(this);
+        titleRow.setGravity(Gravity.CENTER_VERTICAL);
+        TextView dot = label("●", 11, parseColorSafe(event.color, Color.parseColor(ManualEvent.DEFAULT_COLOR)));
+        titleRow.addView(dot, new LinearLayout.LayoutParams(dp(18), -2));
+        TextView title = label(event.title, 14, textColor());
+        title.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        titleRow.addView(title, new LinearLayout.LayoutParams(0, -2, 1));
+        TextView time = label(event.timeRange(), 11, primaryColor());
+        titleRow.addView(time);
+        row.addView(titleRow);
+        TextView meta = label(event.repeatLabel() + (event.note == null || event.note.trim().isEmpty()
+                ? "" : " · " + event.note.trim()), 11, mutedColor());
+        meta.setPadding(dp(18), dp(4), 0, 0);
+        row.addView(meta);
+        row.setOnClickListener(v -> openManualEvents());
+        return row;
+    }
+
+    private void addManualEventOverlays(FrameLayout dayFrame, LocalDate date,
+                                        ScheduleModels.Semester semester, int sectionHeight) {
+        List<ManualEvent> events = ManualEventStore.onDate(manualEvents, date);
+        if (events.isEmpty()) return;
+        for (ManualEvent event : events) {
+            int startSection = sectionForEventTime(semester, event.localStartTime(), false);
+            int endSection = sectionForEventTime(semester, event.localEndTime(), true);
+            if (endSection < startSection) endSection = startSection;
+            startSection = Math.max(1, Math.min(semester.sectionCount, startSection));
+            endSection = Math.max(startSection, Math.min(semester.sectionCount, endSection));
+            int top = (startSection - 1) * sectionHeight + dp(2);
+            int height = Math.max(dp(34), (endSection - startSection + 1) * sectionHeight - dp(4));
+            LinearLayout block = new LinearLayout(this);
+            block.setOrientation(LinearLayout.VERTICAL);
+            block.setPadding(dp(4), dp(3), dp(4), dp(3));
+            int color = parseColorSafe(event.color, Color.parseColor(ManualEvent.DEFAULT_COLOR));
+            block.setBackground(border(colorWithAlpha(color, 190), color, 5));
+            block.setAlpha(0.94f);
+            TextView title = label("日程 · " + event.title, 8, Color.WHITE);
+            title.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+            title.setMaxLines(2);
+            block.addView(title);
+            TextView time = label(event.timeRange(), 7, Color.WHITE);
+            block.addView(time);
+            block.setOnClickListener(v -> openManualEvents());
+            FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(-1, height);
+            params.topMargin = top;
+            params.leftMargin = dp(1);
+            params.rightMargin = dp(1);
+            dayFrame.addView(block, params);
+        }
+    }
+
+    private int sectionForEventTime(ScheduleModels.Semester semester, java.time.LocalTime time, boolean end) {
+        int minute = time.getHour() * 60 + time.getMinute();
+        int fallback = 1;
+        for (int i = 0; i < semester.sectionTimes.size(); i++) {
+            ScheduleModels.SectionTime slot = semester.sectionTimes.get(i);
+            int start = parseClockMinutes(slot.start);
+            int finish = parseClockMinutes(slot.end);
+            if (minute >= start && minute <= finish) return i + 1;
+            if (minute < start) return Math.max(1, i == 0 ? 1 : i);
+            fallback = i + 1;
+        }
+        return fallback;
+    }
+
+    private int parseClockMinutes(String value) {
+        try {
+            String[] parts = value.split(":");
+            return Integer.parseInt(parts[0]) * 60 + Integer.parseInt(parts[1]);
+        } catch (Exception ignored) {
+            return 0;
+        }
+    }
+
+    private void addWeekManualEvents(LinearLayout parent, ScheduleModels.Semester semester) {
+        int week = currentScheduleWeek(semester);
+        LocalDate weekStart = weekStartForSelection(semester, week);
+        LinearLayout header = sectionHeader("本周日程");
+        Button all = syncButton("全部", "管理手动日程");
+        all.setOnClickListener(v -> openManualEvents());
+        header.addView(all, new LinearLayout.LayoutParams(dp(64), dp(36)));
+        parent.addView(header);
+        boolean any = false;
+        for (int offset = 0; offset < 7; offset++) {
+            LocalDate date = weekStart.plusDays(offset);
+            List<ManualEvent> events = ManualEventStore.onDate(manualEvents, date);
+            for (ManualEvent event : events) {
+                any = true;
+                LinearLayout row = card(panelColor());
+                row.setPadding(dp(14), dp(8), dp(12), dp(8));
+                LinearLayout line = new LinearLayout(this);
+                line.setGravity(Gravity.CENTER_VERTICAL);
+                TextView day = label(ManualEvent.formatDateLabel(date), 11, primaryColor());
+                line.addView(day, new LinearLayout.LayoutParams(0, -2, 1));
+                TextView time = label(event.timeRange(), 11, mutedColor());
+                line.addView(time);
+                row.addView(line);
+                TextView title = label(event.title, 13, textColor());
+                title.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+                row.addView(title);
+                if (event.note != null && !event.note.trim().isEmpty()) {
+                    row.addView(label(event.note.trim(), 10, mutedColor()));
+                }
+                row.setOnClickListener(v -> openManualEvents());
+                parent.addView(row);
+            }
+        }
+        if (!any) parent.addView(emptyHint("本周没有手动日程"));
     }
 
     private void schedulePage() {
@@ -818,6 +969,10 @@ public class MainActivity extends Activity {
 
         LinearLayout header = pageHeader("课表", "一周课程总览");
         header.setPadding(dp(8), 0, dp(8), dp(12));
+        Button manualEventsButton = syncButton("日程", "管理手动日程");
+        manualEventsButton.setOnClickListener(v -> openManualEvents());
+        header.addView(manualEventsButton, new LinearLayout.LayoutParams(dp(64), dp(36)));
+        addHorizontalGap(header, 8);
         ImageView updateSchedule = iconButton(R.drawable.ic_sync, "手动更新课表");
         updateSchedule.setOnClickListener(v -> openPortal("schedule", false));
         header.addView(updateSchedule, new LinearLayout.LayoutParams(dp(40), dp(40)));
@@ -929,6 +1084,9 @@ public class MainActivity extends Activity {
         tools.addView(examSwitch);
         l.addView(tools);
 
+        // 本周日程先列一遍，具体时段再叠到下面的课表格子里。
+        addWeekManualEvents(l, semester);
+
         addGap(l, 12);
         scheduleViewport = new FrameLayout(this);
         scheduleViewport.setClipChildren(true);
@@ -996,6 +1154,14 @@ public class MainActivity extends Activity {
         content.addView(scroll);
 
         l.addView(pageHeader("管理", "课程、学期与数据工具"));
+
+        // 本地工具单独放，不混在教务数据里。
+        l.addView(section("日程与清单"));
+        LinearLayout customCard = card(panelColor());
+        customCard.setPadding(dp(14), 0, dp(8), 0);
+        addActionNavigation(customCard, "手动日程", "添加一次性、每周重复日程并检查冲突",
+                R.drawable.ic_sync, this::openManualEvents, false);
+        l.addView(customCard);
 
         l.addView(section("课程数据"));
         LinearLayout syncCard = card(panelColor());
@@ -1652,7 +1818,11 @@ public class MainActivity extends Activity {
                     section += span;
                 }
             }
-            body.addView(dayColumn, new LinearLayout.LayoutParams(0, -2, 1));
+            FrameLayout dayFrame = new FrameLayout(this);
+            dayFrame.addView(dayColumn, new FrameLayout.LayoutParams(-1, -2));
+            // 把当天的日程叠在课程格子上。
+            addManualEventOverlays(dayFrame, weekStart.plusDays(day - 1), semester, sectionHeight);
+            body.addView(dayFrame, new LinearLayout.LayoutParams(0, -2, 1));
         }
         board.addView(body);
         wrap.addView(board, new LinearLayout.LayoutParams(-1, -2));
