@@ -247,6 +247,15 @@ public class MainActivity extends Activity {
 
     private List<GradeRecord> grades = new ArrayList<>();
     private List<ManualEvent> manualEvents = new ArrayList<>();
+    private List<Checklist> checklists = new ArrayList<>();
+    private final List<Checklist> checklistCountdownModels = new ArrayList<>();
+    private final List<TextView> checklistCountdownViews = new ArrayList<>();
+    private final Runnable checklistTicker = new Runnable() {
+        @Override public void run() {
+            updateChecklistCountdowns();
+            if (root != null && !checklistCountdownViews.isEmpty()) root.postDelayed(this, 1000L);
+        }
+    };
     private List<ScheduleModels.Semester> semesters = new ArrayList<>();
     private List<ScheduleModels.Course> courses = new ArrayList<>();
     private LocalDate scheduleMonthAnchor = LocalDate.now();
@@ -275,6 +284,9 @@ public class MainActivity extends Activity {
         semesters = ScheduleStorage.loadSemesters(store);
         courses = ScheduleStorage.loadCourses(store);
         manualEvents = ManualEventStore.load(store);
+        checklists = ChecklistStore.load(store);
+        ChecklistReminderScheduler.ensureChannel(this);
+        ChecklistReminderScheduler.rescheduleAll(this);
         if (normalizeSemesterSectionTimes() | normalizeSemesterStartDates()) {
             ScheduleStorage.saveSemesters(store, semesters);
         }
@@ -367,6 +379,7 @@ public class MainActivity extends Activity {
     @Override
     protected void onStop() {
         unregisterDataUpdateReceiver();
+        if (root != null) root.removeCallbacks(checklistTicker);
         activityVisible = false;
         cancelScheduledUpdates();
         // Let the alarm/service take over when the app leaves the foreground.
@@ -807,11 +820,14 @@ public class MainActivity extends Activity {
         }
         // 手动日程放在今日课程后面，先保证课表信息。
         addHomeManualEvents(l);
+        // 清单是本地数据，放在今日课程后面。
+        addHomeChecklists(l);
     }
 
     /** 从编辑页回来时重新读取本地数据。 */
     private void refreshCustomData() {
         manualEvents = ManualEventStore.load(store);
+        checklists = ChecklistStore.load(store);
         if (root != null && !silentBoot
                 && (currentTab == TAB_HOME || currentTab == TAB_SCHEDULE)) {
             showTab(currentTab, true);
@@ -841,6 +857,34 @@ public class MainActivity extends Activity {
             return;
         }
         for (ManualEvent event : todayEvents) parent.addView(manualEventHomeRow(event));
+    }
+
+    /** 打开清单页。 */
+    private void openChecklists() {
+        startActivity(new Intent(this, ChecklistActivity.class));
+    }
+
+    private void addHomeChecklists(LinearLayout parent) {
+        checklists = ChecklistStore.load(store);
+        LinearLayout header = sectionHeader("清单倒计时");
+        Button all = syncButton("全部", "管理清单");
+        all.setOnClickListener(v -> openChecklists());
+        header.addView(all, new LinearLayout.LayoutParams(dp(64), dp(36)));
+        parent.addView(header);
+        checklistCountdownModels.clear();
+        checklistCountdownViews.clear();
+        if (checklists.isEmpty()) {
+            LinearLayout empty = card(panelColor());
+            empty.addView(label("还没有清单", 13, mutedColor()));
+            addGap(empty, 8);
+            Button add = action("新建清单", false);
+            add.setOnClickListener(v -> openChecklists());
+            empty.addView(add, new LinearLayout.LayoutParams(-1, dp(40)));
+            parent.addView(empty);
+            return;
+        }
+        for (Checklist checklist : checklists) addChecklistHomeCard(parent, checklist);
+        startChecklistTicker();
     }
 
     private View manualEventHomeRow(ManualEvent event) {
@@ -954,6 +998,85 @@ public class MainActivity extends Activity {
             }
         }
         if (!any) parent.addView(emptyHint("本周没有手动日程"));
+    }
+
+    private void addChecklistHomeCard(LinearLayout parent, Checklist checklist) {
+        LinearLayout card = card(panelColor());
+        card.setPadding(dp(14), dp(12), dp(14), dp(12));
+        LinearLayout titleRow = new LinearLayout(this);
+        titleRow.setGravity(Gravity.CENTER_VERTICAL);
+        TextView title = label(checklist.title, 14, textColor());
+        title.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        titleRow.addView(title, new LinearLayout.LayoutParams(0, -2, 1));
+        TextView countdown = label(checklist.compactCountdownText(System.currentTimeMillis()),
+                11, deadlineColor(checklist));
+        titleRow.addView(countdown);
+        card.addView(titleRow);
+        TextView meta = label(checklist.doneCount() + "/" + checklist.items.size()
+                + " 已完成 · 截止 " + checklist.deadlineDisplay(), 10, mutedColor());
+        meta.setPadding(0, dp(4), 0, 0);
+        card.addView(meta);
+        addGap(card, 7);
+        card.addView(checklistProgressBar(checklist.progress()),
+                new LinearLayout.LayoutParams(-1, dp(5)));
+        addGap(card, 7);
+        card.addView(checklistItemPreview(checklist));
+        card.setOnClickListener(v -> openChecklists());
+        checklistCountdownModels.add(checklist);
+        checklistCountdownViews.add(countdown);
+        parent.addView(card);
+    }
+
+    private LinearLayout checklistItemPreview(Checklist checklist) {
+        LinearLayout preview = new LinearLayout(this);
+        preview.setOrientation(LinearLayout.VERTICAL);
+        if (checklist.items.isEmpty()) {
+            preview.addView(label("还没有事项，点开清单添加", 11, mutedColor()));
+            return preview;
+        }
+        int shown = Math.min(3, checklist.items.size());
+        for (int i = 0; i < shown; i++) {
+            Checklist.Item item = checklist.items.get(i);
+            TextView row = label((item.done ? "☑ " : "☐ ") + item.text, 11,
+                    item.done ? mutedColor() : textColor());
+            row.setPadding(0, dp(2), 0, dp(2));
+            preview.addView(row);
+        }
+        if (checklist.items.size() > shown) {
+            preview.addView(label("还有 " + (checklist.items.size() - shown) + " 项", 10, mutedColor()));
+        }
+        return preview;
+    }
+
+    private View checklistProgressBar(float fraction) {
+        ProgressBar bar = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
+        bar.setMax(100);
+        bar.setProgress(Math.round(Math.max(0f, Math.min(1f, fraction)) * 100f));
+        return bar;
+    }
+
+    private void startChecklistTicker() {
+        if (root == null) return;
+        root.removeCallbacks(checklistTicker);
+        if (!checklistCountdownViews.isEmpty()) root.postDelayed(checklistTicker, 1000L);
+    }
+
+    private void updateChecklistCountdowns() {
+        long now = System.currentTimeMillis();
+        for (int i = 0; i < checklistCountdownViews.size()
+                && i < checklistCountdownModels.size(); i++) {
+            TextView view = checklistCountdownViews.get(i);
+            Checklist checklist = checklistCountdownModels.get(i);
+            if (view == null || checklist == null || view.getParent() == null) continue;
+            view.setText(checklist.compactCountdownText(now));
+            view.setTextColor(deadlineColor(checklist));
+        }
+    }
+
+    private int deadlineColor(Checklist checklist) {
+        if (checklist.allDone()) return Color.parseColor("#2E7D32");
+        if (checklist.deadlineMillis() <= System.currentTimeMillis()) return Color.parseColor("#D32F2F");
+        return mutedColor();
     }
 
     private void schedulePage() {
@@ -1161,6 +1284,8 @@ public class MainActivity extends Activity {
         customCard.setPadding(dp(14), 0, dp(8), 0);
         addActionNavigation(customCard, "手动日程", "添加一次性、每周重复日程并检查冲突",
                 R.drawable.ic_sync, this::openManualEvents, false);
+        addActionNavigation(customCard, "清单", "多清单、条目勾选、截止倒计时与提醒",
+                R.drawable.ic_nav_manage, this::openChecklists, false);
         l.addView(customCard);
 
         l.addView(section("课程数据"));
