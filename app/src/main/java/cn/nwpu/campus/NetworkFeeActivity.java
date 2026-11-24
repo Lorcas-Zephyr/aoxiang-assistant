@@ -11,7 +11,6 @@ import android.os.Handler;
 import android.os.Looper;
 import android.view.Gravity;
 import android.view.View;
-import android.view.ViewGroup;
 import android.webkit.CookieManager;
 import android.webkit.WebChromeClient;
 import android.webkit.WebSettings;
@@ -26,13 +25,10 @@ import android.widget.Toast;
 
 import org.json.JSONArray;
 
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
-
 /** 校园网自助页。登录后从页面里抓余额存到本地，首页卡片直接读；不处理账号密码，Cookie 由 WebView 自己管。 */
 public class NetworkFeeActivity extends Activity {
     // 自助首页和提取脚本。余额面板可能在 iframe 里，所以脚本要遍历子 frame。
-    private static final String URL = "https://zizhu.nwpu.edu.cn:8900/home";
+    private static final String URL = NetworkFeeSync.HOME;
     private static final String BALANCE_JS =
             "(function(){var t=document.body?document.body.innerText:'';" +
             "for(var i=0;i<window.frames.length;i++){try{var d=window.frames[i].document;" +
@@ -43,13 +39,14 @@ public class NetworkFeeActivity extends Activity {
     private final Runnable captureTask = new Runnable() {
         @Override public void run() {
             captureBalance();
-            if (++captureAttempts < 12) handler.postDelayed(this, 2000L);
+            if (!completed && ++captureAttempts < 12) handler.postDelayed(this, 2000L);
         }
     };
     private WebView web;
     private SharedPreferences prefs;
     private int captureAttempts;
-    private String lastCaptured = "";
+    private boolean completed;
+    private boolean capturing;
 
     // ---- 页面 ----
 
@@ -122,7 +119,7 @@ public class NetworkFeeActivity extends Activity {
         web.setWebViewClient(new WebViewClient() {
             @Override
             public boolean shouldOverrideUrlLoading(WebView view, String url) {
-                if (url.startsWith("http://") || url.startsWith("https://")) return false;
+                if (isCampusUrl(url)) return false;
                 try {
                     startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url)));
                 } catch (Exception ignored) {}
@@ -156,10 +153,34 @@ public class NetworkFeeActivity extends Activity {
 
         setContentView(root);
         if (Build.VERSION.SDK_INT >= 21) {
+            root.setOnApplyWindowInsetsListener((view, insets) -> {
+                view.setPadding(0, insets.getSystemWindowInsetTop(),
+                        0, insets.getSystemWindowInsetBottom());
+                return insets;
+            });
+            root.requestApplyInsets();
+        }
+        if (Build.VERSION.SDK_INT >= 21) {
             getWindow().setStatusBarColor(background);
             getWindow().setNavigationBarColor(background);
+            int flags = root.getSystemUiVisibility();
+            if (dark) flags &= ~View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR;
+            else flags |= View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR;
+            root.setSystemUiVisibility(flags);
         }
         web.loadUrl(URL);
+    }
+
+    private boolean isCampusUrl(String value) {
+        try {
+            Uri uri = Uri.parse(value);
+            String host = uri.getHost();
+            return "https".equalsIgnoreCase(uri.getScheme()) && host != null
+                    && ("nwpu.edu.cn".equalsIgnoreCase(host)
+                    || host.toLowerCase(java.util.Locale.ROOT).endsWith(".nwpu.edu.cn"));
+        } catch (Exception ignored) {
+            return false;
+        }
     }
 
     /** 先让 WebView 处理返回键，方便在自助站里返回。 */
@@ -174,25 +195,24 @@ public class NetworkFeeActivity extends Activity {
 
     // ---- 余额抓取 ----
 
-    /** 执行提取脚本，拿到可信余额后落盘；值没变就不写。captureTask 会反复调用。 */
+    /** 读取到可信余额即保存并返回；余额未变化也视为同步成功。 */
     private void captureBalance() {
-        if (web == null) return;
+        if (web == null || completed || capturing || isFinishing()) return;
+        capturing = true;
         web.evaluateJavascript(BALANCE_JS, result -> {
+            capturing = false;
+            if (completed || isFinishing()) return;
             try {
                 String text = new JSONArray("[" + result + "]").getString(0);
-                Matcher matcher = Pattern.compile(
-                        "(?:账户余额|账户金额|可用余额|剩余金额|余额)[^0-9\\-]{0,16}(-?\\d+(?:\\.\\d+)?)")
-                        .matcher(text);
-                if (!matcher.find()) return;
-                String value = matcher.group(1);
-                if (value == null || value.trim().isEmpty() || value.equals(lastCaptured)) return;
-                lastCaptured = value.trim();
-                prefs.edit()
-                        .putString("net_fee_balance", lastCaptured)
-                        .putLong("net_fee_updated", System.currentTimeMillis())
-                        .apply();
-                Toast.makeText(this, "网费余额已同步到首页：" + lastCaptured + " 元",
+                String value = NetworkFeeSync.parseBalance(text);
+                if (value == null) return;
+                completed = true;
+                handler.removeCallbacks(captureTask);
+                NetworkFeeSync.save(this, prefs, value);
+                BackgroundSyncScheduler.schedule(this);
+                Toast.makeText(this, "网费余额已同步：" + value + " 元",
                         Toast.LENGTH_SHORT).show();
+                finish();
             } catch (Exception ignored) {
             }
         });

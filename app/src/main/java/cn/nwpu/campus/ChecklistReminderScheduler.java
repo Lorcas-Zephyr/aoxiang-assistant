@@ -6,6 +6,7 @@ import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.content.Context;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.net.Uri;
 import android.os.Build;
 
@@ -38,6 +39,19 @@ public final class ChecklistReminderScheduler {
                 context.getSharedPreferences("campus_private", Context.MODE_PRIVATE));
         for (Checklist checklist : values) {
             if (!checklist.allDone() && checklist.reminderMinutes >= 0) schedule(context, checklist);
+        }
+    }
+
+    /** 已错过提醒（例如通知权限关闭期间触发）在下次打开应用时补发。 */
+    public static void deliverPending(Context context) {
+        if (context == null) return;
+        SharedPreferences store = context.getSharedPreferences("campus_private", Context.MODE_PRIVATE);
+        for (Checklist checklist : ChecklistStore.pendingReminders(store, System.currentTimeMillis())) {
+            Intent intent = new Intent(context, ChecklistReminderReceiver.class)
+                    .setAction(ACTION_REMIND)
+                    .setData(Uri.parse("aoxiang://checklist/" + Uri.encode(checklist.id)))
+                    .putExtra(EXTRA_CHECKLIST_ID, checklist.id);
+            context.sendBroadcast(intent);
         }
     }
 

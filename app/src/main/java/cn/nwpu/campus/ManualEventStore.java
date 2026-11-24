@@ -80,17 +80,20 @@ public final class ManualEventStore {
         return result;
     }
 
-    /** 取日期范围内的日程；每周重复的日程会出现多次。 */
+    /** 取日期范围内的日程实例；每周重复项按实际发生日展开。 */
     public static List<ManualEvent> between(List<ManualEvent> events, LocalDate start, LocalDate end) {
         List<ManualEvent> result = new ArrayList<>();
-        if (events == null || start == null || end == null) return result;
+        if (events == null || start == null || end == null || end.isBefore(start)) return result;
         for (ManualEvent event : events) {
             if (event == null) continue;
             LocalDate cursor = start;
             while (!cursor.isAfter(end)) {
                 if (event.occursOn(cursor)) {
-                    result.add(event);
-                    break;
+                    ManualEvent occurrence = new ManualEvent(event.id, event.title,
+                            cursor.toString(), event.startTime, event.endTime);
+                    occurrence.note = event.note;
+                    occurrence.color = event.color;
+                    result.add(occurrence);
                 }
                 cursor = cursor.plusDays(1);
             }

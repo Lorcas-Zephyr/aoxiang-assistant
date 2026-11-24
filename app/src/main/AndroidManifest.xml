@@ -1,5 +1,6 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
@@ -21,7 +22,8 @@
         <package android:name="com.meizu.safe" />
         <package android:name="com.samsung.android.lool" />
     </queries>
-    <application android:theme="@style/Theme.NWPUCampus" android:label="翱翔助手" android:icon="@drawable/ic_launcher" android:allowBackup="false" android:usesCleartextTraffic="false" android:supportsRtl="true">
+    <application android:theme="@style/Theme.NWPUCampus" android:label="翱翔助手" android:icon="@mipmap/ic_launcher" android:roundIcon="@mipmap/ic_launcher" android:allowBackup="false" android:usesCleartextTraffic="false" android:supportsRtl="true">
+        <activity android:name=".ExamListActivity" android:launchMode="singleTop" android:screenOrientation="portrait" android:exported="false" />
         <activity android:name=".ManualEventActivity" android:launchMode="singleTop" android:screenOrientation="portrait" android:exported="false" />
         <activity android:name=".ChecklistActivity" android:launchMode="singleTop" android:screenOrientation="portrait" android:exported="false" />
         <receiver android:name=".ChecklistReminderReceiver" android:enabled="true" android:exported="false" />
@@ -121,5 +123,8 @@
             android:enabled="true"
             android:exported="false"
             android:foregroundServiceType="dataSync" />
+        <service android:name=".NetworkFeeJobService"
+            android:permission="android.permission.BIND_JOB_SERVICE"
+            android:exported="false" />
     </application>
 </manifest>

@@ -25,12 +25,23 @@ final class BackgroundSyncScheduler {
     static void schedule(Context context, long minimumDelayMillis) {
         Context app = context.getApplicationContext();
         SharedPreferences store = app.getSharedPreferences("campus_private", Context.MODE_PRIVATE);
-        NextUpdate next = nextUpdate(app, store, System.currentTimeMillis());
+        long now = System.currentTimeMillis();
+        boolean exactAlarmAllowed = BackgroundPermissionUtils.canScheduleExactAlarms(app);
+        // An inexact alarm cannot grant permission to start a foreground service.
+        // Keep network-fee HTTP work in a system job when exact alarms are unavailable.
+        if (!exactAlarmAllowed && store.getBoolean(NetworkFeeSync.KEY_READY, false)
+                && isEnabled(store, NetworkFeeSync.TARGET)) {
+            long last = store.getLong("auto_last_" + NetworkFeeSync.TARGET, 0L);
+            long dueAt = last == 0L ? now : last + intervalMillis(store, NetworkFeeSync.TARGET);
+            NetworkFeeJobService.schedule(app, Math.max(dueAt, now + minimumDelayMillis));
+        } else {
+            NetworkFeeJobService.cancel(app);
+        }
+        NextUpdate next = nextUpdate(app, store, now, exactAlarmAllowed);
         if (next == null) {
             cancel(app);
             return;
         }
-        long now = System.currentTimeMillis();
         long triggerAt = Math.max(next.dueAt, now + Math.max(1000L, minimumDelayMillis));
         AlarmManager manager = (AlarmManager) app.getSystemService(Context.ALARM_SERVICE);
         if (manager != null) {
@@ -53,6 +64,11 @@ final class BackgroundSyncScheduler {
     }
 
     static NextUpdate nextUpdate(Context context, SharedPreferences store, long now) {
+        return nextUpdate(context, store, now, true);
+    }
+
+    private static NextUpdate nextUpdate(Context context, SharedPreferences store, long now,
+                                         boolean includeNetworkFee) {
         NextUpdate next = null;
         if (hasCredentials(store)) {
             String[] targets = {"grades", "electricity", "schedule", "bus"};
@@ -64,6 +80,14 @@ final class BackgroundSyncScheduler {
                     dueAt = SyncTimePolicy.deferElectricityDueAt(dueAt, now);
                 }
                 if (next == null || dueAt < next.dueAt) next = new NextUpdate(target, dueAt);
+            }
+        }
+        if (includeNetworkFee && store.getBoolean(NetworkFeeSync.KEY_READY, false)
+                && isEnabled(store, NetworkFeeSync.TARGET)) {
+            long last = store.getLong("auto_last_" + NetworkFeeSync.TARGET, 0L);
+            long dueAt = last == 0L ? now : last + intervalMillis(store, NetworkFeeSync.TARGET);
+            if (next == null || dueAt < next.dueAt) {
+                next = new NextUpdate(NetworkFeeSync.TARGET, dueAt);
             }
         }
         long reminderAt = nextBusReminderAt(context, store, now);

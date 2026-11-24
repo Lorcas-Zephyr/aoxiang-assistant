@@ -75,6 +75,7 @@ import java.security.KeyStore;
 import java.text.DecimalFormat;
 import java.time.DayOfWeek;
 import java.time.LocalDate;
+import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
 import java.time.temporal.TemporalAdjusters;
 import java.util.ArrayList;
@@ -236,6 +237,7 @@ public class MainActivity extends Activity {
     private long scheduleDataRevision;
     private long electricityDataRevision;
     private long busDataRevision;
+    private long networkFeeDataRevision;
     private boolean autoBusEnabled;
     private boolean busDepartureReminderEnabled;
     private boolean busStatusReminderEnabled;
@@ -244,7 +246,6 @@ public class MainActivity extends Activity {
     private String busIntervalUnit = UNIT_MINUTES;
     private BusModels.Snapshot busSnapshot = new BusModels.Snapshot();
     private boolean netFeeHttpFetching;
-    private long netFeeHttpLast;
 
     private Runnable automationTask;
     private Runnable scheduledUpdateTask;
@@ -324,6 +325,10 @@ public class MainActivity extends Activity {
         busIntervalValue = Math.max(1, store.getInt("bus_interval_value", 60));
         busIntervalUnit = loadIntervalUnit("bus_interval_unit", UNIT_MINUTES);
         busSnapshot = BusStorage.load(store);
+        if (!store.contains(NetworkFeeSync.KEY_READY)
+                && !store.getString(NetworkFeeSync.KEY_BALANCE, "").isEmpty()) {
+            store.edit().putBoolean(NetworkFeeSync.KEY_READY, true).apply();
+        }
         captureDataRevisions();
         silentBoot = getIntent().getBooleanExtra("silent_boot", false);
         ensureSelectedSemester();
@@ -372,6 +377,7 @@ public class MainActivity extends Activity {
         refreshAutomaticUpdatePanelIfVisible();
         refreshCustomData();
         refreshNetworkFeeFromSession();
+        ChecklistReminderScheduler.deliverPending(this);
         checkBusDepartureReminders();
         if (root != null && backgroundPermissionActivityPending) {
             backgroundPermissionActivityPending = false;
@@ -467,6 +473,7 @@ public class MainActivity extends Activity {
         scheduleDataRevision = DataUpdateSignal.revision(store, DataUpdateSignal.TARGET_SCHEDULE);
         electricityDataRevision = DataUpdateSignal.revision(store, DataUpdateSignal.TARGET_ELECTRICITY);
         busDataRevision = DataUpdateSignal.revision(store, DataUpdateSignal.TARGET_BUS);
+        networkFeeDataRevision = DataUpdateSignal.revision(store, NetworkFeeSync.TARGET);
     }
 
     private void refreshChangedPersistedData() {
@@ -474,16 +481,20 @@ public class MainActivity extends Activity {
         long nextScheduleRevision = DataUpdateSignal.revision(store, DataUpdateSignal.TARGET_SCHEDULE);
         long nextElectricityRevision = DataUpdateSignal.revision(store, DataUpdateSignal.TARGET_ELECTRICITY);
         long nextBusRevision = DataUpdateSignal.revision(store, DataUpdateSignal.TARGET_BUS);
+        long nextNetworkFeeRevision = DataUpdateSignal.revision(store, NetworkFeeSync.TARGET);
         boolean gradesChanged = nextGradesRevision != gradesDataRevision;
         boolean scheduleChanged = nextScheduleRevision != scheduleDataRevision;
         boolean electricityChanged = nextElectricityRevision != electricityDataRevision;
         boolean busChanged = nextBusRevision != busDataRevision;
-        if (!gradesChanged && !scheduleChanged && !electricityChanged && !busChanged) return;
+        boolean networkFeeChanged = nextNetworkFeeRevision != networkFeeDataRevision;
+        if (!gradesChanged && !scheduleChanged && !electricityChanged && !busChanged
+                && !networkFeeChanged) return;
 
         gradesDataRevision = nextGradesRevision;
         scheduleDataRevision = nextScheduleRevision;
         electricityDataRevision = nextElectricityRevision;
         busDataRevision = nextBusRevision;
+        networkFeeDataRevision = nextNetworkFeeRevision;
         if (gradesChanged) reloadPersistedData(DataUpdateSignal.TARGET_GRADES);
         if (scheduleChanged) reloadPersistedData(DataUpdateSignal.TARGET_SCHEDULE);
         if (electricityChanged) reloadPersistedData(DataUpdateSignal.TARGET_ELECTRICITY);
@@ -505,6 +516,7 @@ public class MainActivity extends Activity {
     }
 
     private long dataRevision(String target) {
+        if (NetworkFeeSync.TARGET.equals(target)) return networkFeeDataRevision;
         if (DataUpdateSignal.TARGET_GRADES.equals(target)) return gradesDataRevision;
         if (DataUpdateSignal.TARGET_SCHEDULE.equals(target)) return scheduleDataRevision;
         if (DataUpdateSignal.TARGET_BUS.equals(target)) return busDataRevision;
@@ -512,13 +524,15 @@ public class MainActivity extends Activity {
     }
 
     private void setDataRevision(String target, long revision) {
-        if (DataUpdateSignal.TARGET_GRADES.equals(target)) gradesDataRevision = revision;
+        if (NetworkFeeSync.TARGET.equals(target)) networkFeeDataRevision = revision;
+        else if (DataUpdateSignal.TARGET_GRADES.equals(target)) gradesDataRevision = revision;
         else if (DataUpdateSignal.TARGET_SCHEDULE.equals(target)) scheduleDataRevision = revision;
         else if (DataUpdateSignal.TARGET_BUS.equals(target)) busDataRevision = revision;
         else electricityDataRevision = revision;
     }
 
     private void reloadPersistedData(String target) {
+        if (NetworkFeeSync.TARGET.equals(target)) return; // 网费卡片直接读取本地余额。
         if (DataUpdateSignal.TARGET_GRADES.equals(target)) {
             grades = loadGrades();
             portraitGpa = parseStoredDouble(PORTRAIT_GPA, Double.NaN);
@@ -810,18 +824,23 @@ public class MainActivity extends Activity {
             for (CourseMeeting meeting : todayMeetings) l.addView(schedulePreviewRow(meeting, LocalDate.now()));
         }
 
-        // 考试信息：先全部展示，便于核对采集结果；显示逻辑后续再收敛。
         List<ScheduleModels.Exam> exams = ExamStorage.showExams(store)
                 ? ExamStorage.sorted(ExamStorage.load(store)) : new ArrayList<>();
+        LocalDateTime now = LocalDateTime.now();
+        exams.removeIf(exam -> ExamStorage.isFinished(exam, now));
         LinearLayout examHeader = sectionHeader("考试信息");
+        Button showAllExams = syncButton("全部", "查看全部考试");
+        showAllExams.setOnClickListener(v ->
+                startActivity(new Intent(this, ExamListActivity.class)));
         if (!exams.isEmpty()) {
             TextView examCount = label(exams.size() + " 场", 11, mutedColor());
             examCount.setGravity(Gravity.CENTER_VERTICAL | Gravity.END);
             examHeader.addView(examCount, new LinearLayout.LayoutParams(dp(48), dp(54)));
         }
+        examHeader.addView(showAllExams, new LinearLayout.LayoutParams(dp(64), dp(36)));
         l.addView(examHeader);
         if (exams.isEmpty()) {
-            l.addView(emptyHint("暂无考试安排"));
+            l.addView(emptyHint("暂无未结束的考试"));
         } else {
             for (ScheduleModels.Exam exam : exams) l.addView(examRow(exam));
         }
@@ -837,7 +856,7 @@ public class MainActivity extends Activity {
         checklists = ChecklistStore.load(store);
         if (root != null && !silentBoot
                 && (currentTab == TAB_HOME || currentTab == TAB_SCHEDULE)) {
-            showTab(currentTab, true);
+            showTab(currentTab);
         }
     }
 
@@ -920,25 +939,25 @@ public class MainActivity extends Activity {
         List<ManualEvent> events = ManualEventStore.onDate(manualEvents, date);
         if (events.isEmpty()) return;
         for (ManualEvent event : events) {
-            int startSection = sectionForEventTime(semester, event.localStartTime(), false);
-            int endSection = sectionForEventTime(semester, event.localEndTime(), true);
-            if (endSection < startSection) endSection = startSection;
-            startSection = Math.max(1, Math.min(semester.sectionCount, startSection));
-            endSection = Math.max(startSection, Math.min(semester.sectionCount, endSection));
-            int top = (startSection - 1) * sectionHeight + dp(2);
-            int height = Math.max(dp(34), (endSection - startSection + 1) * sectionHeight - dp(4));
+            float axisHeight = semester.sectionCount * (float) sectionHeight;
+            float startOffset = ScheduleTimeLayout.offsetPx(semester, date, null,
+                    event.localStartTime(), sectionHeight);
+            float endOffset = ScheduleTimeLayout.offsetPx(semester, date, null,
+                    event.localEndTime(), sectionHeight);
+            int top = Math.round(clamp(startOffset, 0f, axisHeight));
+            int height = Math.max(dp(2), Math.round(clamp(endOffset, 0f, axisHeight) - top));
             LinearLayout block = new LinearLayout(this);
             block.setOrientation(LinearLayout.VERTICAL);
-            block.setPadding(dp(4), dp(3), dp(4), dp(3));
+            block.setPadding(dp(4), dp(2), dp(4), dp(2));
             int color = parseColorSafe(event.color, Color.parseColor(ManualEvent.DEFAULT_COLOR));
             block.setBackground(border(colorWithAlpha(color, 190), color, 5));
             block.setAlpha(0.94f);
             TextView title = label("日程 · " + event.title, 8, Color.WHITE);
             title.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
-            title.setMaxLines(2);
+            title.setSingleLine(true);
+            title.setEllipsize(android.text.TextUtils.TruncateAt.END);
             block.addView(title);
-            TextView time = label(event.timeRange(), 7, Color.WHITE);
-            block.addView(time);
+            if (height >= dp(30)) block.addView(label(event.timeRange(), 7, Color.WHITE));
             block.setOnClickListener(v -> openManualEvents());
             FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(-1, height);
             params.topMargin = top;
@@ -948,26 +967,70 @@ public class MainActivity extends Activity {
         }
     }
 
-    private int sectionForEventTime(ScheduleModels.Semester semester, java.time.LocalTime time, boolean end) {
-        int minute = time.getHour() * 60 + time.getMinute();
-        int fallback = 1;
-        for (int i = 0; i < semester.sectionTimes.size(); i++) {
-            ScheduleModels.SectionTime slot = semester.sectionTimes.get(i);
-            int start = parseClockMinutes(slot.start);
-            int finish = parseClockMinutes(slot.end);
-            if (minute >= start && minute <= finish) return i + 1;
-            if (minute < start) return Math.max(1, i == 0 ? 1 : i);
-            fallback = i + 1;
+    private void addExamOverlays(FrameLayout dayFrame, LocalDate date,
+                                 ScheduleModels.Semester semester, int sectionHeight) {
+        if (!ExamStorage.showExams(store)) return;
+        float axisHeight = semester.sectionCount * (float) sectionHeight;
+        for (ScheduleModels.Exam exam : ExamStorage.examsOnDate(ExamStorage.load(store), date)) {
+            List<Integer> sections = ExamStorage.examSections(semester, exam, date);
+            LocalTime startTime = parseExamTime(exam.startTime);
+            LocalTime endTime = parseExamTime(exam.endTime);
+            float startOffset = startTime == null
+                    ? ((sections.isEmpty() ? 0 : sections.get(0) - 1) * (float) sectionHeight)
+                    : ScheduleTimeLayout.offsetPx(semester, date, exam.location,
+                            startTime, sectionHeight);
+            float endOffset = endTime == null
+                    ? ((sections.isEmpty() ? 1 : sections.get(sections.size() - 1))
+                            * (float) sectionHeight)
+                    : ScheduleTimeLayout.offsetPx(semester, date, exam.location,
+                            endTime, sectionHeight);
+            int top = Math.round(clamp(startOffset, 0f, axisHeight));
+            int height = Math.max(dp(2), Math.round(clamp(endOffset, 0f, axisHeight) - top));
+
+            LinearLayout block = new LinearLayout(this);
+            block.setOrientation(LinearLayout.VERTICAL);
+            block.setPadding(dp(4), dp(2), dp(4), dp(2));
+            int color = Color.parseColor(ExamStorage.EXAM_COLOR);
+            block.setBackground(border(colorWithAlpha(color, 210), color, 5));
+            TextView title = label(exam.name, 9, Color.WHITE);
+            title.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+            title.setMaxLines(Integer.MAX_VALUE);
+            title.setEllipsize(null);
+            block.addView(title);
+            String time = exam.startTime;
+            if (!exam.endTime.isEmpty()) time += "–" + exam.endTime;
+            TextView timeLabel = label(time, 7, Color.WHITE);
+            block.addView(timeLabel);
+            TextView locationLabel = label(exam.location, 7, Color.WHITE);
+            if (!exam.location.isEmpty()) block.addView(locationLabel);
+            int widthSpec = View.MeasureSpec.makeMeasureSpec(allCoursesDayWidth(),
+                    View.MeasureSpec.EXACTLY);
+            int heightSpec = View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED);
+            block.measure(widthSpec, heightSpec);
+            if (block.getMeasuredHeight() > height) block.removeView(locationLabel);
+            block.measure(widthSpec, heightSpec);
+            if (block.getMeasuredHeight() > height) block.removeView(timeLabel);
+            fitCourseMeetingTitle(block, allCoursesDayWidth(), height);
+            block.setOnClickListener(v -> showExamDetailDialog(exam));
+            FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(-1, height);
+            params.topMargin = top;
+            params.leftMargin = dp(1);
+            params.rightMargin = dp(1);
+            dayFrame.addView(block, params);
         }
-        return fallback;
     }
 
-    private int parseClockMinutes(String value) {
+    private float clamp(float value, float low, float high) {
+        return Math.max(low, Math.min(high, value));
+    }
+
+    private LocalTime parseExamTime(String value) {
         try {
-            String[] parts = value.split(":");
-            return Integer.parseInt(parts[0]) * 60 + Integer.parseInt(parts[1]);
+            String cleaned = value == null ? "" : value.trim();
+            if (cleaned.length() >= 8) cleaned = cleaned.substring(0, 5);
+            return cleaned.isEmpty() ? null : LocalTime.parse(cleaned);
         } catch (Exception ignored) {
-            return 0;
+            return null;
         }
     }
 
@@ -1091,49 +1154,29 @@ public class MainActivity extends Activity {
         startActivity(new Intent(this, NetworkFeeActivity.class));
     }
 
-    /** 用户登录过网络自助后，用 WebView 的 Cookie 顺手刷新余额，最多五分钟一次。 */
+    /** 与后台使用同一网费请求；只复用网费自己的会话，不传入门户密码。 */
     private void refreshNetworkFeeFromSession() {
-        if (netFeeHttpFetching) return;
+        if (netFeeHttpFetching || !store.getBoolean(NetworkFeeSync.KEY_READY, false)
+                || !isAutomaticEnabled(NetworkFeeSync.TARGET)) return;
         long now = System.currentTimeMillis();
-        if (now - netFeeHttpLast < 5 * 60_000L) return;
-        String cookie = CookieManager.getInstance().getCookie("https://zizhu.nwpu.edu.cn:8900");
-        if (cookie == null || cookie.isEmpty()) return;
+        if (now - store.getLong("auto_last_" + NetworkFeeSync.TARGET, 0L)
+                < intervalMillis(NetworkFeeSync.TARGET)) return;
         netFeeHttpFetching = true;
         new Thread(() -> {
-            HttpURLConnection connection = null;
-            try {
-                URL url = new URL("https://zizhu.nwpu.edu.cn:8900/home");
-                connection = (HttpURLConnection) url.openConnection();
-                connection.setConnectTimeout(12000);
-                connection.setReadTimeout(15000);
-                connection.setRequestProperty("Cookie", cookie);
-                connection.setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 12)");
-                connection.setRequestProperty("Accept", "text/html,application/xhtml+xml");
-                StringBuilder html = new StringBuilder();
-                try (BufferedReader reader = new BufferedReader(
-                        new InputStreamReader(connection.getInputStream(), StandardCharsets.UTF_8))) {
-                    String line;
-                    while ((line = reader.readLine()) != null) html.append(line).append('\n');
-                }
-                Matcher matcher = Pattern.compile(
-                        "(?:账户余额|账户金额|可用余额|剩余金额|余额)[^0-9\\-]{0,16}(-?\\d+(?:\\.\\d+)?)")
-                        .matcher(html.toString());
-                if (matcher.find()) {
-                    String value = matcher.group(1);
-                    if (value != null && !value.trim().isEmpty()) {
-                        store.edit().putString("net_fee_balance", value.trim())
-                                .putLong("net_fee_updated", System.currentTimeMillis()).apply();
-                        runOnUiThread(() -> {
-                            if (currentTab == TAB_HOME) showTab(TAB_HOME, true);
-                        });
-                    }
-                }
-            } catch (Exception ignored) {
-            } finally {
+            NetworkFeeSync.Result result = NetworkFeeSync.fetch();
+            runOnUiThread(() -> {
                 netFeeHttpFetching = false;
-                netFeeHttpLast = System.currentTimeMillis();
-                if (connection != null) connection.disconnect();
-            }
+                if (!store.getBoolean(NetworkFeeSync.KEY_READY, false)) return;
+                if (result.success()) {
+                    NetworkFeeSync.save(this, store, result.balance);
+                } else if (result.loginRequired) {
+                    store.edit().putBoolean(NetworkFeeSync.KEY_READY, false).apply();
+                }
+                store.edit().putLong("auto_last_" + NetworkFeeSync.TARGET,
+                        System.currentTimeMillis()).apply();
+                if (activityVisible) scheduleAllAutomaticUpdates(0L);
+                syncBackgroundService();
+            });
         }, "NetworkFeeBalance").start();
     }
 
@@ -1604,6 +1647,7 @@ public class MainActivity extends Activity {
         addAutomaticUpdateControls(parent, "课表", "schedule");
         addAutomaticUpdateControls(parent, "电费", "electricity");
         addAutomaticUpdateControls(parent, "校车", "bus");
+        addAutomaticUpdateControls(parent, "网费", NetworkFeeSync.TARGET);
 
         parent.addView(section("运行"));
         LinearLayout runCard = card(panelColor());
@@ -1999,11 +2043,6 @@ public class MainActivity extends Activity {
         board.addView(head);
 
         List<ScheduleModels.Course> weekCourses = coursesForWeek(semester, week);
-        // 考试插在课程前：同一节次冲突时优先显示考试。
-        List<ScheduleModels.Course> withExams = new ArrayList<>();
-        appendExamCourses(withExams, semester, weekStart, 7);
-        withExams.addAll(weekCourses);
-        weekCourses = withExams;
         if (scheduleShowAllCourses) {
             board.addView(buildAllCoursesWeekBody(semester, sectionHeight));
             wrap.addView(board, new LinearLayout.LayoutParams(-1, -2));
@@ -2045,7 +2084,9 @@ public class MainActivity extends Activity {
             FrameLayout dayFrame = new FrameLayout(this);
             dayFrame.addView(dayColumn, new FrameLayout.LayoutParams(-1, -2));
             // 把当天的日程叠在课程格子上。
-            addManualEventOverlays(dayFrame, weekStart.plusDays(day - 1), semester, sectionHeight);
+            LocalDate date = weekStart.plusDays(day - 1);
+            addManualEventOverlays(dayFrame, date, semester, sectionHeight);
+            addExamOverlays(dayFrame, date, semester, sectionHeight);
             body.addView(dayFrame, new LinearLayout.LayoutParams(0, -2, 1));
         }
         board.addView(body);
@@ -4448,12 +4489,15 @@ public class MainActivity extends Activity {
 
     private void scheduleAllAutomaticUpdates(long minimumDelayMillis) {
         cancelScheduledUpdates();
-        if (!hasCredentials()) return;
+        boolean portalReady = hasCredentials();
         long now = System.currentTimeMillis();
         String nextTarget = null;
         long nextAt = Long.MAX_VALUE;
-        String[] targets = {"grades", "electricity", "schedule", "bus"};
+        String[] targets = {"grades", "electricity", "schedule", "bus", NetworkFeeSync.TARGET};
         for (String target : targets) {
+            if (NetworkFeeSync.TARGET.equals(target)) {
+                if (!store.getBoolean(NetworkFeeSync.KEY_READY, false) || netFeeHttpFetching) continue;
+            } else if (!portalReady) continue;
             if (!isAutomaticEnabled(target)) continue;
             long lastAttempt = store.getLong("auto_last_" + target, 0L);
             long dueAt = lastAttempt == 0L ? now + Math.max(0, minimumDelayMillis)
@@ -4470,7 +4514,8 @@ public class MainActivity extends Activity {
         final String target = nextTarget;
         scheduledUpdateTask = () -> {
             scheduledUpdateTask = null;
-            if (automationWeb == null) openPortal(target, true);
+            if (NetworkFeeSync.TARGET.equals(target)) refreshNetworkFeeFromSession();
+            else if (automationWeb == null) openPortal(target, true);
             else scheduleAllAutomaticUpdates(30_000L);
         };
         automationHandler.postDelayed(scheduledUpdateTask, Math.max(0L, nextAt - now));
@@ -4478,7 +4523,9 @@ public class MainActivity extends Activity {
 
     private void syncBackgroundService() {
         if (!autoGradeEnabled && !autoScheduleEnabled && !autoElectricityEnabled
-                && !autoBusEnabled && !busDepartureReminderEnabled) {
+                && !autoBusEnabled && !busDepartureReminderEnabled
+                && !(isAutomaticEnabled(NetworkFeeSync.TARGET)
+                    && store.getBoolean(NetworkFeeSync.KEY_READY, false))) {
             stopBackgroundService();
             return;
         }
@@ -4765,9 +4812,15 @@ public class MainActivity extends Activity {
                 .remove(ScheduleStorage.KEY_SEMESTERS)
                 .remove(ScheduleStorage.KEY_COURSES)
                 .remove(ScheduleStorage.KEY_SELECTED_SEMESTER)
+                .remove(ExamStorage.KEY_EXAMS)
+                .remove(GradeRankStorage.KEY_RANKS)
                 .remove("electricity_balance")
                 .remove("electricity_balance_source")
                 .remove("electricity_alert_active")
+                .remove("net_fee_balance")
+                .remove("net_fee_updated")
+                .remove(NetworkFeeSync.KEY_READY)
+                .remove("auto_last_" + NetworkFeeSync.TARGET)
                 .remove("auto_last_grades")
                 .remove("auto_last_schedule")
                 .remove("auto_last_electricity")
@@ -4787,6 +4840,7 @@ public class MainActivity extends Activity {
         // its identity in localStorage.NO, so remove that origin on logout to
         // prevent the next account from querying with the previous user's NO.
         WebStorage.getInstance().deleteOrigin("https://hq-bus.nwpu.edu.cn");
+        WebStorage.getInstance().deleteOrigin("https://zizhu.nwpu.edu.cn:8900");
         ScheduleWidgetUpdater.updateAll(this);
         settingsPanel = "account";
         tabScrollPositions[TAB_SETTINGS] = 0;
@@ -6956,6 +7010,7 @@ public class MainActivity extends Activity {
     }
 
     private boolean isAutomaticEnabled(String target) {
+        if (NetworkFeeSync.TARGET.equals(target)) return store.getBoolean("auto_network_fee_enabled", true);
         if ("schedule".equals(target)) return autoScheduleEnabled;
         if ("electricity".equals(target)) return autoElectricityEnabled;
         if ("bus".equals(target)) return autoBusEnabled;
@@ -6966,11 +7021,12 @@ public class MainActivity extends Activity {
         if ("schedule".equals(target)) autoScheduleEnabled = enabled;
         else if ("electricity".equals(target)) autoElectricityEnabled = enabled;
         else if ("bus".equals(target)) autoBusEnabled = enabled;
-        else autoGradeEnabled = enabled;
+        else if ("grades".equals(target)) autoGradeEnabled = enabled;
         store.edit().putBoolean("auto_" + target.replace("grades", "grade") + "_enabled", enabled).apply();
     }
 
     private int intervalValue(String target) {
+        if (NetworkFeeSync.TARGET.equals(target)) return Math.max(1, store.getInt("network_fee_interval_value", 10));
         if ("schedule".equals(target)) return scheduleIntervalValue;
         if ("electricity".equals(target)) return electricityIntervalValue;
         if ("bus".equals(target)) return busIntervalValue;
@@ -6978,13 +7034,15 @@ public class MainActivity extends Activity {
     }
 
     private void setIntervalValue(String target, int value) {
-        if ("schedule".equals(target)) scheduleIntervalValue = value;
+        if (NetworkFeeSync.TARGET.equals(target)) store.edit().putInt("network_fee_interval_value", value).apply();
+        else if ("schedule".equals(target)) scheduleIntervalValue = value;
         else if ("electricity".equals(target)) electricityIntervalValue = value;
         else if ("bus".equals(target)) busIntervalValue = value;
         else gradeIntervalValue = value;
     }
 
     private String intervalUnit(String target) {
+        if (NetworkFeeSync.TARGET.equals(target)) return loadIntervalUnit("network_fee_interval_unit", UNIT_MINUTES);
         if ("schedule".equals(target)) return scheduleIntervalUnit;
         if ("electricity".equals(target)) return electricityIntervalUnit;
         if ("bus".equals(target)) return busIntervalUnit;
@@ -6992,7 +7050,8 @@ public class MainActivity extends Activity {
     }
 
     private void setIntervalUnit(String target, String unit) {
-        if ("schedule".equals(target)) scheduleIntervalUnit = unit;
+        if (NetworkFeeSync.TARGET.equals(target)) store.edit().putString("network_fee_interval_unit", unit).apply();
+        else if ("schedule".equals(target)) scheduleIntervalUnit = unit;
         else if ("electricity".equals(target)) electricityIntervalUnit = unit;
         else if ("bus".equals(target)) busIntervalUnit = unit;
         else gradeIntervalUnit = unit;

@@ -37,7 +37,8 @@ public final class DataUpdateSignal {
         return TARGET_GRADES.equals(target)
                 || TARGET_SCHEDULE.equals(target)
                 || TARGET_ELECTRICITY.equals(target)
-                || TARGET_BUS.equals(target);
+                || TARGET_BUS.equals(target)
+                || NetworkFeeSync.TARGET.equals(target);
     }
 
     private static String revisionKey(String target) {

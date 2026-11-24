@@ -6,10 +6,13 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 /**
  * 考试安排存储与展示辅助。
@@ -59,16 +62,34 @@ public final class ExamStorage {
      */
     public static void saveRows(SharedPreferences store, JSONArray rows, String semesterId) {
         if (rows == null) return;
+        save(store, mergeRows(load(store), rows, semesterId));
+    }
+
+    static List<ScheduleModels.Exam> mergeRows(List<ScheduleModels.Exam> existing,
+                                                JSONArray rows, String semesterId) {
         List<ScheduleModels.Exam> exams = new ArrayList<>();
-        for (int i = 0; i < rows.length(); i++) {
+        String targetSemester = semesterId == null ? "" : semesterId.trim();
+        if (existing != null) {
+            for (ScheduleModels.Exam exam : existing) {
+                if (exam != null && !targetSemester.equals(exam.semesterId)) exams.add(exam);
+            }
+        }
+        Set<String> seen = new HashSet<>();
+        for (int i = 0; rows != null && i < rows.length(); i++) {
             JSONObject row = rows.optJSONObject(i);
             if (row == null) continue;
             ScheduleModels.Exam exam = ScheduleModels.Exam.from(row);
             if (exam.name.isEmpty() || exam.date.isEmpty()) continue;
-            exam.semesterId = semesterId == null ? "" : semesterId;
+            exam.semesterId = targetSemester;
+            if (!seen.add(identity(exam))) continue;
             exams.add(exam);
         }
-        save(store, exams);
+        return exams;
+    }
+
+    private static String identity(ScheduleModels.Exam exam) {
+        return String.join("\u001f", exam.name, exam.type, exam.date, exam.startTime,
+                exam.endTime, exam.location, exam.seat);
     }
 
     /** 按日期与开始时间升序排列考试，供列表展示。 */
@@ -77,6 +98,17 @@ public final class ExamStorage {
         out.sort(java.util.Comparator.comparing((ScheduleModels.Exam exam) -> exam.date)
                 .thenComparing(exam -> exam.startTime));
         return out;
+    }
+
+    /** Whether the exam has already ended at the supplied local time. */
+    public static boolean isFinished(ScheduleModels.Exam exam, LocalDateTime now) {
+        if (exam == null || now == null) return false;
+        LocalDate date = parseDate(exam.date);
+        if (date == null) return false;
+        if (date.isBefore(now.toLocalDate())) return true;
+        if (date.isAfter(now.toLocalDate())) return false;
+        LocalTime end = parseTime(exam.endTime);
+        return end != null && !now.toLocalTime().isBefore(end);
     }
 
     /**
@@ -170,9 +202,8 @@ public final class ExamStorage {
     }
 
     /**
-     * 把考试时间映射到节次区间：开始时间落在 [start, end) 的节次为起点，
-     * 结束时间按同样的规则取终点，起点大于终点时以起点为准；无法精确命中时
-     * 取时间距离最近的节次。考试未给出时间时返回空列表，由调用方兜底。
+     * 返回与考试实际时间段相交的所有节次。考试未给出结束时间时只取开始时刻所在
+     * 节次；无法命中任何节次时取距离开始时刻最近的一节。
      */
     static List<Integer> examSections(ScheduleModels.Semester semester, ScheduleModels.Exam exam,
                                       LocalDate date) {
@@ -180,9 +211,7 @@ public final class ExamStorage {
         LocalTime start = parseTime(exam.startTime);
         if (start == null) return out;
         LocalTime end = parseTime(exam.endTime);
-        int sectionCount = semester.sectionTimes.size();
-        int startSection = 0;
-        int endSection = 0;
+        int sectionCount = semester.sectionCount;
         int nearestStart = 1;
         long nearestStartGap = Long.MAX_VALUE;
         for (int section = 1; section <= sectionCount; section++) {
@@ -192,25 +221,25 @@ public final class ExamStorage {
             LocalTime from = parseTime(time.start);
             LocalTime to = parseTime(time.end);
             if (from == null || to == null) continue;
-            if (startSection == 0 && !start.isBefore(from) && start.isBefore(to)) startSection = section;
-            if (startSection == 0) {
+            if (!start.isBefore(from) && start.isBefore(to)) {
+                nearestStart = section;
+                nearestStartGap = 0;
+            }
+            if (nearestStartGap != 0) {
                 long gap = gapMinutes(start, from, to);
                 if (gap < nearestStartGap) {
                     nearestStartGap = gap;
                     nearestStart = section;
                 }
             }
-            if (end != null && endSection == 0 && !end.isBefore(to) && end.isAfter(from)) {
-                endSection = section;
+            boolean overlaps = end == null
+                    ? !start.isBefore(from) && start.isBefore(to)
+                    : start.isBefore(to) && end.isAfter(from);
+            if (overlaps) {
+                out.add(section);
             }
         }
-        out.add(startSection > 0 ? startSection : nearestStart);
-        if (end != null && endSection > 0 && endSection > out.get(0)) out.add(endSection);
-        if (out.size() == 2) {
-            List<Integer> span = new ArrayList<>();
-            for (int section = out.get(0); section <= out.get(1); section++) span.add(section);
-            return span;
-        }
+        if (out.isEmpty()) out.add(nearestStart);
         return out;
     }
 

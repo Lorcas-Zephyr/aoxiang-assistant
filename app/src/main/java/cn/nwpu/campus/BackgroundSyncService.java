@@ -161,6 +161,27 @@ public class BackgroundSyncService extends Service {
 
     @SuppressLint("SetJavaScriptEnabled")
     private void beginCollection() {
+        if (NetworkFeeSync.TARGET.equals(target)) {
+            new Thread(() -> {
+                NetworkFeeSync.Result result = NetworkFeeSync.fetch();
+                handler.post(() -> {
+                    if (!running) return;
+                    if (!store.getBoolean(NetworkFeeSync.KEY_READY, false)) {
+                        finishService();
+                        return;
+                    }
+                    if (result.success()) {
+                        NetworkFeeSync.save(this, store, result.balance);
+                    } else if (result.loginRequired) {
+                        store.edit().putBoolean(NetworkFeeSync.KEY_READY, false).apply();
+                    }
+                    // Failed network requests must not starve the other update targets.
+                    store.edit().putLong("auto_last_" + target, System.currentTimeMillis()).apply();
+                    finishAttempt(result.success());
+                });
+            }, "AoxiangNetworkFeeSync").start();
+            return;
+        }
         if ("schedule".equals(target) && !tokenScheduleAttempted
                 && AxxtSession.hasUsableToken(this, store)) {
             tokenScheduleAttempted = true;
@@ -979,6 +1000,7 @@ public class BackgroundSyncService extends Service {
     }
 
     private String label(String value) {
+        if (NetworkFeeSync.TARGET.equals(value)) return "网费";
         if ("schedule".equals(value)) return "课表";
         if ("electricity".equals(value)) return "电费";
         if ("bus".equals(value) || BackgroundSyncScheduler.TARGET_BUS_REMINDER.equals(value)) return "校车";

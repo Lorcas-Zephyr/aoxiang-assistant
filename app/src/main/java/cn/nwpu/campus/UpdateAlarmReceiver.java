@@ -19,7 +19,13 @@ public class UpdateAlarmReceiver extends BroadcastReceiver {
         }
         Intent service = new Intent(context, BackgroundSyncService.class)
                 .setAction(BackgroundSyncScheduler.ACTION_WAKE);
-        if (Build.VERSION.SDK_INT >= 26) context.startForegroundService(service);
-        else context.startService(service);
+        try {
+            if (Build.VERSION.SDK_INT >= 26) context.startForegroundService(service);
+            else context.startService(service);
+        } catch (IllegalStateException | SecurityException denied) {
+            // A permission can be revoked after the alarm was scheduled.
+            // Re-evaluate scheduling instead of crashing the receiver process.
+            BackgroundSyncScheduler.schedule(context, 5 * 60_000L);
+        }
     }
 }

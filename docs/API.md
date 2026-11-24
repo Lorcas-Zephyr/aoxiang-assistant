@@ -31,8 +31,17 @@
 | 一卡通平台 | `https://yktapp.nwpu.edu.cn/berserker-auth/cas/login/supwisdom?targetUrl=https%3A%2F%2Fyktapp.nwpu.edu.cn%2Fplat` | 建立一卡通平台会话 |
 | 一卡通首页 | `https://yktapp.nwpu.edu.cn/plat/shouyeUser` | 获取平台令牌并进入电费页面 |
 | 校车 H5 | `https://hq-bus.nwpu.edu.cn/h5/` | 通勤车预约查询与提醒 |
+| 校园网自助 | `https://zizhu.nwpu.edu.cn:8900/home` | 使用独立网费账号登录并读取余额 |
 
 统一认证页面位于 `uis.nwpu.edu.cn`。应用只保存加密后的账号密码和 WebView 会话，不记录短信验证码。
+
+### 校园网费会话与余额
+
+校园网费使用独立账号和该站点的 Cookie，不复用翱翔门户密码。首次登录在 `NetworkFeeActivity` 中进行；读取到明确的“账户总余额”等余额字段后保存数据、持久化 Cookie 并自动返回。
+
+自动更新由 `NetworkFeeSync` 使用相同 Cookie 请求上述 `/home` 页面，解析页面 HTML 中的余额，支持零余额和负余额。请求只允许同一 HTTPS 域名与 8900 端口的重定向，不向外站发送 Cookie；返回登录页或密码表单时判定会话过期，等待用户重新登录。
+
+网费与其他数据使用相同的间隔设置和本地数据变化广播。应用不可见时优先通过统一闹钟与更新服务采集；未授予精确闹钟权限时，网费改由 `NetworkFeeJobService` 执行同一个 HTTP 请求，执行时间由系统调度。任务允许可访问校园系统但未通过公网连通性验证的网络，更新期间显示状态通知，完成后移除。
 
 ## 教务基础信息
 
